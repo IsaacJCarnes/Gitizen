@@ -1,0 +1,40 @@
+.center {
+  overflow: auto;
+}
+
+.log li {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+}
+
+.log small {
+  color: var(--mute);
+}
+
+.diff {
+  margin: 0;
+  font:
+    12.5px/1.5 ui-monospace,
+    Menlo,
+    Consolas,
+    monospace;
+}
+
+.diff div {
+  padding: 0 16px;
+  white-space: pre;
+}
+
+.diff .add {
+  background: var(--add);
+}
+
+.diff .del {
+  background: var(--del);
+}
+
+.diff .hunk {
+  background: var(--hunk);
+  color: var(--mute);
+}
