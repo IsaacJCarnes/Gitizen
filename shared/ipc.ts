@@ -1,10 +1,10 @@
 /**
- * The contract between the Electron main process and the renderer.
+ * The contract between the Rust backend (src-tauri) and the UI.
  *
- * `IpcChannel` names every channel once so the main-process handlers
- * (electron/git/handlers.ts) and the preload bridge (electron/preload.ts)
- * can't drift apart. `GitizenApi` is the typed surface the preload script
- * exposes to the renderer as `window.gitizen`.
+ * `Command` names every Tauri command once, so the UI bridge
+ * (src/api/gitizen.ts) can't drift from the names registered in
+ * src-tauri/src/lib.rs. `GitizenApi` is the typed surface that bridge
+ * exports as `gitizen`.
  */
 import type {
   CommitFile,
@@ -13,21 +13,21 @@ import type {
   GitStatus,
 } from "./gitTypes";
 
-export const IpcChannel = {
-  OpenRepository: "repo:open",
-  Status: "git:status",
-  Log: "git:log",
-  Branches: "git:branches",
-  Diff: "git:diff",
-  CommitFiles: "git:commitFiles",
-  CommitDiff: "git:commitDiff",
-  Stage: "git:stage",
-  Unstage: "git:unstage",
-  Commit: "git:commit",
-  Checkout: "git:checkout",
+export const Command = {
+  OpenRepository: "open_repository",
+  Status: "status",
+  Log: "log",
+  Branches: "branches",
+  Diff: "diff",
+  CommitFiles: "commit_files",
+  CommitDiff: "commit_diff",
+  Stage: "stage",
+  Unstage: "unstage",
+  Commit: "commit",
+  Checkout: "checkout",
 } as const;
 
-export type IpcChannelName = (typeof IpcChannel)[keyof typeof IpcChannel];
+export type CommandName = (typeof Command)[keyof typeof Command];
 
 export interface GitizenApi {
   /** Shows a folder picker and opens the chosen repository. Resolves to its path, or null if cancelled. */
@@ -42,8 +42,8 @@ export interface GitizenApi {
   commitFiles(hash: string): Promise<CommitFile[]>;
   /** Diff of one file in a commit, compared to its first parent. */
   commitDiff(hash: string, path: string, oldPath?: string): Promise<string>;
-  stage(paths: string[]): Promise<unknown>;
-  unstage(paths: string[]): Promise<unknown>;
-  commit(message: string): Promise<unknown>;
-  checkout(branch: string): Promise<unknown>;
+  stage(paths: string[]): Promise<void>;
+  unstage(paths: string[]): Promise<void>;
+  commit(message: string): Promise<void>;
+  checkout(branch: string): Promise<void>;
 }

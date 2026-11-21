@@ -6,6 +6,7 @@ import type {
   GitCommit,
   GitStatus,
 } from "../../shared/gitTypes";
+import { gitizen } from "../api/gitizen";
 import { getErrorMessage } from "../utils/format";
 
 /** Everything the UI reads about the open repository, plus the actions it can take. */
@@ -101,9 +102,9 @@ export function useGitOperations(): GitOperations {
   const refresh = useCallback(async (): Promise<void> => {
     try {
       const [nextStatus, nextCommits, nextBranches] = await Promise.all([
-        window.gitizen.status(),
-        window.gitizen.log(),
-        window.gitizen.branches(),
+        gitizen.status(),
+        gitizen.log(),
+        gitizen.branches(),
       ]);
       setStatus(nextStatus);
       setCommits(nextCommits);
@@ -129,7 +130,7 @@ export function useGitOperations(): GitOperations {
 
   const openRepository = useCallback(async (): Promise<void> => {
     try {
-      const directory = await window.gitizen.openRepo();
+      const directory = await gitizen.openRepo();
       if (!directory) return;
 
       setRepo(directory);
@@ -146,8 +147,8 @@ export function useGitOperations(): GitOperations {
     (file: FileChange): Promise<void> =>
       runOperation(() =>
         file.staged
-          ? window.gitizen.unstage([file.path])
-          : window.gitizen.stage([file.path]),
+          ? gitizen.unstage([file.path])
+          : gitizen.stage([file.path]),
       ),
     [runOperation],
   );
@@ -157,14 +158,14 @@ export function useGitOperations(): GitOperations {
     if (!message) return;
 
     await runOperation(async () => {
-      await window.gitizen.commit(message);
+      await gitizen.commit(message);
       setCommitMessage("");
     });
   }, [commitMessage, runOperation]);
 
   const checkoutBranch = useCallback(
     (branch: string): Promise<void> =>
-      runOperation(() => window.gitizen.checkout(branch)),
+      runOperation(() => gitizen.checkout(branch)),
     [runOperation],
   );
 
@@ -178,7 +179,7 @@ export function useGitOperations(): GitOperations {
       return;
     }
     return loadUnlessCancelled(
-      window.gitizen.diff(selectedFile.path, selectedFile.staged),
+      gitizen.diff(selectedFile.path, selectedFile.staged),
       setDiff,
       (diffError) => {
         setDiff("");
@@ -201,7 +202,7 @@ export function useGitOperations(): GitOperations {
   useEffect(() => {
     if (!selectedCommit) return;
     return loadUnlessCancelled(
-      window.gitizen.commitFiles(selectedCommit.hash),
+      gitizen.commitFiles(selectedCommit.hash),
       setCommitFiles,
       reportError,
     );
@@ -214,7 +215,7 @@ export function useGitOperations(): GitOperations {
       return;
     }
     return loadUnlessCancelled(
-      window.gitizen.commitDiff(
+      gitizen.commitDiff(
         selectedCommit.hash,
         selectedCommitFile.path,
         selectedCommitFile.oldPath,

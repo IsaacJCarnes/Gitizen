@@ -1,6 +1,6 @@
 # Gitizen
 
-Gitizen is a desktop Git client built with Electron, React and TypeScript.
+Gitizen is a desktop Git client built with Tauri (Rust backend) and a React + TypeScript UI.
 The goal is feature parity with tools like GitHub Desktop and GitKraken.
 
 ## Features so far
@@ -41,22 +41,27 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 ## Project structure
 
 ```
-shared/                  Code used by both the Electron main process and the renderer
-  gitTypes.ts            Data types sent over IPC (commits, status, refs, files)
-  ipc.ts                 IPC channel names and the GitizenApi contract (window.gitizen)
+shared/                  Types shared by the UI and mirrored by the Rust backend
+  gitTypes.ts            Data types returned by git commands (commits, status, refs, files)
+  ipc.ts                 Tauri command names and the GitizenApi contract
 
-electron/                Main process
-  main.ts                App entry point: creates the window, registers IPC
-  preload.ts             Exposes the typed GitizenApi to the renderer as window.gitizen
-  git/
-    handlers.ts          One IPC handler per git operation
-    repository.ts        Holds the open repository; hash validation and parent lookup
-    parsers.ts           Pure functions that parse raw git output
+src-tauri/               Rust backend (Tauri 2)
+  tauri.conf.json        Window, dev server and bundle settings
+  capabilities/          Permissions granted to the window
+  icons/                 App icons, generated from app-icon.svg with `npm run tauri icon`
+  src/
+    main.rs, lib.rs      App entry point: builds the window, registers commands
+    commands.rs          One Tauri command per git operation
+    git/
+      runner.rs          Runs the git CLI (no shell, no console window)
+      repository.rs      Holds the open repository; input validation and parent lookup
+      parsers.rs         Pure functions that parse raw git output (unit tested)
+      types.rs           Rust mirrors of shared/gitTypes.ts
 
-src/                     Renderer (React)
+src/                     UI (React)
   main.tsx, App.tsx      React entry point and root component
+  api/gitizen.ts         Implements GitizenApi with Tauri invoke() calls
   styles/global.css      Theme variables and base element styles
-  types/window.d.ts      Declares window.gitizen for TypeScript
   context/               React contexts: UI view state and git state
   hooks/useGitOperations.ts  All git state and actions for the app
   utils/                 Pure helpers: commit graph layout, formatting
@@ -71,10 +76,17 @@ src/                     Renderer (React)
 
 ## Conventions
 - Each component lives next to its own CSS file, grouped in a folder by the area of the screen it belongs to.
-- Anything sent over IPC is typed in `shared/gitTypes.ts`; new git operations get a channel in `shared/ipc.ts`, a handler in `electron/git/handlers.ts` and a method in `electron/preload.ts` (TypeScript checks that the preload matches `GitizenApi`).
-- Parsing and layout logic is kept in pure functions (`electron/git/parsers.ts`, `src/utils/`) so it can be unit tested without Electron or React.
+- Anything returned by the backend is typed in `shared/gitTypes.ts` and mirrored in `src-tauri/src/git/types.rs`. A new git operation gets a name in `Command` (`shared/ipc.ts`), a method in `GitizenApi`, a call in `src/api/gitizen.ts` (TypeScript checks it matches `GitizenApi`), and a `#[tauri::command]` in `src-tauri/src/commands.rs` registered in `lib.rs`.
+- Tauri maps camelCase argument names from the UI to snake_case Rust parameters (`oldPath` becomes `old_path`).
+- Parsing logic is kept in pure functions (`src-tauri/src/git/parsers.rs`, `src/utils/`) so it can be unit tested without Tauri or React.
+- Git is run through the git CLI, so it must be installed and on PATH.
+
+## Requirements
+- Node.js, Git, and the Rust toolchain (rustup) with the Microsoft C++ Build Tools on Windows. See https://v2.tauri.app/start/prerequisites/.
 
 ## Scripts
-- `npm run dev`: start Vite and Electron in development mode
-- `npm run build`: type-check, bundle and package with electron-builder
+- `npm run app:dev`: start Vite and the Tauri app in development mode
+- `npm run app:build`: type-check, bundle and package an installer with Tauri
+- `npm run dev` / `npm run build`: the UI alone (Tauri runs these itself)
 - `npm run lint`: ESLint with zero warnings allowed
+- `cargo test --manifest-path src-tauri/Cargo.toml`: Rust unit tests
