@@ -14,6 +14,7 @@ export interface GitStatus {
 export interface GitCommit {
   hash: string
   message: string
+  body: string
   author: string
   date: string
 }
@@ -21,4 +22,10 @@ export interface GitCommit {
 export interface GitBranch {
   name: string
   current: boolean
+}
+
+export interface CommitFile {
+  path: string
+  oldPath?: string
+  code: string
 }

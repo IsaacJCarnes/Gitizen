@@ -8,6 +8,9 @@ const api = {
   log: () => call('git:log'),
   branches: () => call('git:branches'),
   diff: (path: string, staged: boolean): Promise<string> => call('git:diff', path, staged),
+  commitFiles: (hash: string) => call('git:commitFiles', hash),
+  commitDiff: (hash: string, path: string, oldPath?: string): Promise<string> =>
+    call('git:commitDiff', hash, path, oldPath),
   stage: (paths: string[]) => call('git:stage', paths),
   unstage: (paths: string[]) => call('git:unstage', paths),
   commit: (msg: string) => call('git:commit', msg),

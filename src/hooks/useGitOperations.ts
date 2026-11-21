@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { FileChange, GitBranch, GitCommit, GitStatus } from '../types/gitTypes'
+import type { CommitFile, FileChange, GitBranch, GitCommit, GitStatus } from '../types/git'
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -14,6 +14,12 @@ export interface GitOperations {
   diff: string
   commitMessage: string
   error: string
+  selectedCommit: GitCommit | null
+  commitFiles: CommitFile[]
+  selectedCommitFile: CommitFile | null
+  commitDiff: string
+  selectCommit: (commit: GitCommit | null) => void
+  setSelectedCommitFile: (file: CommitFile | null) => void
   setSelectedFile: (file: FileChange | null) => void
   setCommitMessage: (message: string) => void
   openRepository: () => Promise<void>
@@ -32,6 +38,19 @@ export function useGitOperations(): GitOperations {
   const [diff, setDiff] = useState('')
   const [commitMessage, setCommitMessage] = useState('')
   const [error, setError] = useState('')
+  const [selectedCommit, setSelectedCommit] = useState<GitCommit | null>(null)
+  const [commitFiles, setCommitFiles] = useState<CommitFile[]>([])
+  const [selectedCommitFile, setSelectedCommitFile] = useState<CommitFile | null>(null)
+  const [commitDiff, setCommitDiff] = useState('')
+
+  // Clear the old commit's files and diff together so a stale file is never
+  // diffed against the newly selected commit.
+  const selectCommit = useCallback((commit: GitCommit | null): void => {
+    setSelectedCommit(commit)
+    setCommitFiles([])
+    setSelectedCommitFile(null)
+    setCommitDiff('')
+  }, [])
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -66,11 +85,12 @@ export function useGitOperations(): GitOperations {
       setRepo(directory)
       setSelectedFile(null)
       setDiff('')
+      selectCommit(null)
       await refresh()
     } catch (openError) {
       setError(getErrorMessage(openError))
     }
-  }, [refresh])
+  }, [refresh, selectCommit])
 
   const toggleFileStage = useCallback((file: FileChange): Promise<void> =>
     runOperation(() => file.staged
@@ -110,6 +130,47 @@ export function useGitOperations(): GitOperations {
     }
   }, [selectedFile, status])
 
+  useEffect(() => {
+    if (!selectedCommit) return
+
+    let active = true
+    window.gitizen.commitFiles(selectedCommit.hash).then((files) => {
+      if (!active) return
+      setCommitFiles(files)
+      setSelectedCommitFile(files[0] ?? null)
+    }).catch((filesError: unknown) => {
+      if (active) setError(getErrorMessage(filesError))
+    })
+
+    return () => {
+      active = false
+    }
+  }, [selectedCommit])
+
+  useEffect(() => {
+    if (!selectedCommit || !selectedCommitFile) {
+      setCommitDiff('')
+      return
+    }
+
+    let active = true
+    window.gitizen.commitDiff(
+      selectedCommit.hash,
+      selectedCommitFile.path,
+      selectedCommitFile.oldPath
+    ).then((nextDiff) => {
+      if (active) setCommitDiff(nextDiff)
+    }).catch((diffError: unknown) => {
+      if (!active) return
+      setCommitDiff('')
+      setError(getErrorMessage(diffError))
+    })
+
+    return () => {
+      active = false
+    }
+  }, [selectedCommit, selectedCommitFile])
+
   return {
     repo,
     status,
@@ -119,6 +180,12 @@ export function useGitOperations(): GitOperations {
     diff,
     commitMessage,
     error,
+    selectedCommit,
+    commitFiles,
+    selectedCommitFile,
+    commitDiff,
+    selectCommit,
+    setSelectedCommitFile,
     setSelectedFile,
     setCommitMessage,
     openRepository,

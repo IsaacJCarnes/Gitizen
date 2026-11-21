@@ -1,4 +1,4 @@
-import type { FileChange } from "../../types/gitTypes";
+import type { FileChange } from "../../types/git";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 
 interface FileChangeListProps {
