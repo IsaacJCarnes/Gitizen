@@ -1,16 +1,19 @@
-import './RepoSidebar.css'
-import { useGitOperationsContext } from '../../context/GitOperationsContext'
-import CommitFileList from './CommitFileList'
-import CommitForm from './CommitForm'
-import FileChangeList from './FileChangeList'
+import "./RepoSidebar.css";
+import { useGitOperationsContext } from "../../context/GitOperationsContext";
+import CommitFileList from "./CommitFileList";
+import CommitForm from "./CommitForm";
+import FileChangeList from "./FileChangeList";
 
-// Shows the files of whatever is selected in the history list:
-// the working tree for "Uncommitted changes", otherwise that commit's files.
+/**
+ * Left sidebar. Shows the files of whatever is selected in the history:
+ * the working tree (unstaged, staged, commit form) for "Uncommitted changes",
+ * otherwise the selected commit's files.
+ */
 export default function RepoSidebar(): React.JSX.Element {
-  const { selectedCommit } = useGitOperationsContext()
+  const { selectedCommit } = useGitOperationsContext();
 
   return (
-    <aside className="change-sidebar">
+    <aside className="repo-sidebar">
       {selectedCommit ? (
         <CommitFileList />
       ) : (
@@ -21,5 +24,5 @@ export default function RepoSidebar(): React.JSX.Element {
         </>
       )}
     </aside>
-  )
+  );
 }

@@ -1,7 +1,12 @@
-// Lays commits out in lanes (columns) for the history graph. Commits must be
-// ordered children before parents, as `git log --date-order` returns them.
-// Each row lists the line segments drawn in it, so rows can render alone.
+/**
+ * Lays commits out in lanes (columns) for the history graph. Commits must be
+ * ordered children before parents, as `git log --date-order` returns them.
+ * Each row lists the line segments drawn in it, so rows can render alone.
+ *
+ * Pure layout logic with no React or git dependencies.
+ */
 
+/** Minimal commit info the layout needs. */
 export interface GraphNode {
   hash: string;
   parents: string[];
@@ -9,6 +14,7 @@ export interface GraphNode {
   dashed?: boolean;
 }
 
+/** A line segment drawn within one row, between lane `from` and lane `to`. */
 export interface GraphLine {
   from: number;
   to: number;
@@ -19,6 +25,7 @@ export interface GraphLine {
   dashed: boolean;
 }
 
+/** Layout of one row: the lane its node sits in and the lines crossing it. */
 export interface GraphRow {
   lane: number;
   lines: GraphLine[];
@@ -29,6 +36,7 @@ export interface CommitGraph {
   laneCount: number;
 }
 
+/** Palette cycled through by lane index. */
 export const LANE_COLORS = [
   "#2f9e8f",
   "#d9822b",
@@ -40,9 +48,15 @@ export const LANE_COLORS = [
   "#cc5a3a",
 ];
 
+/** Colour for a lane, wrapping around the palette. */
 export const laneColor = (lane: number): string =>
   LANE_COLORS[lane % LANE_COLORS.length];
 
+/**
+ * Assigns each node a lane and works out the lines to draw in its row.
+ * Returns one row per input node, in the same order, plus the widest lane
+ * count so the graph column can be sized.
+ */
 export function buildCommitGraph(nodes: GraphNode[]): CommitGraph {
   // lanes[i] is the hash lane i is waiting to reach, or null if free.
   const lanes: (string | null)[] = [];

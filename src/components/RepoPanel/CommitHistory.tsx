@@ -1,43 +1,21 @@
-import "./HistoryList.css";
+import "./CommitHistory.css";
 import { useMemo } from "react";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
-import type { GitCommit, GitRef } from "../../types/git";
-import {
-  buildCommitGraph,
-  laneColor,
-  type GraphLine,
-  type GraphNode,
-} from "./commitGraph";
+import type { GitCommit } from "../../../shared/gitTypes";
+import { buildCommitGraph, laneColor, type GraphNode } from "../../utils/commitGraph";
+import { pluralize, shortHash } from "../../utils/format";
+import CommitGraphCell, { LANE_WIDTH } from "./CommitGraphCell";
+import RefBadge from "./RefBadge";
 
-const ROW_HEIGHT = 32;
-const LANE_WIDTH = 16;
-const NODE_RADIUS = 5;
+/** Graph key for the "Uncommitted changes" row, which has no real hash. */
 const PENDING = "pending";
 
-const laneX = (lane: number): number => LANE_WIDTH / 2 + lane * LANE_WIDTH;
-
-function linePath({ from, to, part }: GraphLine): string {
-  const x1 = laneX(from);
-  const x2 = laneX(to);
-  const mid = ROW_HEIGHT / 2;
-  if (part === "through") return `M${x1} 0V${ROW_HEIGHT}`;
-  if (part === "top") return `M${x1} 0C${x1} ${mid} ${x2} ${0} ${x2} ${mid}`;
-  return `M${x1} ${mid}C${x2} ${mid} ${x2} ${mid} ${x2} ${ROW_HEIGHT}`;
-}
-
-function RefBadge({ gitRef, color }: { gitRef: GitRef; color: string }) {
-  return (
-    <span
-      className={`ref ref-${gitRef.type}${gitRef.current ? " current" : ""}`}
-      style={{ borderColor: color }}
-    >
-      {gitRef.type === "tag" ? "◆ " : ""}
-      {gitRef.name}
-    </span>
-  );
-}
-
-export default function HistoryList(): React.JSX.Element {
+/**
+ * The commit history as a graph across all branches. When the working tree
+ * has changes, an "Uncommitted changes" row sits on top, attached to HEAD.
+ * Clicking a row selects it; the sidebar then shows that row's files.
+ */
+export default function CommitHistory(): React.JSX.Element {
   const { commits, status, selectedCommit, selectCommit } =
     useGitOperationsContext();
   const changeCount = status?.files.length ?? 0;
@@ -53,6 +31,7 @@ export default function HistoryList(): React.JSX.Element {
   }, [commits, hasPending]);
 
   const width = graph.laneCount * LANE_WIDTH;
+  // null stands for the "Uncommitted changes" row.
   const rows: (GitCommit | null)[] = hasPending ? [null, ...commits] : commits;
 
   const select = (commit: GitCommit | null): void => {
@@ -84,40 +63,20 @@ export default function HistoryList(): React.JSX.Element {
                   <RefBadge key={`${ref.type}:${ref.name}`} gitRef={ref} color={color} />
                 ))}
               </span>
-              <svg className="graph" width={width} height={ROW_HEIGHT}>
-                {row.lines.map((line, lineIndex) => (
-                  <path
-                    key={lineIndex}
-                    d={linePath(line)}
-                    stroke={laneColor(line.color)}
-                    strokeDasharray={line.dashed ? "3 3" : undefined}
-                  />
-                ))}
-                <circle
-                  className="node"
-                  cx={laneX(row.lane)}
-                  cy={ROW_HEIGHT / 2}
-                  r={NODE_RADIUS}
-                  fill={commit ? color : "var(--panel)"}
-                  stroke={color}
-                  strokeDasharray={commit ? undefined : "2 2"}
-                />
-              </svg>
+              <CommitGraphCell row={row} width={width} pending={!commit} />
               <span className="info">
                 {commit ? (
                   <>
                     <b>{commit.message}</b>
                     <small>
-                      {commit.author} · {commit.hash.slice(0, 7)} ·{" "}
+                      {commit.author} · {shortHash(commit.hash)} ·{" "}
                       {new Date(commit.date).toLocaleDateString()}
                     </small>
                   </>
                 ) : (
                   <>
                     <b>Uncommitted changes</b>
-                    <small>
-                      {changeCount} changed file{changeCount === 1 ? "" : "s"}
-                    </small>
+                    <small>{pluralize(changeCount, "changed file")}</small>
                   </>
                 )}
               </span>

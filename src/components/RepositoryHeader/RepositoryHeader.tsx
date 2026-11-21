@@ -1,15 +1,20 @@
-import './RepositoryHeader.css'
-import { useGitOperationsContext } from '../context/GitOperationsContext'
+import "./RepositoryHeader.css";
+import { useGitOperationsContext } from "../../context/GitOperationsContext";
+import { baseName } from "../../utils/format";
 
+/**
+ * Top bar: repository name (click to open another), branch switcher,
+ * ahead/behind counts and a refresh button.
+ */
 export default function RepositoryHeader(): React.JSX.Element {
   const { repo, status, branches, openRepository, refresh, checkoutBranch } =
-    useGitOperationsContext()
+    useGitOperationsContext();
 
   return (
     <header className="repository-header">
-      <button onClick={openRepository}>{repo?.split(/[\\/]/).pop()}</button>
+      <button onClick={openRepository}>{repo && baseName(repo)}</button>
       <select
-        value={status?.branch ?? ''}
+        value={status?.branch ?? ""}
         onChange={(event) => checkoutBranch(event.target.value)}
       >
         {branches.map((branch) => <option key={branch.name}>{branch.name}</option>)}
@@ -19,5 +24,5 @@ export default function RepositoryHeader(): React.JSX.Element {
       )}
       <button onClick={refresh}>Refresh</button>
     </header>
-  )
+  );
 }

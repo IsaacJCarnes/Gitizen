@@ -1,8 +1,12 @@
 import { useContext, createContext } from "react";
 
-// "history" lists commits in the main panel; "diff" shows the file picked in the sidebar.
+/**
+ * What the main panel shows: "history" is the commit graph, "diff" is the
+ * file picked in the sidebar.
+ */
 export type RepoView = "history" | "diff";
 
+/** UI state shared across components that isn't git data. */
 export interface AppData {
   view: RepoView;
   setView: (view: RepoView) => void;
@@ -10,10 +14,11 @@ export interface AppData {
 
 export const AppContext = createContext<AppData | undefined>(undefined);
 
-export function useAppContext() {
+/** Reads the UI state provided by `AppProvider`. */
+export function useAppContext(): AppData {
   const appData = useContext(AppContext);
   if (!appData) {
-    throw new Error("useAppContext must be used within a AppContextProvider");
+    throw new Error("useAppContext must be used within an AppProvider");
   }
   return appData;
 }

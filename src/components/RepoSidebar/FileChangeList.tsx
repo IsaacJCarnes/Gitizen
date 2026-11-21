@@ -1,19 +1,28 @@
-import type { FileChange } from "../../types/git";
+import type { FileChange } from "../../../shared/gitTypes";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
+import FileListItem from "../common/FileListItem";
 
 interface FileChangeListProps {
+  /** Show the staged files (true) or the unstaged ones (false). */
   staged: boolean;
 }
 
-export default function FileChangeList({
-  staged,
-}: FileChangeListProps): React.JSX.Element {
+/**
+ * Working-tree files with uncommitted changes, either staged or unstaged.
+ * Each row opens its diff and has a button to stage or unstage it.
+ */
+export default function FileChangeList({ staged }: FileChangeListProps): React.JSX.Element {
   const { status, selectedFile, setSelectedFile, toggleFileStage } =
     useGitOperationsContext();
   const { setView } = useAppContext();
   const files: FileChange[] =
     status?.files.filter((file) => file.staged === staged) ?? [];
+
+  const open = (file: FileChange): void => {
+    setSelectedFile(file);
+    setView("diff");
+  };
 
   return (
     <>
@@ -22,26 +31,20 @@ export default function FileChangeList({
       </h2>
       <ul className="file-change-list">
         {files.map((file) => (
-          <li
+          <FileListItem
             key={`${staged ? "s" : "u"}${file.path}`}
-            className={
-              selectedFile?.path === file.path &&
-              selectedFile.staged === file.staged
-                ? "on"
-                : ""
+            path={file.path}
+            code={file.code}
+            selected={
+              selectedFile?.path === file.path && selectedFile.staged === file.staged
             }
-          >
-            <button className="name" onClick={() => {
-                setSelectedFile(file);
-                setView("diff");
-              }}>
-              <span className={`code c-${file.code}`}>{file.code}</span>
-              {file.path}
-            </button>
-            <button className="mini" onClick={() => toggleFileStage(file)}>
-              {file.staged ? "Unstage" : "Stage"}
-            </button>
-          </li>
+            onSelect={() => open(file)}
+            action={
+              <button className="mini" onClick={() => toggleFileStage(file)}>
+                {file.staged ? "Unstage" : "Stage"}
+              </button>
+            }
+          />
         ))}
       </ul>
     </>

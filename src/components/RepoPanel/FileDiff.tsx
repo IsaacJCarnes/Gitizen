@@ -1,18 +1,23 @@
+import "./FileDiff.css";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
-import DiffView from "./DiffView";
+import { shortHash } from "../../utils/format";
+import DiffView from "../common/DiffView";
 
+/**
+ * Diff of the file picked in the sidebar, with a header naming the file and
+ * where the change lives (a commit's short hash, or Staged/Unstaged) and a
+ * button back to the history.
+ */
 export default function FileDiff(): React.JSX.Element {
   const { setView } = useAppContext();
   const { selectedCommit, selectedCommitFile, commitDiff, selectedFile, diff } =
     useGitOperationsContext();
 
   const path = selectedCommit ? selectedCommitFile?.path : selectedFile?.path;
-  const source = selectedCommit
-    ? selectedCommit.hash.slice(0, 7)
-    : selectedFile?.staged
-      ? "Staged"
-      : "Unstaged";
+  let source: string;
+  if (selectedCommit) source = shortHash(selectedCommit.hash);
+  else source = selectedFile?.staged ? "Staged" : "Unstaged";
 
   return (
     <div className="file-diff">

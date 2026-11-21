@@ -1,10 +1,12 @@
-import './CommitForm.css'
-import { useGitOperationsContext } from '../../context/GitOperationsContext'
+import "./CommitForm.css";
+import { useGitOperationsContext } from "../../context/GitOperationsContext";
+import { pluralize } from "../../utils/format";
 
+/** Commit message box and button; commits whatever is currently staged. */
 export default function CommitForm(): React.JSX.Element {
   const { status, commitMessage, setCommitMessage, commitChanges } =
-    useGitOperationsContext()
-  const stagedCount = status?.files.filter((file) => file.staged).length ?? 0
+    useGitOperationsContext();
+  const stagedCount = status?.files.filter((file) => file.staged).length ?? 0;
 
   return (
     <div className="commit">
@@ -18,8 +20,8 @@ export default function CommitForm(): React.JSX.Element {
         disabled={!commitMessage.trim() || stagedCount === 0}
         onClick={commitChanges}
       >
-        Commit {stagedCount} file{stagedCount === 1 ? '' : 's'}
+        Commit {pluralize(stagedCount, "file")}
       </button>
     </div>
-  )
+  );
 }

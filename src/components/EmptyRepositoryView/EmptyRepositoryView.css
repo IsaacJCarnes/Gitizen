@@ -1,4 +1,4 @@
-.empty {
+.empty-repository {
   height: 100%;
   display: grid;
   place-content: center;
@@ -9,13 +9,13 @@
   margin: auto;
 }
 
-.empty h1 {
+.empty-repository h1 {
   font-size: 34px;
   margin: 0;
   letter-spacing: -0.02em;
 }
 
-.empty p {
+.empty-repository p {
   color: var(--mute);
   margin: 0;
 }

@@ -76,3 +76,9 @@ ol {
   margin: 0;
   padding: 0;
 }
+/* Muted message shown in place of empty content. */
+.placeholder {
+  margin: 0;
+  padding: 24px 16px;
+  color: var(--mute);
+}

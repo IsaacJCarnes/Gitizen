@@ -1,20 +1,27 @@
-import { contextBridge, ipcRenderer } from 'electron'
+/**
+ * Preload script: runs in an isolated context before the renderer and
+ * exposes a small, typed git API as `window.gitizen`. The renderer never gets
+ * direct access to `ipcRenderer` or Node.
+ */
+import { contextBridge, ipcRenderer } from "electron";
+import { IpcChannel, type GitizenApi, type IpcChannelName } from "../shared/ipc";
 
-const call = (ch: string, ...a: unknown[]) => ipcRenderer.invoke(ch, ...a)
+const invoke = (channel: IpcChannelName, ...args: unknown[]) =>
+  ipcRenderer.invoke(channel, ...args);
 
-const api = {
-  openRepo: (): Promise<string | null> => call('repo:open'),
-  status: () => call('git:status'),
-  log: () => call('git:log'),
-  branches: () => call('git:branches'),
-  diff: (path: string, staged: boolean): Promise<string> => call('git:diff', path, staged),
-  commitFiles: (hash: string) => call('git:commitFiles', hash),
-  commitDiff: (hash: string, path: string, oldPath?: string): Promise<string> =>
-    call('git:commitDiff', hash, path, oldPath),
-  stage: (paths: string[]) => call('git:stage', paths),
-  unstage: (paths: string[]) => call('git:unstage', paths),
-  commit: (msg: string) => call('git:commit', msg),
-  checkout: (branch: string) => call('git:checkout', branch)
-}
+const api: GitizenApi = {
+  openRepo: () => invoke(IpcChannel.OpenRepository),
+  status: () => invoke(IpcChannel.Status),
+  log: () => invoke(IpcChannel.Log),
+  branches: () => invoke(IpcChannel.Branches),
+  diff: (path, staged) => invoke(IpcChannel.Diff, path, staged),
+  commitFiles: (hash) => invoke(IpcChannel.CommitFiles, hash),
+  commitDiff: (hash, path, oldPath) =>
+    invoke(IpcChannel.CommitDiff, hash, path, oldPath),
+  stage: (paths) => invoke(IpcChannel.Stage, paths),
+  unstage: (paths) => invoke(IpcChannel.Unstage, paths),
+  commit: (message) => invoke(IpcChannel.Commit, message),
+  checkout: (branch) => invoke(IpcChannel.Checkout, branch),
+};
 
-contextBridge.exposeInMainWorld('gitizen', api)
+contextBridge.exposeInMainWorld("gitizen", api);
