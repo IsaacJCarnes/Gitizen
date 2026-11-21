@@ -1,5 +1,5 @@
 import './RepositoryHeader.css'
-import { useGitOperationsContext } from '../context/ContextProvider'
+import { useGitOperationsContext } from '../context/GitOperationsContext'
 
 export default function RepositoryHeader(): React.JSX.Element {
   const { repo, status, branches, openRepository, refresh, checkoutBranch } =

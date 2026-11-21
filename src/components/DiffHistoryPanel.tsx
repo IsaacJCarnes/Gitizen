@@ -1,5 +1,5 @@
 import './DiffHistoryPanel.css'
-import { useGitOperationsContext } from '../context/ContextProvider'
+import { useGitOperationsContext } from '../context/GitOperationsContext'
 
 export default function DiffHistoryPanel(): React.JSX.Element {
   const { selectedFile, diff, commits } = useGitOperationsContext()

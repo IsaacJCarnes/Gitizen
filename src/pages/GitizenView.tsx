@@ -1,5 +1,5 @@
 import './GitizenView.css'
-import { useGitOperationsContext } from '../context/ContextProvider'
+import { useGitOperationsContext } from '../context/GitOperationsContext'
 import ChangeSidebar from '../components/Sidebar/ChangeSidebar'
 import DiffHistoryPanel from '../components/DiffHistoryPanel'
 import EmptyRepositoryView from '../components/EmptyRepositoryView'

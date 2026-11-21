@@ -1,11 +1,11 @@
 import "./App.css";
 import GitizenView from "./pages/GitizenView";
-import { GitOperationsProvider } from "./context/ContextProvider";
+import { AppProvider } from "./context/AppProvider";
 
 export default function App(): React.JSX.Element {
   return (
-    <GitOperationsProvider>
+    <AppProvider>
       <GitizenView />
-    </GitOperationsProvider>
+    </AppProvider>
   );
 }

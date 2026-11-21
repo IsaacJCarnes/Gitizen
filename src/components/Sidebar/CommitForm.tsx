@@ -1,5 +1,5 @@
 import './CommitForm.css'
-import { useGitOperationsContext } from '../../context/ContextProvider'
+import { useGitOperationsContext } from '../../context/GitOperationsContext'
 
 export default function CommitForm(): React.JSX.Element {
   const { status, commitMessage, setCommitMessage, commitChanges } =

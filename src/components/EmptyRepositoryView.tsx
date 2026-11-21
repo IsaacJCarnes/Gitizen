@@ -1,5 +1,5 @@
 import './EmptyRepositoryView.css'
-import { useGitOperationsContext } from '../context/ContextProvider'
+import { useGitOperationsContext } from '../context/GitOperationsContext'
 
 export default function EmptyRepositoryView(): React.JSX.Element {
   const { error, openRepository } = useGitOperationsContext()

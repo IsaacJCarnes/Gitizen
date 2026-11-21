@@ -1,5 +1,5 @@
 import type { FileChange } from "../../types/gitTypes";
-import { useGitOperationsContext } from "../../context/ContextProvider";
+import { useGitOperationsContext } from "../../context/GitOperationsContext";
 
 interface FileChangeListProps {
   staged: boolean;
