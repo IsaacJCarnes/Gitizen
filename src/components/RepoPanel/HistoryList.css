@@ -1,32 +1,102 @@
-.history-list li {
-  border-bottom: 1px solid var(--line);
-}
-
-.history-list li.on {
+.commit-graph li.on {
   background: var(--hunk);
 }
 
-.history-list button {
+.commit-graph button {
   width: 100%;
-  display: grid;
+  height: 32px;
+  display: flex;
+  align-items: center;
   text-align: left;
   border: 0;
   border-radius: 0;
   background: none;
-  padding: 10px 16px;
+  padding: 0 16px 0 0;
 }
 
-.history-list b,
-.history-list small {
+.commit-graph button:hover {
+  background: color-mix(in srgb, var(--hunk) 50%, transparent);
+}
+
+.commit-graph .refs {
+  flex: 0 0 200px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 0 8px;
+  overflow: hidden;
+}
+
+.commit-graph .ref {
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  line-height: 18px;
+  padding: 0 6px;
+  border: 1px solid;
+  border-left-width: 3px;
+  border-radius: 4px;
+  background: var(--panel);
+}
+
+.commit-graph .ref.current {
+  font-weight: 700;
+}
+
+.commit-graph .ref-remote,
+.commit-graph .ref-tag {
+  color: var(--mute);
+}
+
+.commit-graph .ref-tag {
+  border-style: dashed;
+  border-left-style: solid;
+}
+
+.commit-graph .graph {
+  flex-shrink: 0;
+  overflow: visible;
+}
+
+.commit-graph .graph path {
+  fill: none;
+  stroke-width: 2;
+}
+
+.commit-graph .node {
+  stroke-width: 2;
+}
+
+.commit-graph li.on .node {
+  stroke: var(--ink);
+}
+
+.commit-graph .info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding-left: 10px;
+}
+
+.commit-graph .info b {
+  flex: 1;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.history-list small {
+.commit-graph .info small {
+  flex-shrink: 0;
   color: var(--mute);
 }
 
-.history-list .pending b {
+.commit-graph .pending .info b {
+  font-style: italic;
   color: var(--accent);
 }

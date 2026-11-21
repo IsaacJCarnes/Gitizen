@@ -21,6 +21,31 @@ const parentOf = async (hash: string): Promise<string> => {
   return line.trim().split(" ")[1] ?? EMPTY_TREE;
 };
 
+type GitRef = {
+  name: string;
+  type: "branch" | "remote" | "tag" | "head";
+  current?: boolean;
+};
+
+// %D with --decorate=full, e.g. "HEAD -> refs/heads/main, tag: refs/tags/v1"
+const parseRefs = (decoration: string): GitRef[] =>
+  decoration
+    .split(", ")
+    .filter(Boolean)
+    .map((ref): GitRef => {
+      if (ref.startsWith("HEAD -> refs/heads/"))
+        return { name: ref.slice(19), type: "branch", current: true };
+      if (ref === "HEAD") return { name: "HEAD", type: "head", current: true };
+      if (ref.startsWith("tag: refs/tags/"))
+        return { name: ref.slice(15), type: "tag" };
+      if (ref.startsWith("refs/heads/"))
+        return { name: ref.slice(11), type: "branch" };
+      if (ref.startsWith("refs/remotes/"))
+        return { name: ref.slice(13), type: "remote" };
+      return { name: ref, type: "branch" };
+    })
+    .filter((ref) => !ref.name.endsWith("/HEAD"));
+
 export function registerGitIpc(): void {
   ipcMain.handle("repo:open", async () => {
     const res = await dialog.showOpenDialog({ properties: ["openDirectory"] });
@@ -47,15 +72,35 @@ export function registerGitIpc(): void {
     };
   });
 
+  // Every branch, remote and tag (stashes excluded), newest first with
+  // children always before parents, which is what the commit graph needs.
   ipcMain.handle("git:log", async () => {
-    const l = await need().log({ maxCount: 100 });
-    return l.all.map((c) => ({
-      hash: c.hash,
-      message: c.message,
-      body: c.body,
-      author: c.author_name,
-      date: c.date,
-    }));
+    const out = await need().raw([
+      "log",
+      "--decorate=full",
+      "--exclude=refs/stash",
+      "--all",
+      "--date-order",
+      "--max-count=500",
+      "--format=%H%x1f%P%x1f%D%x1f%an%x1f%aI%x1f%s%x1f%b%x1e",
+    ]);
+    return out
+      .split("\x1e")
+      .map((record) => record.replace(/^\n/, ""))
+      .filter(Boolean)
+      .map((record) => {
+        const [hash, parents, refs, author, date, message, body] =
+          record.split("\x1f");
+        return {
+          hash,
+          parents: parents ? parents.split(" ") : [],
+          refs: parseRefs(refs),
+          author,
+          date,
+          message,
+          body: body.trim(),
+        };
+      });
   });
 
   ipcMain.handle("git:branches", async () => {

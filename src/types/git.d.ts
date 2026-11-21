@@ -11,8 +11,16 @@ export interface GitStatus {
   files: FileChange[]
 }
 
+export interface GitRef {
+  name: string
+  type: 'branch' | 'remote' | 'tag' | 'head'
+  current?: boolean
+}
+
 export interface GitCommit {
   hash: string
+  parents: string[]
+  refs: GitRef[]
   message: string
   body: string
   author: string
