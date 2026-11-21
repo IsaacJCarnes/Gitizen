@@ -15,9 +15,13 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 - Ahead/behind counts against the upstream branch are shown when non-zero.
 
 ### Working tree changes
-- Sidebar lists **Unstaged** and **Staged** files separately, each with its git status code (M, A, D, ?, …).
-- Stage or unstage a single file with one click. The file stays selected as it moves between lists.
-- Click a file to see its diff (staged or unstaged) in the main panel.
+- Sidebar shows every changed file in a single **Changes** list, each with its git status code (M, A, D, R, …) and a count of fully staged files.
+- A file's status code stays the same whether it is staged or not: new files show **A** both untracked and staged.
+- Opening a repository stages every changed file, so all checkboxes start ticked.
+- Each file has a checkbox: ticking it stages the file, unticking unstages it. A partially staged file shows a mixed (dash) checkbox, and clicking it stages the rest.
+- A checkbox in the list header stages every file at once, or unstages every file when all are already staged. It shows a mixed state when only some are staged.
+- Files are sorted by path, so a file keeps its place in the list when it is staged or unstaged.
+- Click a file to see its diff in the main panel: every uncommitted change against the last commit, staged and unstaged together, so the diff stays the same when the file is staged or unstaged. Untracked files show as entirely added. The file stays selected when it is staged or unstaged.
 
 ### Committing
 - Commit message box with a button that commits the staged files (shows how many).
@@ -32,7 +36,7 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 
 ### Diffs
 - Unified diff view with added, removed and hunk-header lines highlighted.
-- Diff header shows the file path and where the change lives (commit hash, Staged or Unstaged), with a button back to the history.
+- Diff header shows the file path and where the change lives (commit hash, or Uncommitted), with a button back to the history.
 
 ### General
 - Light and dark themes follow the operating system setting.
@@ -67,7 +71,7 @@ src/                     UI (React)
   utils/                 Pure helpers: commit graph layout, formatting
   pages/GitizenView/     Top-level page layout
   components/
-    common/              Reusable pieces: DiffView, FileListItem
+    common/              Reusable pieces: DiffView, FileListItem, TriStateCheckbox
     EmptyRepositoryView/ Start screen before a repository is open
     RepositoryHeader/    Top bar (repo, branch, sync, refresh)
     RepoSidebar/         Left sidebar: working-tree files, commit form, commit files

@@ -18,6 +18,7 @@ pub fn run() {
             commands::log,
             commands::branches,
             commands::diff,
+            commands::file_diff,
             commands::commit_files,
             commands::commit_diff,
             commands::stage,

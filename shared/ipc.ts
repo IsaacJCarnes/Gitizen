@@ -19,6 +19,7 @@ export const Command = {
   Log: "log",
   Branches: "branches",
   Diff: "diff",
+  FileDiff: "file_diff",
   CommitFiles: "commit_files",
   CommitDiff: "commit_diff",
   Stage: "stage",
@@ -38,6 +39,11 @@ export interface GitizenApi {
   branches(): Promise<GitBranch[]>;
   /** Diff of one working-tree file, either its staged or its unstaged changes. */
   diff(path: string, staged: boolean): Promise<string>;
+  /**
+   * Every uncommitted change to one file (staged and unstaged together)
+   * against HEAD, so it reads the same whether or not the file is staged.
+   */
+  fileDiff(path: string): Promise<string>;
   /** Files changed by a commit, compared to its first parent. */
   commitFiles(hash: string): Promise<CommitFile[]>;
   /** Diff of one file in a commit, compared to its first parent. */

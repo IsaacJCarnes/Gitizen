@@ -6,7 +6,7 @@ import DiffView from "../common/DiffView";
 
 /**
  * Diff of the file picked in the sidebar, with a header naming the file and
- * where the change lives (a commit's short hash, or Staged/Unstaged) and a
+ * where the change lives (a commit's short hash, or Uncommitted) and a
  * button back to the history.
  */
 export default function FileDiff(): React.JSX.Element {
@@ -17,7 +17,7 @@ export default function FileDiff(): React.JSX.Element {
   const path = selectedCommit ? selectedCommitFile?.path : selectedFile?.path;
   let source: string;
   if (selectedCommit) source = shortHash(selectedCommit.hash);
-  else source = selectedFile?.staged ? "Staged" : "Unstaged";
+  else source = "Uncommitted";
 
   return (
     <div className="file-diff">

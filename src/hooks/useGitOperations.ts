@@ -34,7 +34,8 @@ export interface GitOperations {
   setCommitMessage: (message: string) => void;
   openRepository: () => Promise<void>;
   refresh: () => Promise<void>;
-  toggleFileStage: (file: FileChange) => Promise<void>;
+  /** Stages (`staged` true) or unstages every given path in one git call. */
+  setFilesStaged: (paths: string[], staged: boolean) => Promise<void>;
   commitChanges: () => Promise<void>;
   checkoutBranch: (branch: string) => Promise<void>;
 }
@@ -60,6 +61,16 @@ function loadUnlessCancelled<T>(
   return () => {
     active = false;
   };
+}
+
+/**
+ * Stages every file with working-tree changes (untracked files included),
+ * so a freshly loaded repository starts with every file ticked.
+ */
+async function stageAllChanges(): Promise<void> {
+  const { files } = await gitizen.status();
+  const paths = [...new Set(files.filter((file) => !file.staged).map((file) => file.path))];
+  if (paths.length > 0) await gitizen.stage(paths);
 }
 
 /**
@@ -137,19 +148,20 @@ export function useGitOperations(): GitOperations {
       setSelectedFile(null);
       setDiff("");
       selectCommit(null);
+      await stageAllChanges();
       await refresh();
     } catch (openError) {
       reportError(openError);
     }
   }, [refresh, reportError, selectCommit]);
 
-  const toggleFileStage = useCallback(
-    (file: FileChange): Promise<void> =>
-      runOperation(() =>
-        file.staged
-          ? gitizen.unstage([file.path])
-          : gitizen.stage([file.path]),
-      ),
+  const setFilesStaged = useCallback(
+    (paths: string[], staged: boolean): Promise<void> => {
+      if (paths.length === 0) return Promise.resolve();
+      return runOperation(() =>
+        staged ? gitizen.stage(paths) : gitizen.unstage(paths),
+      );
+    },
     [runOperation],
   );
 
@@ -171,15 +183,16 @@ export function useGitOperations(): GitOperations {
 
   // ---- Derived data loading ------------------------------------------------
 
-  // Diff of the selected working-tree file; reloaded after every refresh
-  // because staging or editing changes it.
+  // Diff of the selected working-tree file against HEAD, staged and unstaged
+  // changes together, so staging doesn't change it. Reloaded after every
+  // refresh because editing the file does.
   useEffect(() => {
     if (!selectedFile) {
       setDiff("");
       return;
     }
     return loadUnlessCancelled(
-      gitizen.diff(selectedFile.path, selectedFile.staged),
+      gitizen.fileDiff(selectedFile.path),
       setDiff,
       (diffError) => {
         setDiff("");
@@ -247,7 +260,7 @@ export function useGitOperations(): GitOperations {
     setCommitMessage,
     openRepository,
     refresh,
-    toggleFileStage,
+    setFilesStaged,
     commitChanges,
     checkoutBranch,
   };

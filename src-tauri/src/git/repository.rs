@@ -36,7 +36,7 @@ impl OpenRepository {
 }
 
 /// git's well-known empty tree, used as the "parent" of a root commit.
-const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// Rejects anything that isn't a hex commit hash, so UI input can never be
 /// read by git as an option or a revision expression.

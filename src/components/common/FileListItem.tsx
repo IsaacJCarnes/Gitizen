@@ -9,12 +9,15 @@ interface FileListItemProps {
   onSelect: () => void;
   /** Optional tooltip for the path. */
   title?: string;
+  /** Optional control before the status code, e.g. a stage checkbox. */
+  leading?: ReactNode;
   /** Optional trailing control, e.g. a Stage/Unstage button. */
   action?: ReactNode;
 }
 
 /**
- * One row of a changed-file list: status code, path and an optional action.
+ * One row of a changed-file list: an optional leading control, status code,
+ * path and an optional action.
  * Render inside a `<ul className="file-change-list">`.
  */
 export default function FileListItem({
@@ -23,10 +26,12 @@ export default function FileListItem({
   selected,
   onSelect,
   title,
+  leading,
   action,
 }: FileListItemProps): React.JSX.Element {
   return (
     <li className={selected ? "on" : ""}>
+      {leading}
       <button className="name" title={title} onClick={onSelect}>
         <span className={`code c-${code}`}>{code}</span>
         {path}

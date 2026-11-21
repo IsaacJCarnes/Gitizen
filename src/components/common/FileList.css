@@ -25,6 +25,13 @@
   padding: 2px 8px;
 }
 
+.stage-check {
+  margin: 0;
+  flex: none;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
 .file-change-list .code {
   display: inline-block;
   width: 1.6em;

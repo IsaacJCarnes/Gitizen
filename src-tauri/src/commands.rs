@@ -10,7 +10,9 @@ use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::git::parsers::{parse_log, parse_name_status, parse_status, LOG_FORMAT};
-use crate::git::repository::{assert_branch_name, assert_hash, first_parent_of, OpenRepository};
+use crate::git::repository::{
+    assert_branch_name, assert_hash, first_parent_of, OpenRepository, EMPTY_TREE,
+};
 use crate::git::runner::run_git;
 use crate::git::types::{CommitFile, GitBranch, GitCommit, GitStatus};
 
@@ -83,6 +85,66 @@ pub async fn diff(repo: Repo<'_>, path: String, staged: bool) -> Result<String, 
     }
     args.extend(["--", path.as_str()]);
     run_git(&repo.require()?, args)
+}
+
+/// Every uncommitted change to one file, staged and unstaged together,
+/// compared to HEAD (or to nothing before the first commit). The result is
+/// the same whether or not the file is staged. Untracked files show as
+/// entirely added.
+#[tauri::command]
+pub async fn file_diff(repo: Repo<'_>, path: String) -> Result<String, String> {
+    let dir = repo.require()?;
+    // git refuses paths outside the repository here, so the file read
+    // below can only reach files git reports as untracked in it.
+    let entry = run_git(
+        &dir,
+        ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", path.as_str()],
+    )?;
+    if entry.starts_with("??") {
+        let contents = std::fs::read(dir.join(&path)).map_err(|error| error.to_string())?;
+        let hash = run_git(&dir, ["hash-object", "--", path.as_str()])?;
+        return Ok(new_file_diff(&path, hash.trim(), &contents));
+    }
+    let base = if run_git(&dir, ["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok() {
+        "HEAD"
+    } else {
+        EMPTY_TREE
+    };
+    run_git(&dir, ["diff", "-M", base, "--", path.as_str()])
+}
+
+/// Unified diff that adds `contents` (whose blob hash is `hash`) as a new
+/// file, matching what `git diff HEAD` prints once the file is staged. Used
+/// for untracked files, which `git diff` doesn't show.
+fn new_file_diff(path: &str, hash: &str, contents: &[u8]) -> String {
+    let short = hash.get(..7).unwrap_or(hash);
+    let mut diff =
+        format!("diff --git a/{path} b/{path}\nnew file mode 100644\nindex 0000000..{short}\n");
+    if contents.contains(&0) {
+        diff.push_str(&format!("Binary files /dev/null and b/{path} differ\n"));
+        return diff;
+    }
+    let text = String::from_utf8_lossy(contents);
+    if text.is_empty() {
+        return diff;
+    }
+    let lines: Vec<&str> = text.strip_suffix('\n').unwrap_or(&text).split('\n').collect();
+    let range = match lines.len() {
+        1 => "1".to_string(),
+        count => format!("1,{count}"),
+    };
+    // git ends a file header line with a tab when the path has a space.
+    let tab = if path.contains(' ') { "\t" } else { "" };
+    diff.push_str(&format!("--- /dev/null\n+++ b/{path}{tab}\n@@ -0,0 +{range} @@\n"));
+    for line in &lines {
+        diff.push('+');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    if !text.ends_with('\n') {
+        diff.push_str("\\ No newline at end of file\n");
+    }
+    diff
 }
 
 /// Files changed by a commit, compared to its first parent.
@@ -178,8 +240,8 @@ mod tests {
         let app = mock_builder()
             .manage(OpenRepository::default())
             .invoke_handler(tauri::generate_handler![
-                status, log, branches, diff, commit_files, commit_diff, stage, unstage, commit,
-                checkout,
+                status, log, branches, diff, file_diff, commit_files, commit_diff, stage, unstage,
+                commit, checkout,
             ])
             .build(mock_context(noop_assets()))
             .unwrap();
@@ -247,6 +309,15 @@ mod tests {
         );
         let unstaged = call(&window, "diff", json!({ "path": "b.txt", "staged": false })).unwrap();
         assert!(unstaged.as_str().unwrap().contains("+two"));
+
+        // file_diff reads the same before and after staging, untracked files included.
+        let file_diff = |path: &str| call(&window, "file_diff", json!({ "path": path })).unwrap();
+        let before = (file_diff("b.txt"), file_diff("new file.txt"));
+        assert!(before.0.as_str().unwrap().contains("+two"));
+        assert!(before.1.as_str().unwrap().contains("@@ -0,0 +1 @@\n+hi\n"));
+        call(&window, "stage", json!({ "paths": ["b.txt", "new file.txt"] })).unwrap();
+        assert_eq!((file_diff("b.txt"), file_diff("new file.txt")), before);
+        call(&window, "unstage", json!({ "paths": ["b.txt", "new file.txt"] })).unwrap();
 
         call(&window, "stage", json!({ "paths": ["b.txt"] })).unwrap();
         let staged = call(&window, "diff", json!({ "path": "b.txt", "staged": true })).unwrap();

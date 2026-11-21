@@ -102,9 +102,10 @@ pub fn parse_name_status(output: &str) -> Vec<CommitFile> {
 
 /// Parses `git status --porcelain=v1 -b -z` output.
 ///
-/// Each changed path is one entry: it counts as staged when its index column
-/// shows a change, and its code is the index letter, or the working-tree
-/// letter when the index is clean ("?" for untracked files).
+/// A path with staged changes gets a staged entry (coded by the index letter),
+/// and a path with working-tree changes gets an unstaged entry (coded by the
+/// working-tree letter, "?" for untracked files). A partially staged path,
+/// such as "MM", gets both.
 pub fn parse_status(output: &str) -> GitStatus {
     let mut status = GitStatus {
         branch: None,
@@ -128,12 +129,20 @@ pub fn parse_status(output: &str) -> GitStatus {
         if matches!(index, 'R' | 'C') || matches!(work_tree, 'R' | 'C') {
             entries.next();
         }
-        let code = if index != ' ' { index } else { work_tree };
-        status.files.push(FileChange {
-            path,
-            staged: index != ' ' && index != '?',
-            code: code.to_string(),
-        });
+        if index != ' ' && index != '?' {
+            status.files.push(FileChange {
+                path: path.clone(),
+                staged: true,
+                code: index.to_string(),
+            });
+        }
+        if work_tree != ' ' {
+            status.files.push(FileChange {
+                path,
+                staged: false,
+                code: work_tree.to_string(),
+            });
+        }
     }
     status
 }
@@ -232,6 +241,7 @@ mod tests {
                 ("new file.ts", false, "?"),
                 ("renamed.ts", true, "R"),
                 ("both.ts", true, "M"),
+                ("both.ts", false, "M"),
             ]
         );
     }

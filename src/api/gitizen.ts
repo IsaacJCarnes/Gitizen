@@ -15,6 +15,7 @@ export const gitizen: GitizenApi = {
   log: () => invoke(Command.Log),
   branches: () => invoke(Command.Branches),
   diff: (path, staged) => invoke(Command.Diff, { path, staged }),
+  fileDiff: (path) => invoke(Command.FileDiff, { path }),
   commitFiles: (hash) => invoke(Command.CommitFiles, { hash }),
   commitDiff: (hash, path, oldPath) =>
     invoke(Command.CommitDiff, { hash, path, oldPath }),
