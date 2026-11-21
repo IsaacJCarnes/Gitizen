@@ -1,0 +1,32 @@
+.history-list li {
+  border-bottom: 1px solid var(--line);
+}
+
+.history-list li.on {
+  background: var(--hunk);
+}
+
+.history-list button {
+  width: 100%;
+  display: grid;
+  text-align: left;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  padding: 10px 16px;
+}
+
+.history-list b,
+.history-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-list small {
+  color: var(--mute);
+}
+
+.history-list .pending b {
+  color: var(--accent);
+}

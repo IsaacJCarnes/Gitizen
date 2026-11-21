@@ -1,10 +1,11 @@
 import { useContext, createContext } from "react";
 
-export type RepoView = "changes" | "history";
+// "history" lists commits in the main panel; "diff" shows the file picked in the sidebar.
+export type RepoView = "history" | "diff";
 
 export interface AppData {
-  view: string;
-  setView: (name: string) => void;
+  view: RepoView;
+  setView: (view: RepoView) => void;
 }
 
 export const AppContext = createContext<AppData | undefined>(undefined);

@@ -52,35 +52,18 @@
   color: #b3261e;
 }
 
-.sidebar-tabs {
-  display: flex;
+.commit-summary {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--line);
-  position: sticky;
-  top: 0;
-  background: var(--panel);
-  z-index: 1;
 }
 
-.sidebar-tabs button {
-  flex: 1;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: none;
-  padding: 8px 10px;
+.commit-summary p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.commit-summary small {
   color: var(--mute);
-  font-weight: 600;
-}
-
-.sidebar-tabs button.on {
-  color: var(--ink);
-  border-bottom-color: var(--accent);
-}
-
-.sidebar-tabs .count {
-  margin-left: 6px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--hunk);
-  font-size: 12px;
 }

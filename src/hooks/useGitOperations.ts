@@ -130,6 +130,16 @@ export function useGitOperations(): GitOperations {
     }
   }, [selectedFile, status])
 
+  // Staging or unstaging moves a file between lists; keep it selected
+  // in its new list, and drop the selection once the file has no changes.
+  useEffect(() => {
+    setSelectedFile((current) => {
+      if (!current || !status) return current
+      const files = status.files.filter((file) => file.path === current.path)
+      return files.find((file) => file.staged === current.staged) ?? files[0] ?? null
+    })
+  }, [status])
+
   useEffect(() => {
     if (!selectedCommit) return
 
@@ -137,7 +147,6 @@ export function useGitOperations(): GitOperations {
     window.gitizen.commitFiles(selectedCommit.hash).then((files) => {
       if (!active) return
       setCommitFiles(files)
-      setSelectedCommitFile(files[0] ?? null)
     }).catch((filesError: unknown) => {
       if (active) setError(getErrorMessage(filesError))
     })

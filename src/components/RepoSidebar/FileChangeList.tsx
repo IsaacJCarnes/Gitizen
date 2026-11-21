@@ -1,4 +1,5 @@
 import type { FileChange } from "../../types/git";
+import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 
 interface FileChangeListProps {
@@ -10,6 +11,7 @@ export default function FileChangeList({
 }: FileChangeListProps): React.JSX.Element {
   const { status, selectedFile, setSelectedFile, toggleFileStage } =
     useGitOperationsContext();
+  const { setView } = useAppContext();
   const files: FileChange[] =
     status?.files.filter((file) => file.staged === staged) ?? [];
 
@@ -29,7 +31,10 @@ export default function FileChangeList({
                 : ""
             }
           >
-            <button className="name" onClick={() => setSelectedFile(file)}>
+            <button className="name" onClick={() => {
+                setSelectedFile(file);
+                setView("diff");
+              }}>
               <span className={`code c-${file.code}`}>{file.code}</span>
               {file.path}
             </button>
