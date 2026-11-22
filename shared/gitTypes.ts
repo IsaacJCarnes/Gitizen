@@ -29,6 +29,8 @@ export interface FileDiff {
 export interface GitStatus {
   /** Current branch name, or null when HEAD is detached. */
   branch: string | null;
+  /** The branch it tracks, e.g. "origin/main"; absent when it tracks none. */
+  upstream?: string;
   ahead: number;
   behind: number;
   files: FileChange[];
@@ -55,6 +57,12 @@ export interface GitCommit {
   author: string;
   /** Author date in ISO 8601 format. */
   date: string;
+}
+
+/** A configured remote, e.g. `origin` and its fetch URL. */
+export interface Remote {
+  name: string;
+  url: string;
 }
 
 /** A local branch. */

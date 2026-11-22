@@ -7,11 +7,41 @@
   background: var(--panel);
 }
 
-.repository-header .sync {
-  color: var(--mute);
-  margin-right: auto;
+.sync-controls {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
 }
 
-.repository-header > button:last-child {
-  margin-left: auto;
+.sync-controls .count {
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.publish-form {
+  display: grid;
+  gap: 10px;
+  white-space: normal;
+}
+
+.publish-form .publish-modes {
+  display: flex;
+  gap: 16px;
+}
+
+.publish-form label {
+  display: grid;
+  gap: 4px;
+}
+
+.publish-form label.inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.publish-form .hint {
+  margin: 0;
+  color: var(--mute);
+  font-size: 12.5px;
 }

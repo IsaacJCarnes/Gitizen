@@ -5,6 +5,7 @@ mod ai_commit;
 mod commands;
 mod git;
 mod recent_repos;
+mod remote;
 
 use git::repository::OpenRepository;
 use ai_commit::AppSettings;
@@ -40,6 +41,12 @@ pub fn run() {
             ai_commit::ai_commit_command,
             ai_commit::set_ai_commit_command,
             ai_commit::generate_commit_message,
+            remote::remotes,
+            remote::add_remote,
+            remote::publish_repository,
+            remote::fetch,
+            remote::pull,
+            remote::push,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Gitizen");

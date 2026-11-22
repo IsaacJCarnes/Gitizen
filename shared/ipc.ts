@@ -12,6 +12,7 @@ import type {
   GitBranch,
   GitCommit,
   GitStatus,
+  Remote,
 } from "./gitTypes";
 
 export const Command = {
@@ -36,6 +37,12 @@ export const Command = {
   AiCommitCommand: "ai_commit_command",
   SetAiCommitCommand: "set_ai_commit_command",
   GenerateCommitMessage: "generate_commit_message",
+  Remotes: "remotes",
+  AddRemote: "add_remote",
+  PublishRepository: "publish_repository",
+  Fetch: "fetch",
+  Pull: "pull",
+  Push: "push",
 } as const;
 
 export type CommandName = (typeof Command)[keyof typeof Command];
@@ -114,4 +121,20 @@ export interface GitizenApi {
    * what it prints into summary and description. Stages and commits nothing.
    */
   generateCommitMessage(): Promise<GeneratedCommitMessage>;
+  /** Every configured remote with its URL. */
+  remotes(): Promise<Remote[]>;
+  /** Adds a remote (normally `origin`) pointing at an existing repository URL. */
+  addRemote(name: string, url: string): Promise<void>;
+  /**
+   * Creates a GitHub repository with the GitHub CLI (`gh`), adds it as
+   * `origin` and pushes the current branch. Rejects with gh's message (or
+   * install instructions when gh is missing).
+   */
+  publishRepository(name: string, description: string, isPrivate: boolean): Promise<void>;
+  /** Fetches every remote and prunes deleted remote branches. */
+  fetch(): Promise<void>;
+  /** Pulls the current branch's upstream into it (a merge unless `pull.rebase` is set). */
+  pull(): Promise<void>;
+  /** Pushes the current branch, publishing it to `origin` with tracking if it has no upstream yet. */
+  push(): Promise<void>;
 }

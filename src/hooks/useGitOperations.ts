@@ -6,10 +6,14 @@ import type {
   GitBranch,
   GitCommit,
   GitStatus,
+  Remote,
 } from "../../shared/gitTypes";
 import { gitizen } from "../api/gitizen";
 import { toAppError, type AppError } from "../utils/errors";
 import { useDiffSettings } from "./useDiffSettings";
+
+/** A network operation the header's sync buttons can run. */
+export type SyncAction = "fetch" | "pull" | "push";
 
 /** Everything the UI reads about the open repository, plus the actions it can take. */
 export interface GitOperations {
@@ -18,6 +22,16 @@ export interface GitOperations {
   status: GitStatus | null;
   commits: GitCommit[];
   branches: GitBranch[];
+  /** Configured remotes; empty until the repository is published or a remote is added. */
+  remotes: Remote[];
+  /** The sync operation running now, or null. Only one runs at a time. */
+  syncing: SyncAction | null;
+  /** Fetches, pulls or pushes the current branch, then refreshes. */
+  sync: (action: SyncAction) => Promise<void>;
+  /** Adds a remote pointing at an existing repository. Resolves to true on success. */
+  addRemote: (name: string, url: string) => Promise<boolean>;
+  /** Creates the repository on GitHub with the GitHub CLI and pushes to it. Resolves to true on success. */
+  publishRepository: (name: string, description: string, isPrivate: boolean) => Promise<boolean>;
   /** Working-tree file chosen in the sidebar, and its diff. */
   selectedFile: FileChange | null;
   diff: string;
@@ -115,6 +129,8 @@ export function useGitOperations({
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [branches, setBranches] = useState<GitBranch[]>([]);
+  const [remotes, setRemotes] = useState<Remote[]>([]);
+  const [syncing, setSyncing] = useState<SyncAction | null>(null);
   const [selectedFile, setSelectedFile] = useState<FileChange | null>(null);
   const [{ diff, stagedLines }, setFileDiff] = useState(NO_DIFF);
   const [commitSummary, setCommitSummary] = useState("");
@@ -146,17 +162,19 @@ export function useGitOperations({
     setCommitDiff("");
   }, []);
 
-  /** Reloads status, history and branches together. */
+  /** Reloads status, history, branches and remotes together. */
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const [nextStatus, nextCommits, nextBranches] = await Promise.all([
+      const [nextStatus, nextCommits, nextBranches, nextRemotes] = await Promise.all([
         gitizen.status(),
         gitizen.log(),
         gitizen.branches(),
+        gitizen.remotes(),
       ]);
       setStatus(nextStatus);
       setCommits(nextCommits);
       setBranches(nextBranches);
+      setRemotes(nextRemotes);
     } catch (refreshError) {
       reportError(refreshError);
     }
@@ -258,6 +276,45 @@ export function useGitOperations({
     [runOperation],
   );
 
+  const sync = useCallback(
+    async (action: SyncAction): Promise<void> => {
+      setSyncing(action);
+      const run = { fetch: gitizen.fetch, pull: gitizen.pull, push: gitizen.push }[action];
+      await runOperation(run);
+      setSyncing(null);
+    },
+    [runOperation],
+  );
+
+  /** Runs `operation` and refreshes; resolves to false (with the error shown) if it failed. */
+  const succeeds = useCallback(
+    async (operation: () => Promise<unknown>): Promise<boolean> => {
+      let ok = false;
+      await runOperation(async () => {
+        await operation();
+        ok = true;
+      });
+      return ok;
+    },
+    [runOperation],
+  );
+
+  const addRemote = useCallback(
+    (name: string, url: string) => succeeds(() => gitizen.addRemote(name, url)),
+    [succeeds],
+  );
+
+  const publishRepository = useCallback(
+    async (name: string, description: string, isPrivate: boolean): Promise<boolean> => {
+      // Publishing pushes, so the header shows it like a push meanwhile.
+      setSyncing("push");
+      const ok = await succeeds(() => gitizen.publishRepository(name, description, isPrivate));
+      setSyncing(null);
+      return ok;
+    },
+    [succeeds],
+  );
+
   const stageLines = useCallback(
     (lines: number[], staged: boolean): Promise<void> => {
       if (!selectedFile || lines.length === 0 || hideWhitespace) {
@@ -336,6 +393,11 @@ export function useGitOperations({
     status,
     commits,
     branches,
+    remotes,
+    syncing,
+    sync,
+    addRemote,
+    publishRepository,
     selectedFile,
     diff,
     stagedLines,

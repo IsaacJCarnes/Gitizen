@@ -35,4 +35,12 @@ export const gitizen: GitizenApi = {
   aiCommitCommand: () => invoke(Command.AiCommitCommand),
   setAiCommitCommand: (command) => invoke(Command.SetAiCommitCommand, { command }),
   generateCommitMessage: () => invoke(Command.GenerateCommitMessage),
+  remotes: () => invoke(Command.Remotes),
+  addRemote: (name, url) => invoke(Command.AddRemote, { name, url }),
+  // The Rust parameter is named `private`, which is reserved in TypeScript.
+  publishRepository: (name, description, isPrivate) =>
+    invoke(Command.PublishRepository, { name, description, private: isPrivate }),
+  fetch: () => invoke(Command.Fetch),
+  pull: () => invoke(Command.Pull),
+  push: () => invoke(Command.Push),
 };

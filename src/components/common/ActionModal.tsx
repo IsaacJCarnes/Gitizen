@@ -7,6 +7,7 @@ export interface ModalAction {
   onClick: () => void;
   /** Styles it as the main choice and gives it focus when the modal opens. */
   primary?: boolean;
+  disabled?: boolean;
 }
 
 interface ActionModalProps {
@@ -64,6 +65,7 @@ export default function ActionModal({
             <button
               key={action.label}
               className={action.primary ? "primary" : undefined}
+              disabled={action.disabled}
               onClick={action.onClick}
             >
               {action.label}
