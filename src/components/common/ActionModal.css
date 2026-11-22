@@ -1,0 +1,49 @@
+.action-modal {
+  padding: 0;
+  width: min(440px, calc(100vw - 48px));
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.25);
+}
+
+.action-modal::backdrop {
+  background: rgb(0 0 0 / 0.35);
+}
+
+.action-modal-content {
+  padding: 18px 20px 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.action-modal h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.action-modal-body {
+  max-height: 50vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.action-modal-body p {
+  margin: 0 0 8px;
+}
+
+.action-modal-body p:last-child {
+  margin-bottom: 0;
+}
+
+.action-modal-body code {
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.action-modal footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

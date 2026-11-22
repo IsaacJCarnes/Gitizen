@@ -10,8 +10,3 @@ export const pluralize = (count: number, noun: string): string =>
 /** Last segment of a path, e.g. "D:\\Github\\Gitizen" -> "Gitizen". */
 export const baseName = (path: string): string | undefined =>
   path.split(/[\\/]/).pop();
-
-/** Turns anything thrown (Error, IPC error, string) into a message to show. */
-export function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

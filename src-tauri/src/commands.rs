@@ -17,7 +17,8 @@ use crate::git::patch::{
     changed_line_numbers, index_content, stages_any_addition, staged_line_indices,
 };
 use crate::git::repository::{
-    assert_branch_name, assert_hash, first_parent_of, OpenRepository, EMPTY_TREE,
+    assert_branch_name, assert_hash, first_parent_of, init_repository as git_init, OpenError,
+    OpenRepository, EMPTY_TREE,
 };
 use crate::git::runner::{run_git, run_git_bytes, run_git_with_input};
 use crate::git::types::{CommitFile, FileDiff, GitBranch, GitCommit, GitStatus};
@@ -25,15 +26,26 @@ use crate::git::types::{CommitFile, FileDiff, GitBranch, GitCommit, GitStatus};
 type Repo<'a> = State<'a, OpenRepository>;
 
 /// Shows a folder picker and opens the chosen repository. Returns its path,
-/// or None if the picker was cancelled.
+/// or None if the picker was cancelled. A folder that isn't a repository
+/// fails with `OpenError::NotARepository` so the UI can offer `init_repository`.
 #[tauri::command]
-pub async fn open_repository(app: AppHandle, repo: Repo<'_>) -> Result<Option<String>, String> {
+pub async fn open_repository(app: AppHandle, repo: Repo<'_>) -> Result<Option<String>, OpenError> {
     let Some(folder) = app.dialog().file().blocking_pick_folder() else {
         return Ok(None);
     };
     let directory = folder.into_path().map_err(|error| error.to_string())?;
     repo.open(directory.clone())?;
     Ok(Some(directory.to_string_lossy().into_owned()))
+}
+
+/// Runs `git init` in `path` (a folder the user picked that isn't a
+/// repository yet) and opens it. Returns the path.
+#[tauri::command]
+pub async fn init_repository(repo: Repo<'_>, path: String) -> Result<String, String> {
+    let directory = std::path::PathBuf::from(&path);
+    git_init(&directory)?;
+    repo.open(directory)?;
+    Ok(path)
 }
 
 #[tauri::command]

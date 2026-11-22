@@ -6,7 +6,8 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 ## Features so far
 
 ### Repositories
-- Open a local repository with a folder picker. Folders that aren't git repositories are rejected with an error.
+- Open a local repository with a folder picker.
+- Picking a folder that isn't a git repository pops up a modal offering **Create repository**, which runs `git init` in that folder and opens it. Folders already inside a repository are never re-initialised.
 - The repository name in the header reopens the picker to switch to another repository.
 - Refresh button reloads status, history and branches.
 
@@ -47,7 +48,7 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 
 ### General
 - Light and dark themes follow the operating system setting.
-- Git errors are shown in an error bar instead of failing silently.
+- Git errors pop up in a modal with git's message instead of failing silently. The modal stays until dismissed (OK, Escape or a click outside), and offers an action when one can fix the problem.
 
 ## Project structure
 
@@ -65,7 +66,7 @@ src-tauri/               Rust backend (Tauri 2)
     commands.rs          One Tauri command per git operation
     git/
       runner.rs          Runs the git CLI (no shell, no console window)
-      repository.rs      Holds the open repository; input validation and parent lookup
+      repository.rs      Holds the open repository (and `git init`); input validation and parent lookup
       parsers.rs         Pure functions that parse raw git output (unit tested)
       patch.rs           Works out which diff lines are staged and builds index content for line staging (unit tested)
       types.rs           Rust mirrors of shared/gitTypes.ts
@@ -77,11 +78,12 @@ src/                     UI (React)
   context/               React contexts: UI view state and git state
   hooks/useGitOperations.ts  All git state and actions for the app
   hooks/useDiffSettings.ts   Diff layout and whitespace settings, saved in localStorage
-  utils/                 Pure helpers: commit graph layout, formatting, diff line parsing
+  utils/                 Pure helpers: commit graph layout, formatting, diff line parsing, error normalising
   pages/GitizenView/     Top-level page layout
   components/
-    common/              Reusable pieces: DiffView, FileListItem, TriStateCheckbox
+    common/              Reusable pieces: DiffView, FileListItem, TriStateCheckbox, ActionModal
     EmptyRepositoryView/ Start screen before a repository is open
+    ErrorModal/          Pops up failed operations; offers git init for non-repositories
     RepositoryHeader/    Top bar (repo, branch, sync, refresh)
     RepoSidebar/         Left sidebar: working-tree files, commit form, commit files
     RepoPanel/           Main panel: commit history graph and file diff
@@ -90,6 +92,7 @@ src/                     UI (React)
 ## Conventions
 - Each component lives next to its own CSS file, grouped in a folder by the area of the screen it belongs to.
 - Anything returned by the backend is typed in `shared/gitTypes.ts` and mirrored in `src-tauri/src/git/types.rs`. A new git operation gets a name in `Command` (`shared/ipc.ts`), a method in `GitizenApi`, a call in `src/api/gitizen.ts` (TypeScript checks it matches `GitizenApi`), and a `#[tauri::command]` in `src-tauri/src/commands.rs` registered in `lib.rs`.
+- Commands reject with git's message as a plain string. The exception is opening a repository, which rejects with an `OpenRepositoryError` object (`{ kind: "notARepository", path, message }` or `{ kind: "failed", message }`, `OpenError` in Rust) so the UI can offer to create one. `useGitOperations` normalises every failure into that shape for the error modal.
 - Tauri maps camelCase argument names from the UI to snake_case Rust parameters (`oldPath` becomes `old_path`).
 - Parsing logic is kept in pure functions (`src-tauri/src/git/parsers.rs`, `src/utils/`) so it can be unit tested without Tauri or React.
 - Git is run through the git CLI, so it must be installed and on PATH.

@@ -16,6 +16,7 @@ import type {
 
 export const Command = {
   OpenRepository: "open_repository",
+  InitRepository: "init_repository",
   Status: "status",
   Log: "log",
   Branches: "branches",
@@ -33,9 +34,21 @@ export const Command = {
 
 export type CommandName = (typeof Command)[keyof typeof Command];
 
+/**
+ * Commands reject with git's message as a plain string, except opening a
+ * repository, which rejects with this object (mirrors `OpenError` in
+ * src-tauri/src/git/repository.rs) so the UI can offer `initRepo` for a
+ * folder that isn't a repository yet.
+ */
+export type OpenRepositoryError =
+  | { kind: "notARepository"; path: string; message: string }
+  | { kind: "failed"; message: string };
+
 export interface GitizenApi {
   /** Shows a folder picker and opens the chosen repository. Resolves to its path, or null if cancelled. */
   openRepo(): Promise<string | null>;
+  /** Runs `git init` in `path` and opens it. Resolves to the path. */
+  initRepo(path: string): Promise<string>;
   status(): Promise<GitStatus>;
   /** Up to 500 commits across all branches, remotes and tags, children before parents. */
   log(): Promise<GitCommit[]>;

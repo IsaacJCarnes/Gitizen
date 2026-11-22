@@ -10,8 +10,3 @@
   grid-template-columns: 320px 1fr;
   min-height: 0;
 }
-
-.error.bar {
-  padding: 6px 12px;
-  background: var(--del);
-}

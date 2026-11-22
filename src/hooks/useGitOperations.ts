@@ -7,7 +7,7 @@ import type {
   GitStatus,
 } from "../../shared/gitTypes";
 import { gitizen } from "../api/gitizen";
-import { getErrorMessage } from "../utils/format";
+import { toAppError, type AppError } from "../utils/errors";
 import { useDiffSettings } from "./useDiffSettings";
 
 /** Everything the UI reads about the open repository, plus the actions it can take. */
@@ -23,8 +23,10 @@ export interface GitOperations {
   /** Indices into `diff.split("\n")` of the changed lines that are staged. */
   stagedLines: number[];
   commitMessage: string;
-  /** Last error from any git operation; cleared by the next successful refresh. */
-  error: string;
+  /** Last error from any git operation, shown in the error modal until dismissed. */
+  error: AppError | null;
+  /** Closes the error modal. */
+  dismissError: () => void;
   /** Commit chosen in the history; null means "Uncommitted changes". */
   selectedCommit: GitCommit | null;
   commitFiles: CommitFile[];
@@ -36,6 +38,8 @@ export interface GitOperations {
   setSelectedFile: (file: FileChange | null) => void;
   setCommitMessage: (message: string) => void;
   openRepository: () => Promise<void>;
+  /** Runs `git init` in `path` (a folder that isn't a repository yet) and opens it. */
+  initRepository: (path: string) => Promise<void>;
   refresh: () => Promise<void>;
   /** Stages (`staged` true) or unstages every given path in one git call. */
   setFilesStaged: (paths: string[], staged: boolean) => Promise<void>;
@@ -98,7 +102,7 @@ export function useGitOperations(): GitOperations {
   const [diff, setDiff] = useState("");
   const [stagedLines, setStagedLines] = useState<number[]>([]);
   const [commitMessage, setCommitMessage] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState<AppError | null>(null);
   const [selectedCommit, setSelectedCommit] = useState<GitCommit | null>(null);
   const [commitFiles, setCommitFiles] = useState<CommitFile[]>([]);
   const [selectedCommitFile, setSelectedCommitFile] = useState<CommitFile | null>(null);
@@ -108,8 +112,10 @@ export function useGitOperations(): GitOperations {
   } = useDiffSettings();
 
   const reportError = useCallback((caught: unknown): void => {
-    setError(getErrorMessage(caught));
+    setError(toAppError(caught));
   }, []);
+
+  const dismissError = useCallback((): void => setError(null), []);
 
   // ---- Actions -------------------------------------------------------------
 
@@ -133,7 +139,6 @@ export function useGitOperations(): GitOperations {
       setStatus(nextStatus);
       setCommits(nextCommits);
       setBranches(nextBranches);
-      setError("");
     } catch (refreshError) {
       reportError(refreshError);
     }
@@ -152,21 +157,42 @@ export function useGitOperations(): GitOperations {
     [refresh, reportError],
   );
 
-  const openRepository = useCallback(async (): Promise<void> => {
-    try {
-      const directory = await gitizen.openRepo();
-      if (!directory) return;
-
+  /**
+   * Shows `directory` (already opened by the backend) and clears the
+   * previous repository's selections.
+   */
+  const showRepository = useCallback(
+    async (directory: string): Promise<void> => {
       setRepo(directory);
       setSelectedFile(null);
       setDiff("");
       selectCommit(null);
       await stageAllChanges();
       await refresh();
+    },
+    [refresh, selectCommit],
+  );
+
+  const openRepository = useCallback(async (): Promise<void> => {
+    try {
+      const directory = await gitizen.openRepo();
+      if (!directory) return;
+      await showRepository(directory);
     } catch (openError) {
       reportError(openError);
     }
-  }, [refresh, reportError, selectCommit]);
+  }, [showRepository, reportError]);
+
+  const initRepository = useCallback(
+    async (path: string): Promise<void> => {
+      try {
+        await showRepository(await gitizen.initRepo(path));
+      } catch (initError) {
+        reportError(initError);
+      }
+    },
+    [showRepository, reportError],
+  );
 
   const setFilesStaged = useCallback(
     (paths: string[], staged: boolean): Promise<void> => {
@@ -282,6 +308,7 @@ export function useGitOperations(): GitOperations {
     stagedLines,
     commitMessage,
     error,
+    dismissError,
     selectedCommit,
     commitFiles,
     selectedCommitFile,
@@ -291,6 +318,7 @@ export function useGitOperations(): GitOperations {
     setSelectedFile,
     setCommitMessage,
     openRepository,
+    initRepository,
     refresh,
     setFilesStaged,
     commitChanges,

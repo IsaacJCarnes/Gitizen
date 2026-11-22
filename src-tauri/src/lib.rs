@@ -14,6 +14,7 @@ pub fn run() {
         .manage(OpenRepository::default())
         .invoke_handler(tauri::generate_handler![
             commands::open_repository,
+            commands::init_repository,
             commands::status,
             commands::log,
             commands::branches,
