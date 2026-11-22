@@ -308,9 +308,27 @@ pub async fn commit_diff(
 
 #[tauri::command]
 pub async fn stage(repo: Repo<'_>, paths: Vec<String>) -> Result<(), String> {
+    stage_in(&repo.require()?, paths)
+}
+
+fn stage_in(dir: &Path, paths: Vec<String>) -> Result<(), String> {
+    // A path that is in neither the working tree nor the index (a staged
+    // deletion, or the old half of a staged rename) has nothing left to
+    // stage, and `git add` would fail on it with "pathspec did not match".
+    let mut ls_files = vec!["ls-files".to_string(), "-z".into(), "--".into()];
+    ls_files.extend(paths.iter().cloned());
+    let output = run_git(dir, ls_files)?;
+    let indexed: HashSet<&str> = output.split('\0').filter(|p| !p.is_empty()).collect();
+    let paths: Vec<String> = paths
+        .into_iter()
+        .filter(|path| indexed.contains(path.as_str()) || dir.join(path).symlink_metadata().is_ok())
+        .collect();
+    if paths.is_empty() {
+        return Ok(());
+    }
     // "--" ends the options, so a path can never be read as one.
     let args = ["add", "--"].map(String::from).into_iter().chain(paths);
-    run_git(&repo.require()?, args).map(drop)
+    run_git(dir, args).map(drop)
 }
 
 #[tauri::command]
@@ -464,6 +482,28 @@ mod tests {
             },
         )
         .map(|body| body.deserialize::<Value>().unwrap())
+    }
+
+    /// The header checkbox over a staged rename: unstaging passes both
+    /// halves, and staging skips the old path whose deletion is already in
+    /// the index instead of failing on it.
+    #[test]
+    fn stages_and_unstages_both_halves_of_a_rename() {
+        let repo = temp_repo();
+        let porcelain = || run_git(&repo, ["status", "--porcelain"]).unwrap();
+        run_git(&repo, ["mv", "b.txt", "c.txt"]).unwrap();
+        let files = parse_status(&run_git(&repo, ["status", "--porcelain=v1", "-z"]).unwrap()).files;
+        assert_eq!(files[0].old_path.as_deref(), Some("b.txt"));
+
+        // Unstage all, as the UI sends it: the new path plus the old one.
+        let both = vec!["c.txt".to_string(), "b.txt".to_string()];
+        run_git(&repo, ["reset", "-q", "HEAD", "--", "c.txt", "b.txt"]).unwrap();
+        assert_eq!(porcelain(), " D b.txt\n?? c.txt\n");
+
+        // Stage all with the deletion of b.txt already staged on its own.
+        run_git(&repo, ["rm", "-q", "--cached", "b.txt"]).unwrap();
+        stage_in(&repo, both).unwrap();
+        assert_eq!(porcelain(), "R  b.txt -> c.txt\n");
     }
 
     /// Line staging on the combined diff, through the plain functions (no

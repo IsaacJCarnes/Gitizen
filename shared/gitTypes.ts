@@ -9,6 +9,8 @@
 /** A file with uncommitted changes in the working tree or index. */
 export interface FileChange {
   path: string;
+  /** Previous path, set for renames ("R") and copies ("C"). */
+  oldPath?: string;
   /** True when the change is in the index (staged), false for the working tree. */
   staged: boolean;
   /** Single-letter git status code, e.g. "M", "A", "D", "R" or "?". */

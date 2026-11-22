@@ -5,8 +5,12 @@ use serde::Serialize;
 
 /// A file with uncommitted changes in the working tree or index.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileChange {
     pub path: String,
+    /// Previous path, set for renames ("R") and copies ("C").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
     /// True when the change is in the index (staged), false for the working tree.
     pub staged: bool,
     /// Single-letter git status code, e.g. "M", "A", "D", "R" or "?".

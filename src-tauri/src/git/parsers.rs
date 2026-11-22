@@ -116,12 +116,20 @@ pub fn parse_status(output: &str) -> GitStatus {
         };
         // Entries are "XY <path>": X is the index letter, Y the working tree's.
         let path = entry.get(3..).unwrap_or_default();
-        // Renames and copies are followed by their original path; skip it.
-        if matches!(index, 'R' | 'C') || matches!(work_tree, 'R' | 'C') {
-            entries.next();
-        }
+        // Renames and copies are followed by their original path. It is kept
+        // so staging or unstaging the entry covers both halves of a rename.
+        let old_path = if matches!(index, 'R' | 'C') || matches!(work_tree, 'R' | 'C') {
+            entries.next().map(str::to_string)
+        } else {
+            None
+        };
         let mut push = |staged: bool, code: char| {
-            status.files.push(FileChange { path: path.to_string(), staged, code: code.to_string() })
+            status.files.push(FileChange {
+                path: path.to_string(),
+                old_path: old_path.clone(),
+                staged,
+                code: code.to_string(),
+            })
         };
         if index != ' ' && index != '?' {
             push(true, index);
@@ -230,6 +238,8 @@ mod tests {
                 ("both.ts", false, "M"),
             ]
         );
+        assert_eq!(status.files[3].old_path.as_deref(), Some("original.ts"));
+        assert_eq!(status.files[0].old_path, None);
     }
 
     #[test]

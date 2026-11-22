@@ -11,6 +11,8 @@ import { combineStates, type CheckState } from "../../utils/checkState";
  */
 interface ChangedPath {
   path: string;
+  /** Where a rename or copy came from. */
+  oldPath?: string;
   staged?: FileChange;
   unstaged?: FileChange;
 }
@@ -25,9 +27,19 @@ function groupByPath(files: FileChange[]): ChangedPath[] {
     const entry = byPath.get(file.path) ?? { path: file.path };
     if (file.staged) entry.staged = file;
     else entry.unstaged = file;
+    entry.oldPath ??= file.oldPath;
     byPath.set(file.path, entry);
   }
   return [...byPath.values()].sort((a, b) => (a.path < b.path ? -1 : 1));
+}
+
+/**
+ * The paths git must be given to stage or unstage the entry. A rename lives
+ * in the index as a deletion of the old path plus an addition of the new
+ * one, so both halves have to move together.
+ */
+function pathsOf(entry: ChangedPath): string[] {
+  return entry.oldPath ? [entry.path, entry.oldPath] : [entry.path];
 }
 
 /**
@@ -71,10 +83,10 @@ export default function FileChangeList(): React.JSX.Element {
 
   // A mixed checkbox stages the rest, like a select-all, rather than unstaging.
   const toggle = (entry: ChangedPath): Promise<void> =>
-    setFilesStaged([entry.path], stageState(entry) !== true);
+    setFilesStaged(pathsOf(entry), stageState(entry) !== true);
 
   const toggleAll = (): Promise<void> =>
-    setFilesStaged(entries.map((entry) => entry.path), allState !== true);
+    setFilesStaged(entries.flatMap(pathsOf), allState !== true);
 
   return (
     <>
