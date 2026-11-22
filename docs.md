@@ -7,8 +7,10 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 
 ### Repositories
 - Open a local repository with a folder picker.
-- Picking a folder that isn't a git repository pops up a modal offering **Create repository**, which runs `git init` in that folder and opens it. Folders already inside a repository are never re-initialised.
-- The repository name in the header reopens the picker to switch to another repository.
+- Picking a folder (or a recent repository) that isn't a git repository pops up a modal offering **Create repository**, which runs `git init` in that folder and opens it. Folders already inside a repository are never re-initialised.
+- Every repository that opens successfully is saved to a recent list (most recent first, up to 15), kept in `recent-repositories.json` in the app's config folder so it survives restarts.
+- The repository name in the header opens a dropdown of recent repositories: click one to switch to it, or hover and click × to remove it from the list. **Add new repo…** at the bottom opens the folder picker.
+- The start screen lists recent repositories under **Open repository** so you can reopen one with a click.
 - Refresh button reloads status, history and branches.
 
 ### Branches
@@ -64,6 +66,7 @@ src-tauri/               Rust backend (Tauri 2)
   src/
     main.rs, lib.rs      App entry point: builds the window, registers commands
     commands.rs          One Tauri command per git operation
+    recent_repos.rs      Saved list of recently opened repositories, and its commands
     git/
       runner.rs          Runs the git CLI (no shell, no console window)
       repository.rs      Holds the open repository (and `git init`); input validation and parent lookup
@@ -75,7 +78,7 @@ src/                     UI (React)
   main.tsx, App.tsx      React entry point and root component
   api/gitizen.ts         Implements GitizenApi with Tauri invoke() calls
   styles/global.css      Theme variables and base element styles
-  context/               React contexts: UI view state and git state
+  context/               React contexts: UI state (view, recent repositories) and git state
   hooks/useGitOperations.ts  All git state and actions for the app
   hooks/useDiffSettings.ts   Diff layout and whitespace settings, saved in localStorage
   utils/                 Pure helpers: commit graph layout, formatting, diff line parsing, error normalising
@@ -84,7 +87,7 @@ src/                     UI (React)
     common/              Reusable pieces: DiffView, FileListItem, TriStateCheckbox, ActionModal
     EmptyRepositoryView/ Start screen before a repository is open
     ErrorModal/          Pops up failed operations; offers git init for non-repositories
-    RepositoryHeader/    Top bar (repo, branch, sync, refresh)
+    RepositoryHeader/    Top bar (repo switcher dropdown, branch, sync, refresh)
     RepoSidebar/         Left sidebar: working-tree files, commit form, commit files
     RepoPanel/           Main panel: commit history graph and file diff
 ```

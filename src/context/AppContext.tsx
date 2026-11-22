@@ -10,6 +10,10 @@ export type RepoView = "history" | "diff";
 export interface AppData {
   view: RepoView;
   setView: (view: RepoView) => void;
+  /** Paths of repositories opened before, most recent first. Saved across restarts. */
+  recentRepos: string[];
+  /** Removes a repository from `recentRepos` (the folder itself is untouched). */
+  forgetRepo: (path: string) => void;
 }
 
 export const AppContext = createContext<AppData | undefined>(undefined);

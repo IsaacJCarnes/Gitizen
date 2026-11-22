@@ -13,6 +13,10 @@ import { Command, type GitizenApi } from "../../shared/ipc";
 export const gitizen: GitizenApi = {
   openRepo: () => invoke(Command.OpenRepository),
   initRepo: (path) => invoke(Command.InitRepository, { path }),
+  openRepoAt: (path) => invoke(Command.OpenRepositoryAt, { path }),
+  recentRepos: () => invoke(Command.RecentRepositories),
+  rememberRepo: (path) => invoke(Command.RememberRepository, { path }),
+  forgetRepo: (path) => invoke(Command.ForgetRepository, { path }),
   status: () => invoke(Command.Status),
   log: () => invoke(Command.Log),
   branches: () => invoke(Command.Branches),

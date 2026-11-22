@@ -38,6 +38,20 @@ pub async fn open_repository(app: AppHandle, repo: Repo<'_>) -> Result<Option<St
     Ok(Some(directory.to_string_lossy().into_owned()))
 }
 
+/// Opens the repository at `path` without a picker, e.g. one chosen from the
+/// recent repositories list. Returns the path. Fails like `open_repository`
+/// (so a folder that is no longer a repository can be re-initialised), or
+/// with a plain failure if the folder is gone.
+#[tauri::command]
+pub async fn open_repository_at(repo: Repo<'_>, path: String) -> Result<String, OpenError> {
+    let directory = std::path::PathBuf::from(&path);
+    if !directory.is_dir() {
+        return Err(format!("{path} no longer exists").into());
+    }
+    repo.open(directory)?;
+    Ok(path)
+}
+
 /// Runs `git init` in `path` (a folder the user picked that isn't a
 /// repository yet) and opens it. Returns the path.
 #[tauri::command]
@@ -533,6 +547,33 @@ mod tests {
         let hidden = file_diff_in(&repo, "b.txt", Some(true)).unwrap();
         assert!(!hidden.diff.contains("@@"));
         assert!(file_diff_in(&repo, "b.txt", None).unwrap().diff.contains("+  one"));
+
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn open_repository_at_checks_the_folder() {
+        let repo = temp_repo();
+        let app = mock_builder()
+            .manage(OpenRepository::default())
+            .invoke_handler(tauri::generate_handler![open_repository_at, status])
+            .build(mock_context(noop_assets()))
+            .unwrap();
+        let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
+        let path = repo.to_string_lossy().into_owned();
+
+        let missing = repo.join("missing").to_string_lossy().into_owned();
+        let error = call(&window, "open_repository_at", json!({ "path": missing })).unwrap_err();
+        assert_eq!(error["kind"], "failed");
+        assert!(error["message"].as_str().unwrap().contains("no longer exists"));
+        let not_repo = std::env::temp_dir().to_string_lossy().into_owned();
+        let error = call(&window, "open_repository_at", json!({ "path": not_repo })).unwrap_err();
+        assert_eq!(error["kind"], "notARepository");
+        assert!(call(&window, "status", json!({})).is_err());
+
+        let opened = call(&window, "open_repository_at", json!({ "path": path })).unwrap();
+        assert_eq!(opened, json!(path));
+        assert_eq!(call(&window, "status", json!({})).unwrap()["branch"], "main");
 
         let _ = std::fs::remove_dir_all(&repo);
     }

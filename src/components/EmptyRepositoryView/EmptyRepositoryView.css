@@ -19,3 +19,43 @@
   color: var(--mute);
   margin: 0;
 }
+
+.recent-repositories {
+  width: 100%;
+  margin-top: 8px;
+  text-align: left;
+}
+
+.recent-repositories h2 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--mute);
+  margin: 0 0 4px;
+}
+
+.recent-repositories button {
+  width: 100%;
+  display: grid;
+  text-align: left;
+  border-color: transparent;
+  background: transparent;
+}
+
+.recent-repositories button:hover {
+  background: var(--panel);
+  border-color: var(--line);
+}
+
+.recent-repositories .name {
+  font-weight: 600;
+}
+
+.recent-repositories .path {
+  color: var(--mute);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

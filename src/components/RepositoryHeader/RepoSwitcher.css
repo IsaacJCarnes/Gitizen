@@ -1,0 +1,88 @@
+.repo-switcher {
+  position: relative;
+}
+
+.repo-switcher-toggle {
+  font-weight: 600;
+}
+
+.repo-switcher-toggle span {
+  color: var(--mute);
+  font-weight: normal;
+}
+
+.repo-switcher-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  width: 340px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
+}
+
+.repo-switcher-menu li {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+}
+
+.repo-switcher-menu li:hover {
+  background: var(--bg);
+}
+
+.repo-switcher-menu li.current .name {
+  color: var(--accent);
+}
+
+.repo-switcher-menu button {
+  border: none;
+  background: transparent;
+}
+
+.repo-switcher-item {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  text-align: left;
+}
+
+.repo-switcher-item .name {
+  font-weight: 600;
+}
+
+.repo-switcher-item .path {
+  color: var(--mute);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-switcher-forget {
+  color: var(--mute);
+  visibility: hidden;
+}
+
+.repo-switcher-menu li:hover .repo-switcher-forget,
+.repo-switcher-forget:focus-visible {
+  visibility: visible;
+}
+
+.repo-switcher-menu .placeholder {
+  padding: 10px 8px;
+}
+
+.repo-switcher-menu .repo-switcher-add {
+  width: 100%;
+  text-align: left;
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 6px 6px;
+  color: var(--accent);
+}

@@ -17,6 +17,10 @@ import type {
 export const Command = {
   OpenRepository: "open_repository",
   InitRepository: "init_repository",
+  OpenRepositoryAt: "open_repository_at",
+  RecentRepositories: "recent_repositories",
+  RememberRepository: "remember_repository",
+  ForgetRepository: "forget_repository",
   Status: "status",
   Log: "log",
   Branches: "branches",
@@ -36,7 +40,7 @@ export type CommandName = (typeof Command)[keyof typeof Command];
 
 /**
  * Commands reject with git's message as a plain string, except opening a
- * repository, which rejects with this object (mirrors `OpenError` in
+ * repository (`openRepo`, `openRepoAt`), which rejects with this object (mirrors `OpenError` in
  * src-tauri/src/git/repository.rs) so the UI can offer `initRepo` for a
  * folder that isn't a repository yet.
  */
@@ -49,6 +53,14 @@ export interface GitizenApi {
   openRepo(): Promise<string | null>;
   /** Runs `git init` in `path` and opens it. Resolves to the path. */
   initRepo(path: string): Promise<string>;
+  /** Opens the repository at `path` without a picker. Resolves to the path; rejects with an `OpenRepositoryError` like `openRepo`. */
+  openRepoAt(path: string): Promise<string>;
+  /** Saved repository paths, most recent first. */
+  recentRepos(): Promise<string[]>;
+  /** Moves `path` to the top of the saved list (adding it if new). Resolves to the new list. */
+  rememberRepo(path: string): Promise<string[]>;
+  /** Removes `path` from the saved list. Resolves to the new list. */
+  forgetRepo(path: string): Promise<string[]>;
   status(): Promise<GitStatus>;
   /** Up to 500 commits across all branches, remotes and tags, children before parents. */
   log(): Promise<GitCommit[]>;

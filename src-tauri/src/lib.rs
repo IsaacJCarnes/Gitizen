@@ -3,8 +3,10 @@
 
 mod commands;
 mod git;
+mod recent_repos;
 
 use git::repository::OpenRepository;
+use recent_repos::RecentRepositories;
 
 /// Starts the app. Called from `main.rs`.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -12,9 +14,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(OpenRepository::default())
+        .manage(RecentRepositories::default())
         .invoke_handler(tauri::generate_handler![
             commands::open_repository,
             commands::init_repository,
+            commands::open_repository_at,
+            recent_repos::recent_repositories,
+            recent_repos::remember_repository,
+            recent_repos::forget_repository,
             commands::status,
             commands::log,
             commands::branches,

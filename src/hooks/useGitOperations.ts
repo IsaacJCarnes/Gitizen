@@ -37,7 +37,10 @@ export interface GitOperations {
   setSelectedCommitFile: (file: CommitFile | null) => void;
   setSelectedFile: (file: FileChange | null) => void;
   setCommitMessage: (message: string) => void;
+  /** Shows the folder picker and opens the chosen repository. */
   openRepository: () => Promise<void>;
+  /** Opens the repository at `path` (e.g. from the recent list) without a picker. */
+  openRepositoryAt: (path: string) => Promise<void>;
   /** Runs `git init` in `path` (a folder that isn't a repository yet) and opens it. */
   initRepository: (path: string) => Promise<void>;
   refresh: () => Promise<void>;
@@ -51,6 +54,11 @@ export interface GitOperations {
    * are hidden, since that diff can't be applied.
    */
   stageLines: (lines: number[], staged: boolean) => Promise<void>;
+}
+
+export interface GitOperationsOptions {
+  /** Called with the path each time a repository opens successfully. */
+  onRepositoryOpened?: (path: string) => void;
 }
 
 /**
@@ -93,7 +101,9 @@ async function stageAllChanges(): Promise<void> {
  *
  * Use it once (in AppProvider) and read it through `useGitOperationsContext`.
  */
-export function useGitOperations(): GitOperations {
+export function useGitOperations({
+  onRepositoryOpened,
+}: GitOperationsOptions = {}): GitOperations {
   const [repo, setRepo] = useState<string | null>(null);
   const [status, setStatus] = useState<GitStatus | null>(null);
   const [commits, setCommits] = useState<GitCommit[]>([]);
@@ -158,8 +168,8 @@ export function useGitOperations(): GitOperations {
   );
 
   /**
-   * Shows `directory` (already opened by the backend) and clears the
-   * previous repository's selections.
+   * Shows `directory` (already opened by the backend), clears the previous
+   * repository's selections and reports it as opened.
    */
   const showRepository = useCallback(
     async (directory: string): Promise<void> => {
@@ -167,10 +177,11 @@ export function useGitOperations(): GitOperations {
       setSelectedFile(null);
       setDiff("");
       selectCommit(null);
+      onRepositoryOpened?.(directory);
       await stageAllChanges();
       await refresh();
     },
-    [refresh, selectCommit],
+    [refresh, selectCommit, onRepositoryOpened],
   );
 
   const openRepository = useCallback(async (): Promise<void> => {
@@ -182,6 +193,17 @@ export function useGitOperations(): GitOperations {
       reportError(openError);
     }
   }, [showRepository, reportError]);
+
+  const openRepositoryAt = useCallback(
+    async (path: string): Promise<void> => {
+      try {
+        await showRepository(await gitizen.openRepoAt(path));
+      } catch (openError) {
+        reportError(openError);
+      }
+    },
+    [showRepository, reportError],
+  );
 
   const initRepository = useCallback(
     async (path: string): Promise<void> => {
@@ -318,6 +340,7 @@ export function useGitOperations(): GitOperations {
     setSelectedFile,
     setCommitMessage,
     openRepository,
+    openRepositoryAt,
     initRepository,
     refresh,
     setFilesStaged,

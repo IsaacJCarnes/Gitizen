@@ -12,6 +12,6 @@
   margin-right: auto;
 }
 
-.repository-header button:last-child {
+.repository-header > button:last-child {
   margin-left: auto;
 }
