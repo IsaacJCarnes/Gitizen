@@ -56,23 +56,46 @@ export const laneColor = (lane: number): string =>
  * Assigns each node a lane and works out the lines to draw in its row.
  * Returns one row per input node, in the same order, plus the widest lane
  * count so the graph column can be sized.
+ *
+ * `trunk` is the hash of the main branch tip. Its first-parent chain always
+ * sits in lane 0, so branches ahead of main get lanes of their own instead
+ * of taking over main's column just because their tip is drawn first.
  */
-export function buildCommitGraph(nodes: GraphNode[]): CommitGraph {
+export function buildCommitGraph(nodes: GraphNode[], trunk?: string): CommitGraph {
   // lanes[i] is the hash lane i is waiting to reach, or null if free.
   const lanes: (string | null)[] = [];
   const dashed: boolean[] = [];
   let laneCount = 0;
 
+  // Walk the trunk's first parents to find the commits that belong in lane 0.
+  const byHash = new Map(nodes.map((node) => [node.hash, node]));
+  const trunkChain = new Set<string>();
+  for (let hash = trunk; hash !== undefined && byHash.has(hash); ) {
+    trunkChain.add(hash);
+    hash = byHash.get(hash)?.parents[0];
+  }
+  // Lane 0 is held back for the trunk until its tip has been placed.
+  let trunkReserved = trunkChain.size > 0;
+  if (trunkReserved) lanes.push(null);
+
   const freeLane = (): number => {
-    const index = lanes.indexOf(null);
-    return index === -1 ? lanes.length : index;
+    for (let i = trunkReserved ? 1 : 0; i < lanes.length; i++) {
+      if (lanes[i] === null) return i;
+    }
+    return lanes.length;
   };
 
   const rows = nodes.map((node): GraphRow => {
     const lines: GraphLine[] = [];
-    let lane = lanes.indexOf(node.hash);
-    const isTip = lane === -1;
-    if (isTip) lane = freeLane();
+    let lane: number;
+    if (trunkChain.has(node.hash)) {
+      lane = 0;
+      trunkReserved = false;
+      if (lanes.length === 0) lanes.push(null);
+    } else {
+      lane = lanes.indexOf(node.hash);
+      if (lane === -1) lane = freeLane();
+    }
 
     // Lanes coming in from above: those waiting for this commit end here
     // (several of them when branches forked from it), the rest pass by.
@@ -97,16 +120,20 @@ export function buildCommitGraph(nodes: GraphNode[]): CommitGraph {
       lines.push({ from: lane, to: lane, part: "bottom", color: lane, dashed: dashed[lane] });
     }
     for (const parent of rest) {
-      let target = lanes.indexOf(parent);
-      if (target === -1) {
-        target = freeLane();
+      // A merge from the trunk tip, drawn before the tip itself, heads
+      // straight for lane 0 where the tip will sit.
+      let target = trunkReserved && parent === trunk ? 0 : lanes.indexOf(parent);
+      if (target === -1) target = freeLane();
+      if (lanes[target] !== parent) {
         lanes[target] = parent;
         dashed[target] = false;
       }
       lines.push({ from: lane, to: target, part: "bottom", color: target, dashed: false });
     }
 
-    while (lanes.length > 0 && lanes[lanes.length - 1] === null) lanes.pop();
+    while (lanes.length > (trunkReserved ? 1 : 0) && lanes[lanes.length - 1] === null) {
+      lanes.pop();
+    }
     laneCount = Math.max(laneCount, lane + 1, lanes.length);
     return { lane, lines };
   });

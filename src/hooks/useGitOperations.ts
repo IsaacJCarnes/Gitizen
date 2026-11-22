@@ -22,7 +22,10 @@ export interface GitOperations {
   diff: string;
   /** Indices into `diff.split("\n")` of the changed lines that are staged. */
   stagedLines: number[];
-  commitMessage: string;
+  /** One-line commit summary (the subject); required to commit. */
+  commitSummary: string;
+  /** Optional longer commit description (the body). */
+  commitDescription: string;
   /** Last error from any git operation, shown in the error modal until dismissed. */
   error: AppError | null;
   /** Closes the error modal. */
@@ -36,7 +39,8 @@ export interface GitOperations {
   selectCommit: (commit: GitCommit | null) => void;
   setSelectedCommitFile: (file: CommitFile | null) => void;
   setSelectedFile: (file: FileChange | null) => void;
-  setCommitMessage: (message: string) => void;
+  setCommitSummary: (summary: string) => void;
+  setCommitDescription: (description: string) => void;
   /** Shows the folder picker and opens the chosen repository. */
   openRepository: () => Promise<void>;
   /** Opens the repository at `path` (e.g. from the recent list) without a picker. */
@@ -46,6 +50,7 @@ export interface GitOperations {
   refresh: () => Promise<void>;
   /** Stages (`staged` true) or unstages every given path in one git call. */
   setFilesStaged: (paths: string[], staged: boolean) => Promise<void>;
+  /** Commits the staged files with the summary, plus the description as the body if given. */
   commitChanges: () => Promise<void>;
   checkoutBranch: (branch: string) => Promise<void>;
   /**
@@ -85,16 +90,6 @@ function loadUnlessCancelled<T>(
 }
 
 /**
- * Stages every file with working-tree changes (untracked files included),
- * so a freshly loaded repository starts with every file ticked.
- */
-async function stageAllChanges(): Promise<void> {
-  const { files } = await gitizen.status();
-  const paths = [...new Set(files.filter((file) => !file.staged).map((file) => file.path))];
-  if (paths.length > 0) await gitizen.stage(paths);
-}
-
-/**
  * Owns all git state for the app: the open repository, its status, history
  * and branches, the current selections and their diffs. Actions refresh the
  * state after they run and surface failures through `error`.
@@ -111,7 +106,8 @@ export function useGitOperations({
   const [selectedFile, setSelectedFile] = useState<FileChange | null>(null);
   const [diff, setDiff] = useState("");
   const [stagedLines, setStagedLines] = useState<number[]>([]);
-  const [commitMessage, setCommitMessage] = useState("");
+  const [commitSummary, setCommitSummary] = useState("");
+  const [commitDescription, setCommitDescription] = useState("");
   const [error, setError] = useState<AppError | null>(null);
   const [selectedCommit, setSelectedCommit] = useState<GitCommit | null>(null);
   const [commitFiles, setCommitFiles] = useState<CommitFile[]>([]);
@@ -169,7 +165,8 @@ export function useGitOperations({
 
   /**
    * Shows `directory` (already opened by the backend), clears the previous
-   * repository's selections and reports it as opened.
+   * repository's selections and reports it as opened. The index is left as
+   * it is, so the checkboxes show what is really staged.
    */
   const showRepository = useCallback(
     async (directory: string): Promise<void> => {
@@ -178,7 +175,6 @@ export function useGitOperations({
       setDiff("");
       selectCommit(null);
       onRepositoryOpened?.(directory);
-      await stageAllChanges();
       await refresh();
     },
     [refresh, selectCommit, onRepositoryOpened],
@@ -227,14 +223,18 @@ export function useGitOperations({
   );
 
   const commitChanges = useCallback(async (): Promise<void> => {
-    const message = commitMessage.trim();
-    if (!message) return;
+    const summary = commitSummary.trim();
+    if (!summary) return;
+    const description = commitDescription.trim();
+    // Git convention: subject line, blank line, then the body.
+    const message = description ? `${summary}\n\n${description}` : summary;
 
     await runOperation(async () => {
       await gitizen.commit(message);
-      setCommitMessage("");
+      setCommitSummary("");
+      setCommitDescription("");
     });
-  }, [commitMessage, runOperation]);
+  }, [commitSummary, commitDescription, runOperation]);
 
   const checkoutBranch = useCallback(
     (branch: string): Promise<void> =>
@@ -328,7 +328,8 @@ export function useGitOperations({
     selectedFile,
     diff,
     stagedLines,
-    commitMessage,
+    commitSummary,
+    commitDescription,
     error,
     dismissError,
     selectedCommit,
@@ -338,7 +339,8 @@ export function useGitOperations({
     selectCommit,
     setSelectedCommitFile,
     setSelectedFile,
-    setCommitMessage,
+    setCommitSummary,
+    setCommitDescription,
     openRepository,
     openRepositoryAt,
     initRepository,

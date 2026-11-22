@@ -10,6 +10,25 @@ import RefBadge from "./RefBadge";
 /** Graph key for the "Uncommitted changes" row, which has no real hash. */
 const PENDING = "pending";
 
+/** Refs treated as the trunk, best first: local main, then master, then origin's. */
+const TRUNK_REFS = [
+  { type: "branch", name: "main" },
+  { type: "branch", name: "master" },
+  { type: "remote", name: "origin/main" },
+  { type: "remote", name: "origin/master" },
+] as const;
+
+/** Hash of the main branch tip, which the graph keeps in the first lane. */
+function findTrunk(commits: GitCommit[]): string | undefined {
+  for (const { type, name } of TRUNK_REFS) {
+    const match = commits.find((commit) =>
+      commit.refs.some((ref) => ref.type === type && ref.name === name),
+    );
+    if (match) return match.hash;
+  }
+  return undefined;
+}
+
 /**
  * The commit history as a graph across all branches. When the working tree
  * has changes, an "Uncommitted changes" row sits on top, attached to HEAD.
@@ -23,11 +42,14 @@ export default function CommitHistory(): React.JSX.Element {
 
   const graph = useMemo(() => {
     const nodes: GraphNode[] = commits.map(({ hash, parents }) => ({ hash, parents }));
+    let trunk = findTrunk(commits);
     if (hasPending) {
       const head = commits.find((commit) => commit.refs.some((ref) => ref.current));
       nodes.unshift({ hash: PENDING, parents: head ? [head.hash] : [], dashed: true });
+      // Changes on top of main stay in main's lane.
+      if (head && head.hash === trunk) trunk = PENDING;
     }
-    return buildCommitGraph(nodes);
+    return buildCommitGraph(nodes, trunk);
   }, [commits, hasPending]);
 
   const width = graph.laneCount * LANE_WIDTH;

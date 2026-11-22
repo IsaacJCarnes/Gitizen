@@ -86,7 +86,8 @@ pub fn is_work_tree(directory: &Path) -> bool {
 
 /// Runs `git init` in `directory`, which must be an existing folder that is
 /// not already inside a work tree (so a repository is never nested by
-/// accident).
+/// accident). The first branch is always `main`, whatever git's configured
+/// default is.
 pub fn init_repository(directory: &Path) -> Result<(), String> {
     if !directory.is_dir() {
         return Err("That folder does not exist".into());
@@ -94,7 +95,9 @@ pub fn init_repository(directory: &Path) -> Result<(), String> {
     if is_work_tree(directory) {
         return Err("That folder is already a git repository".into());
     }
-    run_git(directory, ["init"]).map(drop)
+    run_git(directory, ["init"])?;
+    // `git init -b` needs git 2.28+; pointing HEAD at main works everywhere.
+    run_git(directory, ["symbolic-ref", "HEAD", "refs/heads/main"]).map(drop)
 }
 
 /// git's well-known empty tree, used as the "parent" of a root commit.
@@ -171,6 +174,7 @@ mod tests {
         assert!(repo.require().is_err());
 
         init_repository(&dir).unwrap();
+        assert_eq!(run_git(&dir, ["symbolic-ref", "--short", "HEAD"]).unwrap().trim(), "main");
         assert!(init_repository(&dir).unwrap_err().contains("already"));
         repo.open(dir.clone()).unwrap();
         assert_eq!(repo.require().unwrap(), dir);

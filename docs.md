@@ -20,18 +20,19 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 ### Working tree changes
 - Sidebar shows every changed file in a single **Changes** list, each with its git status code (M, A, D, R, …) and a count of fully staged files.
 - A file's status code stays the same whether it is staged or not: new files show **A** both untracked and staged.
-- Opening a repository stages every changed file, so all checkboxes start ticked.
+- Opening a repository leaves git's index as it is, so the checkboxes show exactly what was already staged.
 - Each file has a checkbox: ticking it stages the file, unticking unstages it. A partially staged file shows a mixed (dash) checkbox, and clicking it stages the rest.
 - A checkbox in the list header stages every file at once, or unstages every file when all are already staged. It shows a mixed state when only some are staged.
 - Files are sorted by path, so a file keeps its place in the list when it is staged or unstaged.
 - Click a file to see its diff in the main panel: every uncommitted change against the last commit, staged and unstaged together, so the diff stays the same when the file is staged or unstaged. Untracked files show as entirely added. The file stays selected when it is staged or unstaged.
 
 ### Committing
-- Commit message box with a button that commits the staged files (shows how many).
-- The button is disabled until there is a message and at least one staged file.
+- Commit form with a one-line **Summary** (required) and an optional multi-line **Description**, plus a button that commits the staged files (shows how many). The commit message is the summary, then a blank line and the description when there is one (git's subject and body). Both fields clear after a successful commit.
+- The button is disabled until there is a summary and at least one staged file. Ctrl+Enter (Cmd+Enter on macOS) in either field commits.
 
 ### History
 - Commit graph across all branches, remotes and tags (last 500 commits, stashes excluded), with coloured lanes for branches and merges.
+- The main branch (`main`, else `master`, else `origin/main` or `origin/master`) always runs down the first lane, following its first parents. Branches ahead of main get a lane of their own and join main's lane at the commit they branched from.
 - Ref badges show branches, remote branches and tags; the checked-out branch is bold.
 - An **Uncommitted changes** row sits at the top of the graph, attached to HEAD with a dashed line, whenever the working tree has changes.
 - Selecting a commit shows its subject, body, short hash, author and date in the sidebar, plus the files it changed (renames and copies included).
