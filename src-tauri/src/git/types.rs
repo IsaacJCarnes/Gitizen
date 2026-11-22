@@ -13,6 +13,17 @@ pub struct FileChange {
     pub code: String,
 }
 
+/// The combined diff of one working-tree file (HEAD to working tree) and
+/// which of its changed lines are staged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDiff {
+    pub diff: String,
+    /// Indices into `diff.split('\n')` of the added and removed lines that
+    /// are in the index.
+    pub staged_lines: Vec<usize>,
+}
+
 /// Snapshot of `git status` for the open repository.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GitStatus {

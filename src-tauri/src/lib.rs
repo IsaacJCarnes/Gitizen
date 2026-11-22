@@ -19,12 +19,14 @@ pub fn run() {
             commands::branches,
             commands::diff,
             commands::file_diff,
+            commands::file_text,
             commands::commit_files,
             commands::commit_diff,
             commands::stage,
             commands::unstage,
             commands::commit,
             commands::checkout,
+            commands::set_staged_lines,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Gitizen");

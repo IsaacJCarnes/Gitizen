@@ -8,6 +8,7 @@ import type {
 } from "../../shared/gitTypes";
 import { gitizen } from "../api/gitizen";
 import { getErrorMessage } from "../utils/format";
+import { useDiffSettings } from "./useDiffSettings";
 
 /** Everything the UI reads about the open repository, plus the actions it can take. */
 export interface GitOperations {
@@ -19,6 +20,8 @@ export interface GitOperations {
   /** Working-tree file chosen in the sidebar, and its diff. */
   selectedFile: FileChange | null;
   diff: string;
+  /** Indices into `diff.split("\n")` of the changed lines that are staged. */
+  stagedLines: number[];
   commitMessage: string;
   /** Last error from any git operation; cleared by the next successful refresh. */
   error: string;
@@ -38,6 +41,12 @@ export interface GitOperations {
   setFilesStaged: (paths: string[], staged: boolean) => Promise<void>;
   commitChanges: () => Promise<void>;
   checkoutBranch: (branch: string) => Promise<void>;
+  /**
+   * Stages (`staged` true) or unstages single lines of the selected file.
+   * `lines` index `diff.split("\n")`. Does nothing while whitespace changes
+   * are hidden, since that diff can't be applied.
+   */
+  stageLines: (lines: number[], staged: boolean) => Promise<void>;
 }
 
 /**
@@ -87,12 +96,16 @@ export function useGitOperations(): GitOperations {
   const [branches, setBranches] = useState<GitBranch[]>([]);
   const [selectedFile, setSelectedFile] = useState<FileChange | null>(null);
   const [diff, setDiff] = useState("");
+  const [stagedLines, setStagedLines] = useState<number[]>([]);
   const [commitMessage, setCommitMessage] = useState("");
   const [error, setError] = useState("");
   const [selectedCommit, setSelectedCommit] = useState<GitCommit | null>(null);
   const [commitFiles, setCommitFiles] = useState<CommitFile[]>([]);
   const [selectedCommitFile, setSelectedCommitFile] = useState<CommitFile | null>(null);
   const [commitDiff, setCommitDiff] = useState("");
+  const {
+    settings: { hideWhitespace },
+  } = useDiffSettings();
 
   const reportError = useCallback((caught: unknown): void => {
     setError(getErrorMessage(caught));
@@ -181,25 +194,42 @@ export function useGitOperations(): GitOperations {
     [runOperation],
   );
 
+  const stageLines = useCallback(
+    (lines: number[], staged: boolean): Promise<void> => {
+      if (!selectedFile || lines.length === 0 || hideWhitespace) {
+        return Promise.resolve();
+      }
+      return runOperation(() =>
+        gitizen.setStagedLines(selectedFile.path, diff, lines, staged),
+      );
+    },
+    [selectedFile, diff, hideWhitespace, runOperation],
+  );
+
   // ---- Derived data loading ------------------------------------------------
 
   // Diff of the selected working-tree file against HEAD, staged and unstaged
-  // changes together, so staging doesn't change it. Reloaded after every
-  // refresh because editing the file does.
+  // changes together, so staging doesn't change it (only which lines are
+  // ticked). Reloaded after every refresh because editing the file does.
   useEffect(() => {
     if (!selectedFile) {
       setDiff("");
+      setStagedLines([]);
       return;
     }
     return loadUnlessCancelled(
-      gitizen.fileDiff(selectedFile.path),
-      setDiff,
+      gitizen.fileDiff(selectedFile.path, hideWhitespace),
+      (result) => {
+        setDiff(result.diff);
+        setStagedLines(result.stagedLines);
+      },
       (diffError) => {
         setDiff("");
+        setStagedLines([]);
         reportError(diffError);
       },
     );
-  }, [selectedFile, status, reportError]);
+  }, [selectedFile, status, hideWhitespace, reportError]);
 
   // Staging or unstaging moves a file between lists; keep it selected
   // in its new list, and drop the selection once the file has no changes.
@@ -232,6 +262,7 @@ export function useGitOperations(): GitOperations {
         selectedCommit.hash,
         selectedCommitFile.path,
         selectedCommitFile.oldPath,
+        hideWhitespace,
       ),
       setCommitDiff,
       (diffError) => {
@@ -239,7 +270,7 @@ export function useGitOperations(): GitOperations {
         reportError(diffError);
       },
     );
-  }, [selectedCommit, selectedCommitFile, reportError]);
+  }, [selectedCommit, selectedCommitFile, hideWhitespace, reportError]);
 
   return {
     repo,
@@ -248,6 +279,7 @@ export function useGitOperations(): GitOperations {
     branches,
     selectedFile,
     diff,
+    stagedLines,
     commitMessage,
     error,
     selectedCommit,
@@ -263,5 +295,6 @@ export function useGitOperations(): GitOperations {
     setFilesStaged,
     commitChanges,
     checkoutBranch,
+    stageLines,
   };
 }

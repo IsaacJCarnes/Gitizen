@@ -14,6 +14,14 @@ export interface FileChange {
   code: string;
 }
 
+/** The combined diff of one working-tree file and which of its lines are staged. */
+export interface FileDiff {
+  /** Unified diff from HEAD to the working tree, staged and unstaged changes together. */
+  diff: string;
+  /** Indices into `diff.split("\n")` of the added and removed lines that are in the index. */
+  stagedLines: number[];
+}
+
 /** Snapshot of `git status` for the open repository. */
 export interface GitStatus {
   /** Current branch name, or null when HEAD is detached. */

@@ -8,6 +8,7 @@
  */
 import type {
   CommitFile,
+  FileDiff,
   GitBranch,
   GitCommit,
   GitStatus,
@@ -20,12 +21,14 @@ export const Command = {
   Branches: "branches",
   Diff: "diff",
   FileDiff: "file_diff",
+  FileText: "file_text",
   CommitFiles: "commit_files",
   CommitDiff: "commit_diff",
   Stage: "stage",
   Unstage: "unstage",
   Commit: "commit",
   Checkout: "checkout",
+  SetStagedLines: "set_staged_lines",
 } as const;
 
 export type CommandName = (typeof Command)[keyof typeof Command];
@@ -38,18 +41,37 @@ export interface GitizenApi {
   log(): Promise<GitCommit[]>;
   branches(): Promise<GitBranch[]>;
   /** Diff of one working-tree file, either its staged or its unstaged changes. */
-  diff(path: string, staged: boolean): Promise<string>;
+  diff(path: string, staged: boolean, ignoreWhitespace?: boolean): Promise<string>;
   /**
    * Every uncommitted change to one file (staged and unstaged together)
-   * against HEAD, so it reads the same whether or not the file is staged.
+   * against HEAD, so it reads the same whether or not the file is staged,
+   * plus which of its changed lines are staged.
    */
-  fileDiff(path: string): Promise<string>;
+  fileDiff(path: string, ignoreWhitespace?: boolean): Promise<FileDiff>;
+  /**
+   * A file's text as the new side of its diff: at commit `hash`, or in the
+   * working tree when `hash` is left out. Used to expand the lines a diff
+   * hides between hunks. Empty if the file doesn't exist there.
+   */
+  fileText(path: string, hash?: string): Promise<string>;
   /** Files changed by a commit, compared to its first parent. */
   commitFiles(hash: string): Promise<CommitFile[]>;
   /** Diff of one file in a commit, compared to its first parent. */
-  commitDiff(hash: string, path: string, oldPath?: string): Promise<string>;
+  commitDiff(
+    hash: string,
+    path: string,
+    oldPath?: string,
+    ignoreWhitespace?: boolean,
+  ): Promise<string>;
   stage(paths: string[]): Promise<void>;
   unstage(paths: string[]): Promise<void>;
+  /**
+   * Stages (`staged` true) or unstages (`staged` false) single lines of one
+   * file. `diff` is the text `fileDiff(path)` returned, with whitespace
+   * shown, and `lines` are indices into `diff.split("\n")` of its + and -
+   * lines. Rejects without changing anything if the file changed since.
+   */
+  setStagedLines(path: string, diff: string, lines: number[], staged: boolean): Promise<void>;
   commit(message: string): Promise<void>;
   checkout(branch: string): Promise<void>;
 }

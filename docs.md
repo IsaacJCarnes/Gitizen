@@ -35,8 +35,15 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 - Click a file in a commit to see its diff against the commit's first parent (so merges show what they brought in).
 
 ### Diffs
-- Unified diff view with added, removed and hunk-header lines highlighted.
+- Diff view with added, removed and hunk-header lines highlighted, and old and new line numbers.
+- **Unified / Split** setting in the diff header: one column, or removed lines on the left beside the added lines that replace them on the right.
+- **Hide whitespace** setting hides changes that only touch whitespace (`git diff -w`), for working-tree and commit diffs. Both settings are saved between sessions (in the webview's localStorage, key `gitizen.diffSettings`).
 - Diff header shows the file path and where the change lives (commit hash, or Uncommitted), with a button back to the history.
+- git's file header (`diff --git`, `index`, `---`, `+++`) is hidden, since the diff header already names the file. Notes such as "new file mode" or "Binary files differ" still show.
+- Each hunk starts with its header on one line, e.g. `@@ -8,6 +8,7 @@ import type {`: 6 old lines from line 8 become 7 new lines from line 8, followed by git's hint naming the nearest function or block above the hunk.
+- Unchanged lines the diff leaves out can be expanded with one button per gap: **Expand up** above the first hunk, **Expand down** below the last, and **Expand** between two hunks (20 more lines on each side per click). The row says how many lines are still hidden. Works for working-tree and commit diffs, in both layouts.
+- Stage single lines: a working-tree diff shows every uncommitted change, and each added and removed line has a checkbox that is ticked when that line is staged. Tick a line to stage it, untick it to unstage it; the diff text itself never changes. Each group of changed lines (a run of added and removed lines with no unchanged line between them, even a single line) also has a checkbox in its own column, left of the lines in Unified and between the two sides in Split. It stages or unstages the whole group and shows a dash when only part of it is staged. Works in both layouts, and for new, untracked and deleted files: unstaging every line of a new file makes it untracked again, and staging every line of a deleted file stages the deletion.
+- Line staging is off while whitespace is hidden, because the index is rebuilt from the full diff. If the file changed since its diff was shown, the change is refused instead of hitting the wrong lines.
 
 ### General
 - Light and dark themes follow the operating system setting.
@@ -60,6 +67,7 @@ src-tauri/               Rust backend (Tauri 2)
       runner.rs          Runs the git CLI (no shell, no console window)
       repository.rs      Holds the open repository; input validation and parent lookup
       parsers.rs         Pure functions that parse raw git output (unit tested)
+      patch.rs           Works out which diff lines are staged and builds index content for line staging (unit tested)
       types.rs           Rust mirrors of shared/gitTypes.ts
 
 src/                     UI (React)
@@ -68,7 +76,8 @@ src/                     UI (React)
   styles/global.css      Theme variables and base element styles
   context/               React contexts: UI view state and git state
   hooks/useGitOperations.ts  All git state and actions for the app
-  utils/                 Pure helpers: commit graph layout, formatting
+  hooks/useDiffSettings.ts   Diff layout and whitespace settings, saved in localStorage
+  utils/                 Pure helpers: commit graph layout, formatting, diff line parsing
   pages/GitizenView/     Top-level page layout
   components/
     common/              Reusable pieces: DiffView, FileListItem, TriStateCheckbox

@@ -7,9 +7,52 @@
     monospace;
 }
 
-.diff div {
-  padding: 0 16px;
+.diff.unified {
+  /* Long lines scroll the panel instead of wrapping. */
+  width: max-content;
+  min-width: 100%;
+}
+
+.diff-line {
+  display: flex;
+  align-items: stretch;
+}
+
+.diff-line .code {
+  flex: 1;
+  padding: 0 12px;
   white-space: pre;
+}
+
+.diff-line > .code:first-child {
+  padding-left: 16px;
+}
+
+.diff-line .number {
+  flex: none;
+  width: 4.5ch;
+  padding-right: 6px;
+  text-align: right;
+  color: var(--mute);
+  user-select: none;
+}
+
+.diff-line .check {
+  flex: none;
+  width: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.diff-line .check input {
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+.diff-line .check input:disabled {
+  cursor: progress;
 }
 
 .diff .add {
@@ -23,4 +66,86 @@
 .diff .hunk {
   background: var(--hunk);
   color: var(--mute);
+}
+
+.diff .meta,
+.diff .note {
+  color: var(--mute);
+}
+
+/* Hunk bodies and expanded lines. With line staging, a column holds the
+   hunk's checkbox: left of the lines, or between the two sides when split. */
+.hunk-block.with-gutter {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+}
+
+.hunk-gutter {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 3px;
+  border-right: 2px solid var(--hunk);
+}
+
+.hunk-gutter .stage-check {
+  position: sticky;
+  top: 4px;
+}
+
+/* Side by side: removed lines on the left, added lines on the right. */
+.split .hunk-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.split .hunk-block.with-gutter {
+  grid-template-columns: minmax(0, 1fr) 26px minmax(0, 1fr);
+}
+
+/* In Split the column sits between the sides; the line between them stays. */
+.split .hunk-gutter {
+  border-right: 1px solid var(--line);
+}
+
+.split .hunk-block > .diff-line.left {
+  border-right: 1px solid var(--line);
+}
+
+.split .diff-line .code {
+  /* Each side is half the panel, so wrap instead of scrolling. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.split .diff-line.empty {
+  background: var(--bg);
+}
+
+/* Row between hunks with buttons that reveal the unchanged lines. */
+.diff .expander {
+  align-items: center;
+  gap: 2px;
+  padding-left: 4px;
+  background: var(--hunk);
+  color: var(--mute);
+}
+
+.diff .expander .expand {
+  font: inherit;
+  line-height: 1.2;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.diff .expander .expand:hover {
+  background: var(--panel);
+}
+
+.diff .expander .code {
+  padding-left: 6px;
 }
