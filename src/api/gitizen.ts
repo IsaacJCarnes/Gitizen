@@ -32,4 +32,7 @@ export const gitizen: GitizenApi = {
     invoke(Command.SetStagedLines, { path, diff, lines, staged }),
   commit: (message) => invoke(Command.Commit, { message }),
   checkout: (branch) => invoke(Command.Checkout, { branch }),
+  aiCommitCommand: () => invoke(Command.AiCommitCommand),
+  setAiCommitCommand: (command) => invoke(Command.SetAiCommitCommand, { command }),
+  generateCommitMessage: () => invoke(Command.GenerateCommitMessage),
 };

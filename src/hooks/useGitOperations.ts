@@ -29,6 +29,8 @@ export interface GitOperations {
   commitDescription: string;
   /** Last error from any git operation, shown in the error modal until dismissed. */
   error: AppError | null;
+  /** Shows anything thrown in the error modal. */
+  reportError: (caught: unknown) => void;
   /** Closes the error modal. */
   dismissError: () => void;
   /** Commit chosen in the history; null means "Uncommitted changes". */
@@ -54,6 +56,13 @@ export interface GitOperations {
   /** Commits the staged files with the summary, plus the description as the body if given. */
   commitChanges: () => Promise<void>;
   checkoutBranch: (branch: string) => Promise<void>;
+  /** True while the AI command is writing a commit message. */
+  generatingMessage: boolean;
+  /**
+   * Runs the saved AI command on the staged changes and fills the summary
+   * and description with what it wrote. Failures show in the error modal.
+   */
+  generateCommitMessage: () => Promise<void>;
   /**
    * Stages (`staged` true) or unstages single lines of the selected file.
    * `lines` index `diff.split("\n")`. Does nothing while whitespace changes
@@ -111,6 +120,7 @@ export function useGitOperations({
   const [commitSummary, setCommitSummary] = useState("");
   const [commitDescription, setCommitDescription] = useState("");
   const [error, setError] = useState<AppError | null>(null);
+  const [generatingMessage, setGeneratingMessage] = useState(false);
   const [selectedCommit, setSelectedCommit] = useState<GitCommit | null>(null);
   const [commitFiles, setCommitFiles] = useState<CommitFile[]>([]);
   const [selectedCommitFile, setSelectedCommitFile] = useState<CommitFile | null>(null);
@@ -229,6 +239,19 @@ export function useGitOperations({
     });
   }, [commitSummary, commitDescription, runOperation]);
 
+  const generateCommitMessage = useCallback(async (): Promise<void> => {
+    setGeneratingMessage(true);
+    try {
+      const { summary, description } = await gitizen.generateCommitMessage();
+      setCommitSummary(summary);
+      setCommitDescription(description);
+    } catch (generateError) {
+      reportError(generateError);
+    } finally {
+      setGeneratingMessage(false);
+    }
+  }, [reportError]);
+
   const checkoutBranch = useCallback(
     (branch: string): Promise<void> =>
       runOperation(() => gitizen.checkout(branch)),
@@ -319,6 +342,7 @@ export function useGitOperations({
     commitSummary,
     commitDescription,
     error,
+    reportError,
     dismissError,
     selectedCommit,
     commitFiles,
@@ -336,6 +360,8 @@ export function useGitOperations({
     setFilesStaged,
     commitChanges,
     checkoutBranch,
+    generatingMessage,
+    generateCommitMessage,
     stageLines,
   };
 }

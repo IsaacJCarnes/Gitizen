@@ -33,6 +33,9 @@ export const Command = {
   Commit: "commit",
   Checkout: "checkout",
   SetStagedLines: "set_staged_lines",
+  AiCommitCommand: "ai_commit_command",
+  SetAiCommitCommand: "set_ai_commit_command",
+  GenerateCommitMessage: "generate_commit_message",
 } as const;
 
 export type CommandName = (typeof Command)[keyof typeof Command];
@@ -46,6 +49,12 @@ export type CommandName = (typeof Command)[keyof typeof Command];
 export type OpenRepositoryError =
   | { kind: "notARepository"; path: string; message: string }
   | { kind: "failed"; message: string };
+
+/** A commit message split the way the commit form shows it. */
+export interface GeneratedCommitMessage {
+  summary: string;
+  description: string;
+}
 
 export interface GitizenApi {
   /** Shows a folder picker and opens the chosen repository. Resolves to its path, or null if cancelled. */
@@ -96,4 +105,13 @@ export interface GitizenApi {
   setStagedLines(path: string, diff: string, lines: number[], staged: boolean): Promise<void>;
   commit(message: string): Promise<void>;
   checkout(branch: string): Promise<void>;
+  /** The saved AI command line tool for commit messages (e.g. `claude -p`), or "" if none is set up. */
+  aiCommitCommand(): Promise<string>;
+  /** Saves the AI command (trimmed; "" clears it). Resolves to what was saved. */
+  setAiCommitCommand(command: string): Promise<string>;
+  /**
+   * Pipes a prompt plus the staged diff to the saved AI command and splits
+   * what it prints into summary and description. Stages and commits nothing.
+   */
+  generateCommitMessage(): Promise<GeneratedCommitMessage>;
 }
