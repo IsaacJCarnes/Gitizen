@@ -4,7 +4,7 @@
 //! adds to it with `remember_repository` once a repository has loaded.
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use tauri::{AppHandle, Manager, State};
 
@@ -18,10 +18,16 @@ const FILE_NAME: &str = "recent-repositories.json";
 #[derive(Default)]
 pub struct RecentRepositories(Mutex<()>);
 
+impl RecentRepositories {
+    fn lock(&self) -> Result<MutexGuard<'_, ()>, String> {
+        self.0.lock().map_err(|_| "Recent repositories are unavailable".to_string())
+    }
+}
+
 /// Moves `path` to the front of `list`, removing any earlier copy, and trims
 /// the list to `MAX_RECENT`.
-pub fn with_remembered(mut list: Vec<String>, path: &str) -> Vec<String> {
-    list.retain(|entry| !same_path(entry, path));
+pub fn with_remembered(list: Vec<String>, path: &str) -> Vec<String> {
+    let mut list = without(list, path);
     list.insert(0, path.to_string());
     list.truncate(MAX_RECENT);
     list
@@ -36,11 +42,11 @@ pub fn without(mut list: Vec<String>, path: &str) -> Vec<String> {
 /// Compares paths ignoring trailing separators, and case on Windows, where
 /// the file system ignores it too.
 fn same_path(a: &str, b: &str) -> bool {
-    let trim = |path: &str| path.trim_end_matches(['/', '\\']).to_string();
+    let (a, b) = (a.trim_end_matches(['/', '\\']), b.trim_end_matches(['/', '\\']));
     if cfg!(windows) {
-        trim(a).eq_ignore_ascii_case(&trim(b))
+        a.eq_ignore_ascii_case(b)
     } else {
-        trim(a) == trim(b)
+        a == b
     }
 }
 
@@ -75,7 +81,7 @@ fn update(
     state: &RecentRepositories,
     change: impl FnOnce(Vec<String>) -> Vec<String>,
 ) -> Result<Vec<String>, String> {
-    let _guard = state.0.lock().map_err(|_| "Recent repositories are unavailable")?;
+    let _guard = state.lock()?;
     let list = change(load(app)?);
     save(app, &list)?;
     Ok(list)
@@ -87,7 +93,7 @@ pub async fn recent_repositories(
     app: AppHandle,
     state: State<'_, RecentRepositories>,
 ) -> Result<Vec<String>, String> {
-    let _guard = state.0.lock().map_err(|_| "Recent repositories are unavailable")?;
+    let _guard = state.lock()?;
     load(&app)
 }
 

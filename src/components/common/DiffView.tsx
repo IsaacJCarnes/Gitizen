@@ -1,8 +1,10 @@
 import "./DiffView.css";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { DiffLayout } from "../../hooks/useDiffSettings";
-import TriStateCheckbox, { type CheckState } from "./TriStateCheckbox";
+import TriStateCheckbox from "./TriStateCheckbox";
+import { combineStates } from "../../utils/checkState";
 import {
+  HUNK_HEADER,
   isChange,
   parseDiff,
   toSplitRows,
@@ -46,8 +48,6 @@ const MARKERS: Record<string, string> = { add: "+", del: "-", context: " " };
  */
 const FILE_HEADER = /^(diff --git |index |--- |\+\+\+ )/;
 
-const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
-
 /** One hunk: its header, body lines and where it sits in the new file. */
 interface Hunk {
   header: DiffLine;
@@ -68,6 +68,7 @@ function toHunks(lines: DiffLine[]): Hunk[] {
   for (const line of lines) {
     if (line.kind === "hunk") {
       const match = HUNK_HEADER.exec(line.text);
+      // A missing length group means a one-line range.
       const [oldStart, oldLen, newStart, newLen] = [1, 2, 3, 4].map((group) =>
         Number(match?.[group] ?? 1),
       );
@@ -80,7 +81,9 @@ function toHunks(lines: DiffLine[]): Hunk[] {
         newFirst,
         newLast: newFirst + newLen - 1,
         offsetBefore: oldFirst - newFirst,
+        // The hunk shifts later lines by however many lines it added or removed.
         offsetAfter: oldFirst + oldLen - (newFirst + newLen),
+        // "-0,0" is a new file and "+0,0" a deleted one.
         wholeFile: (oldStart === 0 && oldLen === 0) || (newStart === 0 && newLen === 0),
       });
     } else if (hunks.length > 0) {
@@ -103,11 +106,14 @@ interface Gap {
   below: boolean;
 }
 
+/** One gap before each hunk, plus one after the last. */
 function toGaps(hunks: Hunk[], fileLineCount?: number): Gap[] {
   return [...hunks, undefined].map((hunk, index) => {
     const previous = hunks[index - 1];
     return {
       first: previous ? previous.newLast + 1 : 1,
+      // After the last hunk the gap runs to the end of the file, which is only
+      // known once it loads (or at once when the hunk is the whole file).
       last: hunk ? hunk.newFirst - 1 : previous?.wholeFile ? previous.newLast : fileLineCount,
       offset: hunk ? hunk.offsetBefore : (previous?.offsetAfter ?? 0),
       above: Boolean(previous),
@@ -160,10 +166,7 @@ function GroupCheck({
   changes: number[];
   staging: LineStaging;
 }): React.JSX.Element {
-  const stagedCount = changes.filter((index) => staging.staged.has(index)).length;
-  let state: CheckState = false;
-  if (stagedCount === changes.length) state = true;
-  else if (stagedCount > 0) state = "mixed";
+  const state = combineStates(changes.map((index) => staging.staged.has(index)));
   return (
     <TriStateCheckbox
       state={state}
@@ -174,6 +177,7 @@ function GroupCheck({
   );
 }
 
+/** The line's text, with its +/-/space marker in Unified. An empty line becomes a space so its row keeps its height. */
 function lineText(line: DiffLine, withMarker: boolean): string {
   const marker = withMarker ? (MARKERS[line.kind] ?? "") : "";
   return marker + line.text || " ";
@@ -248,11 +252,13 @@ export default function DiffView({
     const rowChanges = rows.map((row) =>
       row.filter((line): line is DiffLine => Boolean(line && isChange(line))).map((line) => line.index),
     );
-    // A note ("\ No newline at end of file") belongs to the group it follows.
+    // A row is in a group if it has a change. A note ("\ No newline at end
+    // of file") belongs to the group it follows.
     const inGroup = rows.map((row, index) =>
       rowChanges[index].length > 0 ||
       (row.some((line) => line?.kind === "note") && index > 0 && rowChanges[index - 1].length > 0),
     );
+    // Consecutive group rows merge into one group spanning them.
     const groups: { start: number; span: number; changes: number[] }[] = [];
     inGroup.forEach((member, index) => {
       if (!member) return;
@@ -266,6 +272,7 @@ export default function DiffView({
     });
 
     const cell = (line: DiffLine | undefined, side: "left" | "right" | "", row: number, number?: number): React.JSX.Element => {
+      // Grid columns: Unified is [gutter] lines; Split is left [gutter] right.
       let gridColumn = gutter ? 2 : 1;
       if (side === "left") gridColumn = 1;
       if (side === "right") gridColumn = gutter ? 3 : 2;
@@ -319,6 +326,7 @@ export default function DiffView({
     const out: DiffLine[] = [];
     for (let number = from; number <= to; number++) {
       out.push({
+        // Negative so it can't clash with a real diff line's index.
         index: -number,
         kind: "context",
         text: fileLines?.[number - 1] ?? "",
@@ -331,10 +339,12 @@ export default function DiffView({
 
   const renderGap = (gap: Gap, index: number): ReactNode => {
     if (!loadFile) return null;
+    // Length (and so `hidden`) is unknown for the trailing gap until the file loads.
     const length = gap.last === undefined ? undefined : Math.max(0, gap.last - gap.first + 1);
     if (length === 0) return null;
     const shown = revealed[index] ?? { top: 0, bottom: 0 };
     const hidden = length === undefined ? undefined : length - shown.top - shown.bottom;
+    // Once the revealed top and bottom meet, show the gap whole with no button.
     const allShown = hidden !== undefined && hidden <= 0;
     const last = gap.last ?? gap.first - 1;
     const top = allShown

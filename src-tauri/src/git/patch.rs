@@ -17,6 +17,7 @@ struct HunkHeader {
     new_len: usize,
 }
 
+/// "12,3" -> (12, 3); a bare "12" means one line.
 fn parse_range(range: &str) -> Option<(usize, usize)> {
     match range.split_once(',') {
         Some((start, len)) => Some((start.parse().ok()?, len.parse().ok()?)),
@@ -72,6 +73,8 @@ fn parse_items(diff: &str) -> Vec<Item<'_>> {
         if !in_hunk || raw.is_empty() {
             continue;
         }
+        // Each body line bumps the counters of the sides it exists on; the
+        // `- 1` gives back the number the line itself had.
         let line = match raw.as_bytes()[0] {
             b' ' => {
                 old += 1;
@@ -86,7 +89,7 @@ fn parse_items(diff: &str) -> Vec<Item<'_>> {
                 new += 1;
                 BodyLine::Added { new: new - 1 }
             }
-            _ => continue,
+            _ => continue, // "\ No newline at end of file"
         };
         let no_newline = lines.get(index + 1).is_some_and(|next| next.starts_with('\\'));
         items.push(Item::Line { index, line, text: &raw[1..], no_newline });
@@ -141,7 +144,8 @@ pub fn stages_any_addition(combined: &str, staged: &HashSet<usize>) -> bool {
         .any(|(index, line)| matches!(line, BodyLine::Added { .. }) && staged.contains(&index))
 }
 
-const STALE: &str = "The file changed since its diff was shown. Try again on the updated diff.";
+/// Error for a line-staging request made against a diff that is out of date.
+pub const STALE: &str = "The file changed since its diff was shown. Try again on the updated diff.";
 
 /// Appends `text`, first ending the previous line if it had no newline
 /// (only the last line of a file may lack one).
@@ -157,6 +161,7 @@ fn push_line(out: &mut String, text: &str) {
 /// `combined.split('\n')`) should be in the index: HEAD with exactly those
 /// removals and additions applied. Fails if `head` doesn't match the diff.
 pub fn index_content(head: &str, combined: &str, staged: &HashSet<usize>) -> Result<String, String> {
+    // Keep each line's "\n" so lines are copied byte for byte.
     let head_lines: Vec<&str> = head.split_inclusive('\n').collect();
     let head_line = |number: usize| -> Result<&str, String> {
         number
@@ -183,10 +188,12 @@ pub fn index_content(head: &str, combined: &str, staged: &HashSet<usize>) -> Res
             }
             Item::Line { index, line, text, no_newline } => match line {
                 BodyLine::Context { old } | BodyLine::Removed { old } => {
+                    // HEAD must still hold exactly the text the diff showed.
                     let head_text = head_line(old)?;
                     if head_text.strip_suffix('\n').unwrap_or(head_text) != text {
                         return Err(STALE.into());
                     }
+                    // Context is always kept; a removal is kept unless it is staged.
                     let removed = matches!(line, BodyLine::Removed { .. });
                     if !removed || !staged.contains(&index) {
                         push_line(&mut out, head_text);

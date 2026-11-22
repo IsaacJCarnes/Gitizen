@@ -13,13 +13,22 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let mut command = git_command(dir, args);
-    let output = command.stdin(Stdio::null()).output().map_err(could_not_run)?;
+    run_git_bytes(dir, args).map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Like `run_git`, but returns stdout as raw bytes, for file contents that
+/// may not be text.
+pub fn run_git_bytes<I, S>(dir: &Path, args: I) -> Result<Vec<u8>, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let output = git_command(dir, args).stdin(Stdio::null()).output().map_err(could_not_run)?;
     into_result(output)
 }
 
-/// Like `run_git`, but writes `input` to git's stdin (e.g. a patch for
-/// `git apply -`).
+/// Like `run_git`, but writes `input` to git's stdin (e.g. file content for
+/// `git hash-object --stdin`).
 pub fn run_git_with_input<I, S>(dir: &Path, args: I, input: &str) -> Result<String, String>
 where
     I: IntoIterator<Item = S>,
@@ -35,23 +44,8 @@ where
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(input.as_bytes()).map_err(|error| error.to_string())?;
     }
-    into_result(child.wait_with_output().map_err(could_not_run)?)
-}
-
-/// Like `run_git`, but returns stdout as raw bytes, for file contents that
-/// may not be text.
-pub fn run_git_bytes<I, S>(dir: &Path, args: I) -> Result<Vec<u8>, String>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let mut command = git_command(dir, args);
-    let output = command.stdin(Stdio::null()).output().map_err(could_not_run)?;
-    if output.status.success() {
-        Ok(output.stdout)
-    } else {
-        into_result(output).map(String::into_bytes)
-    }
+    let stdout = into_result(child.wait_with_output().map_err(could_not_run)?)?;
+    Ok(String::from_utf8_lossy(&stdout).into_owned())
 }
 
 fn git_command<I, S>(dir: &Path, args: I) -> Command
@@ -74,16 +68,16 @@ fn could_not_run(error: std::io::Error) -> String {
     format!("Could not run git (is it installed and on PATH?): {error}")
 }
 
-/// stdout on success, otherwise git's own message.
-fn into_result(output: Output) -> Result<String, String> {
+/// stdout on success, otherwise git's own message: stderr, or stdout when
+/// stderr is empty (as for `git commit` with nothing to commit).
+fn into_result(output: Output) -> Result<Vec<u8>, String> {
     if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let message = if stderr.trim().is_empty() { stdout } else { stderr };
-        Err(message.trim().to_string())
+        return Ok(output.stdout);
     }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let message = if stderr.trim().is_empty() { stdout } else { stderr };
+    Err(message.trim().to_string())
 }
 
 /// Stops Windows from flashing a console window for every git call.

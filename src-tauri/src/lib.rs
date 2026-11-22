@@ -25,7 +25,6 @@ pub fn run() {
             commands::status,
             commands::log,
             commands::branches,
-            commands::diff,
             commands::file_diff,
             commands::file_text,
             commands::commit_files,

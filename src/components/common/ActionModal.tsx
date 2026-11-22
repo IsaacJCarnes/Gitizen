@@ -13,10 +13,8 @@ interface ActionModalProps {
   title: string;
   children: ReactNode;
   actions?: ModalAction[];
-  /** Called by the dismiss button, Escape, or a click on the backdrop. */
+  /** Called by the dismiss button ("Cancel" beside actions, else "OK"), Escape, or a click on the backdrop. */
   onDismiss: () => void;
-  /** Defaults to "Cancel" when there are actions, otherwise "OK". */
-  dismissLabel?: string;
 }
 
 /**
@@ -28,7 +26,6 @@ export default function ActionModal({
   children,
   actions = [],
   onDismiss,
-  dismissLabel,
 }: ActionModalProps): React.JSX.Element {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -61,7 +58,7 @@ export default function ActionModal({
         <div className="action-modal-body">{children}</div>
         <footer>
           <button onClick={onDismiss}>
-            {dismissLabel ?? (actions.length > 0 ? "Cancel" : "OK")}
+            {actions.length > 0 ? "Cancel" : "OK"}
           </button>
           {actions.map((action) => (
             <button

@@ -82,7 +82,7 @@ src/                     UI (React)
   context/               React contexts: UI state (view, recent repositories) and git state
   hooks/useGitOperations.ts  All git state and actions for the app
   hooks/useDiffSettings.ts   Diff layout and whitespace settings, saved in localStorage
-  utils/                 Pure helpers: commit graph layout, formatting, diff line parsing, error normalising
+  utils/                 Pure helpers: commit graph layout, diff line parsing, tri-state checkbox logic, formatting, error normalising
   pages/GitizenView/     Top-level page layout
   components/
     common/              Reusable pieces: DiffView, FileListItem, TriStateCheckbox, ActionModal

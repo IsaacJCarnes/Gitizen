@@ -24,7 +24,6 @@ export const Command = {
   Status: "status",
   Log: "log",
   Branches: "branches",
-  Diff: "diff",
   FileDiff: "file_diff",
   FileText: "file_text",
   CommitFiles: "commit_files",
@@ -65,8 +64,6 @@ export interface GitizenApi {
   /** Up to 500 commits across all branches, remotes and tags, children before parents. */
   log(): Promise<GitCommit[]>;
   branches(): Promise<GitBranch[]>;
-  /** Diff of one working-tree file, either its staged or its unstaged changes. */
-  diff(path: string, staged: boolean, ignoreWhitespace?: boolean): Promise<string>;
   /**
    * Every uncommitted change to one file (staged and unstaged together)
    * against HEAD, so it reads the same whether or not the file is staged,

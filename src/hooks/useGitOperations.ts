@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type {
   CommitFile,
   FileChange,
+  FileDiff,
   GitBranch,
   GitCommit,
   GitStatus,
@@ -66,6 +67,8 @@ export interface GitOperationsOptions {
   onRepositoryOpened?: (path: string) => void;
 }
 
+const NO_DIFF: FileDiff = { diff: "", stagedLines: [] };
+
 /**
  * Runs `request` and passes its result to `onResult` (or its error to
  * `onError`) unless the returned cleanup ran first. Use as an effect's body
@@ -104,8 +107,7 @@ export function useGitOperations({
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [branches, setBranches] = useState<GitBranch[]>([]);
   const [selectedFile, setSelectedFile] = useState<FileChange | null>(null);
-  const [diff, setDiff] = useState("");
-  const [stagedLines, setStagedLines] = useState<number[]>([]);
+  const [{ diff, stagedLines }, setFileDiff] = useState(NO_DIFF);
   const [commitSummary, setCommitSummary] = useState("");
   const [commitDescription, setCommitDescription] = useState("");
   const [error, setError] = useState<AppError | null>(null);
@@ -172,7 +174,7 @@ export function useGitOperations({
     async (directory: string): Promise<void> => {
       setRepo(directory);
       setSelectedFile(null);
-      setDiff("");
+      setFileDiff(NO_DIFF);
       selectCommit(null);
       onRepositoryOpened?.(directory);
       await refresh();
@@ -180,20 +182,12 @@ export function useGitOperations({
     [refresh, selectCommit, onRepositoryOpened],
   );
 
-  const openRepository = useCallback(async (): Promise<void> => {
-    try {
-      const directory = await gitizen.openRepo();
-      if (!directory) return;
-      await showRepository(directory);
-    } catch (openError) {
-      reportError(openError);
-    }
-  }, [showRepository, reportError]);
-
-  const openRepositoryAt = useCallback(
-    async (path: string): Promise<void> => {
+  /** Waits for the backend to open a repository (null: the picker was cancelled), then shows it. */
+  const openWith = useCallback(
+    async (opening: Promise<string | null>): Promise<void> => {
       try {
-        await showRepository(await gitizen.openRepoAt(path));
+        const directory = await opening;
+        if (directory) await showRepository(directory);
       } catch (openError) {
         reportError(openError);
       }
@@ -201,15 +195,14 @@ export function useGitOperations({
     [showRepository, reportError],
   );
 
+  const openRepository = useCallback(() => openWith(gitizen.openRepo()), [openWith]);
+  const openRepositoryAt = useCallback(
+    (path: string) => openWith(gitizen.openRepoAt(path)),
+    [openWith],
+  );
   const initRepository = useCallback(
-    async (path: string): Promise<void> => {
-      try {
-        await showRepository(await gitizen.initRepo(path));
-      } catch (initError) {
-        reportError(initError);
-      }
-    },
-    [showRepository, reportError],
+    (path: string) => openWith(gitizen.initRepo(path)),
+    [openWith],
   );
 
   const setFilesStaged = useCallback(
@@ -261,19 +254,14 @@ export function useGitOperations({
   // ticked). Reloaded after every refresh because editing the file does.
   useEffect(() => {
     if (!selectedFile) {
-      setDiff("");
-      setStagedLines([]);
+      setFileDiff(NO_DIFF);
       return;
     }
     return loadUnlessCancelled(
       gitizen.fileDiff(selectedFile.path, hideWhitespace),
-      (result) => {
-        setDiff(result.diff);
-        setStagedLines(result.stagedLines);
-      },
+      setFileDiff,
       (diffError) => {
-        setDiff("");
-        setStagedLines([]);
+        setFileDiff(NO_DIFF);
         reportError(diffError);
       },
     );

@@ -37,7 +37,7 @@ export interface CommitGraph {
 }
 
 /** Palette cycled through by lane index. */
-export const LANE_COLORS = [
+const LANE_COLORS = [
   "#2f9e8f",
   "#d9822b",
   "#7c5cc4",
@@ -62,7 +62,8 @@ export const laneColor = (lane: number): string =>
  * of taking over main's column just because their tip is drawn first.
  */
 export function buildCommitGraph(nodes: GraphNode[], trunk?: string): CommitGraph {
-  // lanes[i] is the hash lane i is waiting to reach, or null if free.
+  // lanes[i] is the hash lane i is waiting to reach, or null if free;
+  // dashed[i] is whether the line running down lane i is dashed.
   const lanes: (string | null)[] = [];
   const dashed: boolean[] = [];
   let laneCount = 0;
@@ -70,6 +71,7 @@ export function buildCommitGraph(nodes: GraphNode[], trunk?: string): CommitGrap
   // Walk the trunk's first parents to find the commits that belong in lane 0.
   const byHash = new Map(nodes.map((node) => [node.hash, node]));
   const trunkChain = new Set<string>();
+  // Walk first parents from the tip until the chain leaves the loaded history.
   for (let hash = trunk; hash !== undefined && byHash.has(hash); ) {
     trunkChain.add(hash);
     hash = byHash.get(hash)?.parents[0];
@@ -78,6 +80,7 @@ export function buildCommitGraph(nodes: GraphNode[], trunk?: string): CommitGrap
   let trunkReserved = trunkChain.size > 0;
   if (trunkReserved) lanes.push(null);
 
+  // Leftmost free lane (never lane 0 while it is held for the trunk), else a new one.
   const freeLane = (): number => {
     for (let i = trunkReserved ? 1 : 0; i < lanes.length; i++) {
       if (lanes[i] === null) return i;
@@ -131,6 +134,8 @@ export function buildCommitGraph(nodes: GraphNode[], trunk?: string): CommitGrap
       lines.push({ from: lane, to: target, part: "bottom", color: target, dashed: false });
     }
 
+    // Drop free lanes off the right edge so the graph narrows again
+    // (keeping the reserved lane 0).
     while (lanes.length > (trunkReserved ? 1 : 0) && lanes[lanes.length - 1] === null) {
       lanes.pop();
     }

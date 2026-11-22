@@ -3,7 +3,7 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use serde::Serialize;
 
@@ -62,18 +62,17 @@ impl OpenRepository {
                 message: "That folder is not a git repository".into(),
             });
         }
-        *self.0.lock().map_err(|_| "Repository state is unavailable".to_string())? =
-            Some(directory);
+        *self.slot()? = Some(directory);
         Ok(())
     }
 
     /// Returns the open repository's folder, or an error if none is open.
     pub fn require(&self) -> Result<PathBuf, String> {
-        self.0
-            .lock()
-            .map_err(|_| "Repository state is unavailable".to_string())?
-            .clone()
-            .ok_or_else(|| "No repository open".to_string())
+        self.slot()?.clone().ok_or_else(|| "No repository open".to_string())
+    }
+
+    fn slot(&self) -> Result<MutexGuard<'_, Option<PathBuf>>, String> {
+        self.0.lock().map_err(|_| "Repository state is unavailable".to_string())
     }
 }
 
@@ -106,33 +105,24 @@ pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 /// Rejects anything that isn't a hex commit hash, so UI input can never be
 /// read by git as an option or a revision expression.
 pub fn assert_hash(hash: &str) -> Result<&str, String> {
+    // 4 is git's shortest abbreviation; 64 is a full SHA-256 hash.
     let valid = (4..=64).contains(&hash.len()) && hash.bytes().all(|b| b.is_ascii_hexdigit());
-    if valid {
-        Ok(hash)
-    } else {
-        Err("Invalid commit hash".into())
-    }
+    valid.then_some(hash).ok_or_else(|| "Invalid commit hash".into())
 }
 
 /// Rejects branch names git would read as an option, such as "--force".
 pub fn assert_branch_name(name: &str) -> Result<&str, String> {
-    if name.is_empty() || name.starts_with('-') {
-        Err("Invalid branch name".into())
-    } else {
-        Ok(name)
-    }
+    let valid = !name.is_empty() && !name.starts_with('-');
+    valid.then_some(name).ok_or_else(|| "Invalid branch name".into())
 }
 
 /// Returns the first parent of `hash`, or the empty tree for a root commit.
 /// Commit diffs are taken against the first parent, so a merge shows what it
 /// brought in.
 pub fn first_parent_of(repo: &Path, hash: &str) -> Result<String, String> {
+    // Prints "<hash> <parent1> <parent2>...", so the second word is the first parent.
     let line = run_git(repo, ["rev-list", "--parents", "-n", "1", hash])?;
-    Ok(line
-        .split_whitespace()
-        .nth(1)
-        .unwrap_or(EMPTY_TREE)
-        .to_string())
+    Ok(line.split_whitespace().nth(1).unwrap_or(EMPTY_TREE).to_string())
 }
 
 #[cfg(test)]

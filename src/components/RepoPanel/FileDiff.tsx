@@ -91,9 +91,7 @@ export default function FileDiff(): React.JSX.Element {
           diff={shownDiff}
           layout={settings.layout}
           lineStaging={lineStaging}
-          loadFile={() =>
-            path ? gitizen.fileText(path, selectedCommit?.hash) : Promise.resolve("")
-          }
+          loadFile={() => gitizen.fileText(path, selectedCommit?.hash)}
           emptyMessage={
             settings.hideWhitespace ? "No changes besides whitespace." : "No changes to show."
           }

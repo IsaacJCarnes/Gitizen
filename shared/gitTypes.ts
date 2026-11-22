@@ -1,5 +1,6 @@
 /**
- * Data shapes passed between the Electron main process and the renderer.
+ * Data shapes passed between the Rust backend and the UI (mirrored in
+ * src-tauri/src/git/types.rs).
  *
  * Everything here crosses the IPC boundary, so it must stay plain,
  * serialisable data (no classes, functions or Dates).

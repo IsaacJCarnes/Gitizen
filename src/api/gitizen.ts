@@ -20,8 +20,6 @@ export const gitizen: GitizenApi = {
   status: () => invoke(Command.Status),
   log: () => invoke(Command.Log),
   branches: () => invoke(Command.Branches),
-  diff: (path, staged, ignoreWhitespace) =>
-    invoke(Command.Diff, { path, staged, ignoreWhitespace }),
   fileDiff: (path, ignoreWhitespace) =>
     invoke(Command.FileDiff, { path, ignoreWhitespace }),
   fileText: (path, hash) => invoke(Command.FileText, { path, hash }),

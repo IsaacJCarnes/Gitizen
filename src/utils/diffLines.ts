@@ -34,7 +34,11 @@ export interface SplitRow {
   right?: DiffLine;
 }
 
-const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+/**
+ * "@@ -oldStart[,oldLen] +newStart[,newLen] @@": groups 1-4 are those
+ * numbers (a missing length means 1).
+ */
+export const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
 export function parseDiff(diff: string): DiffLine[] {
   const lines: DiffLine[] = [];
@@ -50,7 +54,7 @@ export function parseDiff(diff: string): DiffLine[] {
       inHunks = true;
       hunk = index;
       oldNumber = Number(header[1]);
-      newNumber = Number(header[2]);
+      newNumber = Number(header[3]);
       lines.push({ index, kind: "hunk", text: line });
       return;
     }

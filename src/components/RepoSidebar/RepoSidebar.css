@@ -25,3 +25,7 @@
   margin-left: auto;
   font-weight: 400;
 }
+
+.file-change-list{
+  overflow-y: auto;
+}

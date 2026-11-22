@@ -10,11 +10,11 @@ use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::git::parsers::{parse_log, parse_name_status, parse_status, LOG_FORMAT};
 use crate::git::patch::{
-    changed_line_numbers, index_content, stages_any_addition, staged_line_indices,
+    changed_line_numbers, index_content, stages_any_addition, staged_line_indices, STALE,
 };
 use crate::git::repository::{
     assert_branch_name, assert_hash, first_parent_of, init_repository as git_init, OpenError,
@@ -44,7 +44,7 @@ pub async fn open_repository(app: AppHandle, repo: Repo<'_>) -> Result<Option<St
 /// with a plain failure if the folder is gone.
 #[tauri::command]
 pub async fn open_repository_at(repo: Repo<'_>, path: String) -> Result<String, OpenError> {
-    let directory = std::path::PathBuf::from(&path);
+    let directory = PathBuf::from(&path);
     if !directory.is_dir() {
         return Err(format!("{path} no longer exists").into());
     }
@@ -56,7 +56,7 @@ pub async fn open_repository_at(repo: Repo<'_>, path: String) -> Result<String, 
 /// repository yet) and opens it. Returns the path.
 #[tauri::command]
 pub async fn init_repository(repo: Repo<'_>, path: String) -> Result<String, String> {
-    let directory = std::path::PathBuf::from(&path);
+    let directory = PathBuf::from(&path);
     git_init(&directory)?;
     repo.open(directory)?;
     Ok(path)
@@ -64,6 +64,7 @@ pub async fn init_repository(repo: Repo<'_>, path: String) -> Result<String, Str
 
 #[tauri::command]
 pub async fn status(repo: Repo<'_>) -> Result<GitStatus, String> {
+    // -z: NUL-separated entries, so paths with spaces or quotes come through as is.
     let output = run_git(
         &repo.require()?,
         ["status", "--porcelain=v1", "--branch", "-z", "--untracked-files=all"],
@@ -119,27 +120,6 @@ fn diff_options(ignore_whitespace: Option<bool>) -> Vec<&'static str> {
     args
 }
 
-/// Arguments for the diff of one working-tree file.
-fn working_diff_args(path: &str, staged: bool, ignore_whitespace: Option<bool>) -> Vec<&str> {
-    let mut args = diff_options(ignore_whitespace);
-    if staged {
-        args.push("--cached");
-    }
-    args.extend(["--", path]);
-    args
-}
-
-/// Diff of one working-tree file, either its staged or its unstaged changes.
-#[tauri::command]
-pub async fn diff(
-    repo: Repo<'_>,
-    path: String,
-    staged: bool,
-    ignore_whitespace: Option<bool>,
-) -> Result<String, String> {
-    run_git(&repo.require()?, working_diff_args(&path, staged, ignore_whitespace))
-}
-
 /// Every uncommitted change to one file, staged and unstaged together,
 /// compared to HEAD (or to nothing before the first commit), plus which of
 /// its changed lines are staged. The diff text is the same whether or not
@@ -183,10 +163,8 @@ fn combined_diff(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Res
     if is_untracked(dir, path)? {
         // Store the file as git would (line endings normalised), so the diff
         // matches what `git diff HEAD` prints once the file is staged.
-        let hash = run_git(dir, ["hash-object", "-w", "--", path])?;
-        let hash = hash.trim();
-        let contents = run_git_bytes(dir, ["cat-file", "blob", hash])?;
-        return Ok(new_file_diff(path, hash, &contents));
+        let (hash, contents) = worktree_blob(dir, path)?;
+        return Ok(new_file_diff(path, &hash, &contents));
     }
     let mut args = diff_options(ignore_whitespace);
     args.extend([head_or_empty_tree(dir), "--", path]);
@@ -199,6 +177,8 @@ fn staged_lines_of(dir: &Path, path: &str, diff: &str) -> Result<Vec<usize>, Str
     if is_untracked(dir, path)? {
         return Ok(Vec::new());
     }
+    // -U0 diffs list only changed lines, with their line numbers in the hunk
+    // headers. `--cached` is HEAD to index; without it, index to working tree.
     let zero_context = |cached: bool| {
         let mut args = diff_options(None);
         args.push("-U0");
@@ -229,6 +209,7 @@ fn new_file_diff(path: &str, hash: &str, contents: &[u8]) -> String {
         return diff;
     }
     let lines: Vec<&str> = text.strip_suffix('\n').unwrap_or(&text).split('\n').collect();
+    // git writes a one-line range as "+1" rather than "+1,1".
     let range = match lines.len() {
         1 => "1".to_string(),
         count => format!("1,{count}"),
@@ -247,6 +228,15 @@ fn new_file_diff(path: &str, hash: &str, contents: &[u8]) -> String {
     diff
 }
 
+/// Writes the working-tree file to git's object store (`hash-object -w`
+/// applies the same filters as `git add`, e.g. CRLF to LF) and returns the
+/// blob's hash and the stored bytes, which is what `git diff` compares.
+fn worktree_blob(dir: &Path, path: &str) -> Result<(String, Vec<u8>), String> {
+    let hash = run_git(dir, ["hash-object", "-w", "--", path])?.trim().to_string();
+    let contents = run_git_bytes(dir, ["cat-file", "blob", &hash])?;
+    Ok((hash, contents))
+}
+
 /// The new side of a file as `git diff` sees it, for showing the lines a
 /// diff leaves out between hunks: the file at commit `hash`, or the
 /// working-tree file (line endings normalised as in git's diff) when `hash`
@@ -259,11 +249,10 @@ pub async fn file_text(repo: Repo<'_>, path: String, hash: Option<String>) -> Re
 fn file_text_in(dir: &Path, path: &str, hash: Option<&str>) -> Result<String, String> {
     let bytes = match hash {
         Some(hash) => {
+            // "<commit>:<path>" names the file's blob in that commit; a file
+            // missing from the commit just has no text.
             let spec = format!("{}:{path}", assert_hash(hash)?);
-            match run_git_bytes(dir, ["show", spec.as_str()]) {
-                Ok(bytes) => bytes,
-                Err(_) => return Ok(String::new()),
-            }
+            run_git_bytes(dir, ["show", spec.as_str()]).unwrap_or_default()
         }
         None => {
             let file = dir.join(path);
@@ -278,8 +267,7 @@ fn file_text_in(dir: &Path, path: &str, hash: Option<&str>) -> Result<String, St
             if !inside {
                 return Err(format!("{path} is outside the repository"));
             }
-            let blob = run_git(dir, ["hash-object", "-w", "--", path])?;
-            run_git_bytes(dir, ["cat-file", "blob", blob.trim()])?
+            worktree_blob(dir, path)?.1
         }
     };
     Ok(String::from_utf8_lossy(&bytes).into_owned())
@@ -291,6 +279,7 @@ pub async fn commit_files(repo: Repo<'_>, hash: String) -> Result<Vec<CommitFile
     let dir = repo.require()?;
     let hash = assert_hash(&hash)?;
     let parent = first_parent_of(&dir, hash)?;
+    // -M detects renames, so a moved file is one entry with both paths.
     let output = run_git(&dir, ["diff", "--name-status", "-z", "-M", parent.as_str(), hash])?;
     Ok(parse_name_status(&output))
 }
@@ -319,15 +308,14 @@ pub async fn commit_diff(
 
 #[tauri::command]
 pub async fn stage(repo: Repo<'_>, paths: Vec<String>) -> Result<(), String> {
-    let mut args = vec!["add".to_string(), "--".to_string()];
-    args.extend(paths);
+    // "--" ends the options, so a path can never be read as one.
+    let args = ["add", "--"].map(String::from).into_iter().chain(paths);
     run_git(&repo.require()?, args).map(drop)
 }
 
 #[tauri::command]
 pub async fn unstage(repo: Repo<'_>, paths: Vec<String>) -> Result<(), String> {
-    let mut args = vec!["reset".to_string(), "HEAD".to_string(), "--".to_string()];
-    args.extend(paths);
+    let args = ["reset", "HEAD", "--"].map(String::from).into_iter().chain(paths);
     run_git(&repo.require()?, args).map(drop)
 }
 
@@ -356,7 +344,7 @@ fn set_staged_lines_in(
 ) -> Result<(), String> {
     let current = combined_diff(dir, path, None)?;
     if current != diff {
-        return Err("The file changed since its diff was shown. Try again on the updated diff.".into());
+        return Err(STALE.into());
     }
     let mut selected: HashSet<usize> = staged_lines_of(dir, path, &current)?.into_iter().collect();
     for line in lines {
@@ -367,6 +355,7 @@ fn set_staged_lines_in(
         }
     }
 
+    // "./" makes git read the path relative to `dir`, like every other path here.
     let head_spec = format!("HEAD:./{path}");
     let head = run_git(dir, ["show", head_spec.as_str()]).ok();
     let content = index_content(head.as_deref().unwrap_or(""), &current, &selected)?;
@@ -381,6 +370,9 @@ fn set_staged_lines_in(
         return run_git(dir, ["update-index", "--force-remove", "--", path]).map(drop);
     }
 
+    // Store the content as a blob (already normalised, so no filters) and point
+    // the index entry at it. `--cacheinfo` takes "<mode>,<blob>,<path>" with
+    // the path from the repository root, hence the folder prefix.
     let mode = file_mode(dir, path)?;
     let hash = run_git_with_input(dir, ["hash-object", "-w", "--no-filters", "--stdin"], &content)?;
     let prefix = run_git(dir, ["rev-parse", "--show-prefix"])?;
@@ -390,6 +382,7 @@ fn set_staged_lines_in(
 
 /// The file's mode in the index, else in HEAD, else a plain file's.
 fn file_mode(dir: &Path, path: &str) -> Result<String, String> {
+    // Both print the mode as the first word, e.g. "100755 <hash> 0\tpath".
     let staged = run_git(dir, ["ls-files", "--stage", "--", path])?;
     let committed = run_git(dir, ["ls-tree", "HEAD", "--", path]).unwrap_or_default();
     let mode = [staged, committed]
@@ -448,8 +441,8 @@ mod tests {
         let app = mock_builder()
             .manage(OpenRepository::default())
             .invoke_handler(tauri::generate_handler![
-                status, log, branches, diff, file_diff, commit_files, commit_diff, stage, unstage,
-                commit, checkout, set_staged_lines,
+                status, log, branches, file_diff, commit_files, commit_diff, stage, unstage, commit,
+                checkout, set_staged_lines,
             ])
             .build(mock_context(noop_assets()))
             .unwrap();
@@ -620,9 +613,6 @@ mod tests {
                 { "path": "new file.txt", "staged": false, "code": "?" },
             ]})
         );
-        let unstaged = call(&window, "diff", json!({ "path": "b.txt", "staged": false })).unwrap();
-        assert!(unstaged.as_str().unwrap().contains("+two"));
-
         // file_diff reads the same before and after staging, untracked files included.
         let file_diff = |path: &str| call(&window, "file_diff", json!({ "path": path })).unwrap()["diff"].clone();
         let before = (file_diff("b.txt"), file_diff("new file.txt"));
@@ -633,8 +623,8 @@ mod tests {
         call(&window, "unstage", json!({ "paths": ["b.txt", "new file.txt"] })).unwrap();
 
         call(&window, "stage", json!({ "paths": ["b.txt"] })).unwrap();
-        let staged = call(&window, "diff", json!({ "path": "b.txt", "staged": true })).unwrap();
-        assert!(staged.as_str().unwrap().contains("+two"));
+        let staged = call(&window, "file_diff", json!({ "path": "b.txt" })).unwrap();
+        assert_eq!(staged["stagedLines"].as_array().unwrap().len(), 1);
         call(&window, "unstage", json!({ "paths": ["b.txt"] })).unwrap();
         let status = call(&window, "status", json!({})).unwrap();
         assert_eq!(status["files"][0]["staged"], false);

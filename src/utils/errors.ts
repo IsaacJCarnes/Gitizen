@@ -9,22 +9,16 @@ import type { OpenRepositoryError } from "../../shared/ipc";
 export type AppError = OpenRepositoryError;
 
 /** True for the `{ kind, message }` objects the backend rejects with when opening a repository. */
-export function isOpenRepositoryError(value: unknown): value is OpenRepositoryError {
+function isOpenRepositoryError(value: unknown): value is OpenRepositoryError {
   if (typeof value !== "object" || value === null) return false;
   const { kind, message, path } = value as Record<string, unknown>;
   if (typeof message !== "string") return false;
   return kind === "failed" || (kind === "notARepository" && typeof path === "string");
 }
 
-/** Normalises anything thrown (backend error object, Error, string) into an `AppError`. */
+/** Normalises anything thrown (backend error object, Error, IPC error string) into an `AppError`. */
 export function toAppError(caught: unknown): AppError {
   if (isOpenRepositoryError(caught)) return caught;
-  return { kind: "failed", message: getErrorMessage(caught) };
-}
-
-/** Turns anything thrown (Error, IPC error string or object) into a message to show. */
-export function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (isOpenRepositoryError(error)) return error.message;
-  return String(error);
+  const message = caught instanceof Error ? caught.message : String(caught);
+  return { kind: "failed", message };
 }

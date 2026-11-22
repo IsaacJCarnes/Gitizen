@@ -2,7 +2,8 @@ import type { FileChange } from "../../../shared/gitTypes";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import FileListItem from "../common/FileListItem";
-import TriStateCheckbox, { type CheckState } from "../common/TriStateCheckbox";
+import TriStateCheckbox from "../common/TriStateCheckbox";
+import { combineStates, type CheckState } from "../../utils/checkState";
 
 /**
  * One working-tree path. Git reports a partially staged file twice (once
@@ -58,10 +59,9 @@ export default function FileChangeList(): React.JSX.Element {
   const { setView } = useAppContext();
   const entries = groupByPath(status?.files ?? []);
 
-  const fullyStaged = entries.filter((entry) => stageState(entry) === true).length;
-  let allState: CheckState = "mixed";
-  if (fullyStaged === entries.length) allState = entries.length > 0;
-  else if (entries.every((entry) => stageState(entry) === false)) allState = false;
+  const states = entries.map(stageState);
+  const fullyStaged = states.filter((state) => state === true).length;
+  const allState = combineStates(states);
 
   const open = (entry: ChangedPath): void => {
     // Either entry works: the diff covers staged and unstaged changes alike.
@@ -74,10 +74,7 @@ export default function FileChangeList(): React.JSX.Element {
     setFilesStaged([entry.path], stageState(entry) !== true);
 
   const toggleAll = (): Promise<void> =>
-    setFilesStaged(
-      entries.map((entry) => entry.path),
-      allState !== true,
-    );
+    setFilesStaged(entries.map((entry) => entry.path), allState !== true);
 
   return (
     <>
@@ -92,8 +89,8 @@ export default function FileChangeList(): React.JSX.Element {
         <small>{fullyStaged} staged</small>
       </h2>
       <ul className="file-change-list">
-        {entries.map((entry) => {
-          const state = stageState(entry);
+        {entries.map((entry, index) => {
+          const state = states[index];
           return (
             <FileListItem
               key={entry.path}

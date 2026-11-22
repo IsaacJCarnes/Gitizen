@@ -1,7 +1,5 @@
 import { useEffect, useRef } from "react";
-
-/** "mixed" renders as the browser's indeterminate (dash) state. */
-export type CheckState = boolean | "mixed";
+import type { CheckState } from "../../utils/checkState";
 
 interface TriStateCheckboxProps {
   state: CheckState;

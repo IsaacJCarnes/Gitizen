@@ -75,27 +75,17 @@ pub fn parse_log(output: &str) -> Vec<GitCommit> {
 /// Parses `git diff --name-status -z` output. Renames and copies carry two
 /// paths (old, then new); every other status carries one.
 pub fn parse_name_status(output: &str) -> Vec<CommitFile> {
-    let parts: Vec<&str> = output.split('\0').filter(|part| !part.is_empty()).collect();
+    let mut parts = output.split('\0').filter(|part| !part.is_empty());
     let mut files = Vec::new();
-    let mut i = 0;
-    while i < parts.len() {
-        let status = parts[i];
-        let code = status.chars().next().map(String::from).unwrap_or_default();
-        if status.starts_with('R') || status.starts_with('C') {
-            files.push(CommitFile {
-                code,
-                old_path: parts.get(i + 1).map(|path| path.to_string()),
-                path: parts.get(i + 2).copied().unwrap_or_default().to_string(),
-            });
-            i += 3;
-        } else {
-            files.push(CommitFile {
-                code,
-                old_path: None,
-                path: parts.get(i + 1).copied().unwrap_or_default().to_string(),
-            });
-            i += 2;
-        }
+    // Each record is a status such as "M" or "R100", then its path(s).
+    while let Some(status) = parts.next() {
+        let mut next_path = || parts.next().unwrap_or_default().to_string();
+        let old_path = matches!(status.chars().next(), Some('R' | 'C')).then(&mut next_path);
+        files.push(CommitFile {
+            code: status.get(..1).unwrap_or_default().to_string(),
+            old_path,
+            path: next_path(),
+        });
     }
     files
 }
@@ -124,24 +114,20 @@ pub fn parse_status(output: &str) -> GitStatus {
         let (Some(index), Some(work_tree)) = (chars.next(), chars.next()) else {
             continue;
         };
-        let path = entry.get(3..).unwrap_or_default().to_string();
+        // Entries are "XY <path>": X is the index letter, Y the working tree's.
+        let path = entry.get(3..).unwrap_or_default();
         // Renames and copies are followed by their original path; skip it.
         if matches!(index, 'R' | 'C') || matches!(work_tree, 'R' | 'C') {
             entries.next();
         }
+        let mut push = |staged: bool, code: char| {
+            status.files.push(FileChange { path: path.to_string(), staged, code: code.to_string() })
+        };
         if index != ' ' && index != '?' {
-            status.files.push(FileChange {
-                path: path.clone(),
-                staged: true,
-                code: index.to_string(),
-            });
+            push(true, index);
         }
         if work_tree != ' ' {
-            status.files.push(FileChange {
-                path,
-                staged: false,
-                code: work_tree.to_string(),
-            });
+            push(false, work_tree);
         }
     }
     status
