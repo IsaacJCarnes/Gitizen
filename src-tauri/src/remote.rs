@@ -167,20 +167,28 @@ fn pull_in(dir: &Path) -> Result<(), String> {
 /// Pushes the current branch. A branch with an upstream goes to it; a new
 /// branch is published to `origin` (or the only remote) under its own name
 /// and starts tracking it. Annotated tags on the pushed commits go along.
+/// `force` replaces the remote branch after an amend or undo of a pushed
+/// commit, but only if it is still where it was last fetched.
 #[tauri::command]
-pub async fn push(repo: Repo<'_>) -> Result<(), String> {
+pub async fn push(repo: Repo<'_>, force: Option<bool>) -> Result<(), String> {
     let dir = repo.require()?;
-    blocking(move || push_in(&dir)).await
+    blocking(move || push_in(&dir, force == Some(true))).await
 }
 
-fn push_in(dir: &Path) -> Result<(), String> {
+fn push_in(dir: &Path, force: bool) -> Result<(), String> {
     let branch = current_branch(dir)?;
     let local = format!("refs/heads/{branch}");
     if let Some((remote, merge)) = upstream_of(dir) {
         // Explicit "<local>:<upstream>" pushes to the tracked branch even
         // when its name differs, whatever `push.default` says.
         let refspec = format!("{local}:{merge}");
-        return run_git(dir, ["push", "--follow-tags", remote.as_str(), refspec.as_str()]).map(drop);
+        let mut args = vec!["push", "--follow-tags", remote.as_str(), refspec.as_str()];
+        // --force-with-lease refuses if someone else pushed since our last
+        // fetch, so a force push can only drop the commit we rewrote.
+        if force {
+            args.push("--force-with-lease");
+        }
+        return run_git(dir, args).map(drop);
     }
     let remote = default_remote(dir)
         .ok_or("This repository has no remote yet. Publish it or add a remote first.")?;
@@ -298,7 +306,7 @@ mod tests {
         let alice = new_repo("alice");
         assert!(remotes_in(&alice).is_empty());
         commit_file(&alice, "a.txt", "one\n");
-        let error = push_in(&alice).unwrap_err();
+        let error = push_in(&alice, false).unwrap_err();
         assert!(error.contains("no remote"), "{error}");
         assert!(add_remote_in(&alice, "-x", &server_url).is_err());
         add_remote_in(&alice, "origin", &server_url).unwrap();
@@ -306,7 +314,7 @@ mod tests {
         assert!(pull_in(&alice).unwrap_err().contains("Push it first"));
 
         // First push publishes main and sets it as the upstream.
-        push_in(&alice).unwrap();
+        push_in(&alice, false).unwrap();
         assert_eq!(upstream_of(&alice), Some(("origin".into(), "refs/heads/main".into())));
 
         let bob = temp_dir("bob");
@@ -314,7 +322,7 @@ mod tests {
         git(&bob, &["config", "user.name", "Bob"]);
         git(&bob, &["config", "user.email", "bob@example.com"]);
         commit_file(&bob, "b.txt", "two\n");
-        push_in(&bob).unwrap();
+        push_in(&bob, false).unwrap();
 
         // Alice diverges, then pulls Bob's commit in with a merge.
         commit_file(&alice, "c.txt", "three\n");
@@ -323,11 +331,16 @@ mod tests {
         assert!(alice.join("b.txt").exists());
         let parents = git(&alice, &["rev-list", "--parents", "-n", "1", "HEAD"]);
         assert_eq!(parents.split_whitespace().count(), 3, "pull should merge");
-        push_in(&alice).unwrap();
+        push_in(&alice, false).unwrap();
+
+        // Rewording the pushed merge needs a force push.
+        git(&alice, &["commit", "-q", "--amend", "-m", "Reworded"]);
+        assert!(push_in(&alice, false).is_err());
+        push_in(&alice, true).unwrap();
 
         // Detached HEAD can't push.
         git(&alice, &["checkout", "-q", "--detach"]);
-        assert!(push_in(&alice).unwrap_err().contains("detached"));
+        assert!(push_in(&alice, false).unwrap_err().contains("detached"));
 
         for dir in [server, alice, bob] {
             let _ = std::fs::remove_dir_all(dir);

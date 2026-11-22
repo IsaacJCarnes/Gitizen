@@ -16,7 +16,7 @@ const RUNNING_LABEL: Record<SyncAction, string> = {
  * how many commits each would move.
  */
 export default function SyncControls(): React.JSX.Element | null {
-  const { status, remotes, syncing, sync } = useGitOperationsContext();
+  const { status, remotes, syncing, sync, needsForcePush } = useGitOperationsContext();
   const [publishing, setPublishing] = useState(false);
   if (!status) return null;
 
@@ -59,7 +59,14 @@ export default function SyncControls(): React.JSX.Element | null {
       <>
         {button("fetch", "Fetch", `Download new commits from ${status.upstream}`)}
         {button("pull", "Pull ↓", `Pull ${status.upstream} into this branch`, status.behind)}
-        {button("push", "Push ↑", `Push this branch to ${status.upstream}`, status.ahead)}
+        {needsForcePush
+          ? button(
+              "push",
+              "Force push ↑",
+              `Replace ${status.upstream} with this branch (refused if someone else pushed since)`,
+              status.ahead,
+            )
+          : button("push", "Push ↑", `Push this branch to ${status.upstream}`, status.ahead)}
       </>
     );
   }

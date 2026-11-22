@@ -36,6 +36,8 @@ pub fn run() {
             commands::stage,
             commands::unstage,
             commands::commit,
+            commands::undo_last_commit,
+            commands::stash_changes,
             commands::checkout,
             commands::set_staged_lines,
             ai_commit::ai_commit_command,

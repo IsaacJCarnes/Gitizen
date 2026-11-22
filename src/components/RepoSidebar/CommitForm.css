@@ -11,6 +11,15 @@
   resize: vertical;
 }
 
+.commit-amend {
+  display: flex;
+  gap: 6px;
+}
+
+.commit-amend .primary {
+  flex: 1;
+}
+
 .commit-generate {
   display: flex;
   gap: 6px;

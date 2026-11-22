@@ -30,7 +30,9 @@ export const gitizen: GitizenApi = {
   unstage: (paths) => invoke(Command.Unstage, { paths }),
   setStagedLines: (path, diff, lines, staged) =>
     invoke(Command.SetStagedLines, { path, diff, lines, staged }),
-  commit: (message) => invoke(Command.Commit, { message }),
+  commit: (message, amend) => invoke(Command.Commit, { message, amend }),
+  undoLastCommit: () => invoke(Command.UndoLastCommit),
+  stashChanges: (message) => invoke(Command.StashChanges, { message }),
   checkout: (branch) => invoke(Command.Checkout, { branch }),
   aiCommitCommand: () => invoke(Command.AiCommitCommand),
   setAiCommitCommand: (command) => invoke(Command.SetAiCommitCommand, { command }),
@@ -42,5 +44,5 @@ export const gitizen: GitizenApi = {
     invoke(Command.PublishRepository, { name, description, private: isPrivate }),
   fetch: () => invoke(Command.Fetch),
   pull: () => invoke(Command.Pull),
-  push: () => invoke(Command.Push),
+  push: (force) => invoke(Command.Push, { force }),
 };

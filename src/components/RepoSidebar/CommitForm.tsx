@@ -19,6 +19,8 @@ export default function CommitForm(): React.JSX.Element {
     commitDescription,
     setCommitDescription,
     commitChanges,
+    amending,
+    cancelAmend,
     generatingMessage,
     generateCommitMessage,
     reportError,
@@ -27,7 +29,9 @@ export default function CommitForm(): React.JSX.Element {
   const [aiCommand, setAiCommand] = useState<string | null>(null);
   const [settingUp, setSettingUp] = useState<"change" | "generate" | null>(null);
   const stagedCount = status?.files.filter((file) => file.staged).length ?? 0;
-  const canCommit = commitSummary.trim() !== "" && stagedCount > 0 && !generatingMessage;
+  // Amending may just reword the last commit, so it needs nothing staged.
+  const canCommit =
+    commitSummary.trim() !== "" && (stagedCount > 0 || amending) && !generatingMessage;
 
   useEffect(() => {
     gitizen.aiCommitCommand().then(setAiCommand, () => setAiCommand(""));
@@ -105,9 +109,18 @@ export default function CommitForm(): React.JSX.Element {
           &#9881;
         </button>
       </div>
-      <button className="primary" disabled={!canCommit} onClick={commitChanges}>
-        Commit {pluralize(stagedCount, "file")}
-      </button>
+      {amending ? (
+        <div className="commit-amend">
+          <button className="primary" disabled={!canCommit} onClick={commitChanges}>
+            Amend last commit{stagedCount > 0 && ` (+${pluralize(stagedCount, "file")})`}
+          </button>
+          <button onClick={cancelAmend}>Cancel</button>
+        </div>
+      ) : (
+        <button className="primary" disabled={!canCommit} onClick={commitChanges}>
+          Commit {pluralize(stagedCount, "file")}
+        </button>
+      )}
       {settingUp && (
         <AiCommandModal
           initialCommand={aiCommand ?? ""}

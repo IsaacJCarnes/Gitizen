@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   CommitFile,
   FileChange,
@@ -28,6 +28,11 @@ export interface GitOperations {
   syncing: SyncAction | null;
   /** Fetches, pulls or pushes the current branch, then refreshes. */
   sync: (action: SyncAction) => Promise<void>;
+  /**
+   * True after amending or undoing a commit that was already pushed: the
+   * branch no longer matches the remote, so Push becomes a force push.
+   */
+  needsForcePush: boolean;
   /** Adds a remote pointing at an existing repository. Resolves to true on success. */
   addRemote: (name: string, url: string) => Promise<boolean>;
   /** Creates the repository on GitHub with the GitHub CLI and pushes to it. Resolves to true on success. */
@@ -67,8 +72,31 @@ export interface GitOperations {
   refresh: () => Promise<void>;
   /** Stages (`staged` true) or unstages every given path in one git call. */
   setFilesStaged: (paths: string[], staged: boolean) => Promise<void>;
-  /** Commits the staged files with the summary, plus the description as the body if given. */
+  /**
+   * Commits the staged files with the summary, plus the description as the
+   * body if given. While `amending`, replaces the last commit instead.
+   */
   commitChanges: () => Promise<void>;
+  /** True while the commit form amends the last commit instead of making a new one. */
+  amending: boolean;
+  /**
+   * Puts the commit form in amend mode, filled with `commit`'s message, and
+   * shows the working tree so more changes can be staged. `commit` is the
+   * tip of the current branch, or of `branch`, which is checked out first.
+   */
+  startAmend: (commit: GitCommit, branch?: string) => Promise<void>;
+  /** Leaves amend mode and clears the message it filled in. */
+  cancelAmend: () => void;
+  /** Call before amending or undoing a pushed commit, so the next push forces. */
+  markPushedCommitRewritten: () => void;
+  /**
+   * Undoes `commit`, keeping its changes staged, and puts its message back
+   * in the commit form (unless the form already has a summary). `commit` is
+   * the tip of the current branch, or of `branch`, which is checked out first.
+   */
+  undoLastCommit: (commit: GitCommit, branch?: string) => Promise<void>;
+  /** Stashes all uncommitted changes. Resolves to true on success. */
+  stashChanges: (message: string) => Promise<boolean>;
   checkoutBranch: (branch: string) => Promise<void>;
   /** True while the AI command is writing a commit message. */
   generatingMessage: boolean;
@@ -137,6 +165,8 @@ export function useGitOperations({
   const [commitDescription, setCommitDescription] = useState("");
   const [error, setError] = useState<AppError | null>(null);
   const [generatingMessage, setGeneratingMessage] = useState(false);
+  const [amending, setAmending] = useState(false);
+  const [needsForcePush, setNeedsForcePush] = useState(false);
   const [selectedCommit, setSelectedCommit] = useState<GitCommit | null>(null);
   const [commitFiles, setCommitFiles] = useState<CommitFile[]>([]);
   const [selectedCommitFile, setSelectedCommitFile] = useState<CommitFile | null>(null);
@@ -201,6 +231,9 @@ export function useGitOperations({
   const showRepository = useCallback(
     async (directory: string): Promise<void> => {
       setRepo(directory);
+      setAmending(false);
+      setNeedsForcePush(false);
+      pendingForcePush.current = false;
       setSelectedFile(null);
       setFileDiff(NO_DIFF);
       selectCommit(null);
@@ -251,11 +284,67 @@ export function useGitOperations({
     const message = description ? `${summary}\n\n${description}` : summary;
 
     await runOperation(async () => {
-      await gitizen.commit(message);
+      await gitizen.commit(message, amending);
+      if (amending && pendingForcePush.current) setNeedsForcePush(true);
+      pendingForcePush.current = false;
       setCommitSummary("");
       setCommitDescription("");
+      setAmending(false);
     });
-  }, [commitSummary, commitDescription, runOperation]);
+  }, [commitSummary, commitDescription, amending, runOperation]);
+
+  const startAmend = useCallback(
+    async (commit: GitCommit, branch?: string): Promise<void> => {
+      // Another branch's tip: switch to that branch first. If switching
+      // fails (the error is shown), stay out of amend mode.
+      if (branch) {
+        let switched = false;
+        await runOperation(async () => {
+          await gitizen.checkout(branch);
+          switched = true;
+        });
+        if (!switched) return;
+      }
+      setCommitSummary(commit.message);
+      setCommitDescription(commit.body);
+      setAmending(true);
+      // Amending happens in the working tree's commit form.
+      selectCommit(null);
+    },
+    [runOperation, selectCommit],
+  );
+
+  // Set when amending a pushed commit; only takes effect once the amend is
+  // actually committed (cancelling it leaves the branch as it was).
+  const pendingForcePush = useRef(false);
+  const markPushedCommitRewritten = useCallback((): void => {
+    pendingForcePush.current = true;
+  }, []);
+
+  const cancelAmend = useCallback((): void => {
+    pendingForcePush.current = false;
+    setAmending(false);
+    setCommitSummary("");
+    setCommitDescription("");
+  }, []);
+
+  const undoLastCommit = useCallback(async (commit: GitCommit, branch?: string): Promise<void> => {
+    const { message, body } = commit;
+    await runOperation(async () => {
+      // Another branch's tip: switch to that branch so it is the last commit.
+      if (branch) await gitizen.checkout(branch);
+      await gitizen.undoLastCommit();
+      if (pendingForcePush.current) setNeedsForcePush(true);
+      pendingForcePush.current = false;
+      setAmending(false);
+      // Don't overwrite a message the user is already writing.
+      if (!commitSummary.trim()) {
+        setCommitSummary(message);
+        setCommitDescription(body);
+      }
+      selectCommit(null);
+    });
+  }, [commitSummary, runOperation, selectCommit]);
 
   const generateCommitMessage = useCallback(async (): Promise<void> => {
     setGeneratingMessage(true);
@@ -279,11 +368,18 @@ export function useGitOperations({
   const sync = useCallback(
     async (action: SyncAction): Promise<void> => {
       setSyncing(action);
-      const run = { fetch: gitizen.fetch, pull: gitizen.pull, push: gitizen.push }[action];
+      const run = {
+        fetch: gitizen.fetch,
+        pull: gitizen.pull,
+        push: async () => {
+          await gitizen.push(needsForcePush);
+          setNeedsForcePush(false);
+        },
+      }[action];
       await runOperation(run);
       setSyncing(null);
     },
-    [runOperation],
+    [runOperation, needsForcePush],
   );
 
   /** Runs `operation` and refreshes; resolves to false (with the error shown) if it failed. */
@@ -297,6 +393,11 @@ export function useGitOperations({
       return ok;
     },
     [runOperation],
+  );
+
+  const stashChanges = useCallback(
+    (message: string) => succeeds(() => gitizen.stashChanges(message)),
+    [succeeds],
   );
 
   const addRemote = useCallback(
@@ -396,6 +497,7 @@ export function useGitOperations({
     remotes,
     syncing,
     sync,
+    needsForcePush,
     addRemote,
     publishRepository,
     selectedFile,
@@ -421,6 +523,12 @@ export function useGitOperations({
     refresh,
     setFilesStaged,
     commitChanges,
+    amending,
+    startAmend,
+    cancelAmend,
+    markPushedCommitRewritten,
+    undoLastCommit,
+    stashChanges,
     checkoutBranch,
     generatingMessage,
     generateCommitMessage,

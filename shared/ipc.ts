@@ -32,6 +32,8 @@ export const Command = {
   Stage: "stage",
   Unstage: "unstage",
   Commit: "commit",
+  UndoLastCommit: "undo_last_commit",
+  StashChanges: "stash_changes",
   Checkout: "checkout",
   SetStagedLines: "set_staged_lines",
   AiCommitCommand: "ai_commit_command",
@@ -110,7 +112,15 @@ export interface GitizenApi {
    * lines. Rejects without changing anything if the file changed since.
    */
   setStagedLines(path: string, diff: string, lines: number[], staged: boolean): Promise<void>;
-  commit(message: string): Promise<void>;
+  /**
+   * Commits the staged changes. With `amend`, replaces the last commit with
+   * its changes plus what is staged now, under `message`.
+   */
+  commit(message: string, amend?: boolean): Promise<void>;
+  /** Undoes the last commit, keeping its changes staged. Rejects for merge commits. */
+  undoLastCommit(): Promise<void>;
+  /** Stashes every uncommitted change (untracked files too), leaving a clean working tree. */
+  stashChanges(message: string): Promise<void>;
   checkout(branch: string): Promise<void>;
   /** The saved AI command line tool for commit messages (e.g. `claude -p`), or "" if none is set up. */
   aiCommitCommand(): Promise<string>;
@@ -135,6 +145,10 @@ export interface GitizenApi {
   fetch(): Promise<void>;
   /** Pulls the current branch's upstream into it (a merge unless `pull.rebase` is set). */
   pull(): Promise<void>;
-  /** Pushes the current branch, publishing it to `origin` with tracking if it has no upstream yet. */
-  push(): Promise<void>;
+  /**
+   * Pushes the current branch, publishing it to `origin` with tracking if it
+   * has no upstream yet. `force` overwrites the remote branch (with lease),
+   * for after amending or undoing a pushed commit.
+   */
+  push(force?: boolean): Promise<void>;
 }
