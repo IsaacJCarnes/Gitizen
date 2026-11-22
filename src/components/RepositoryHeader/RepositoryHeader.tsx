@@ -22,6 +22,7 @@ export default function RepositoryHeader(): React.JSX.Element {
         value={status?.branch ?? ""}
         onChange={(event) => checkoutBranch(event.target.value)}
       >
+        {status && status.branch === null && <option value="">Detached HEAD</option>}
         {unbornBranch && <option key={unbornBranch}>{unbornBranch}</option>}
         {branches.map((branch) => <option key={branch.name}>{branch.name}</option>)}
       </select>

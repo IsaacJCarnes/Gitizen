@@ -45,4 +45,9 @@ export const gitizen: GitizenApi = {
   fetch: () => invoke(Command.Fetch),
   pull: () => invoke(Command.Pull),
   push: (force) => invoke(Command.Push, { force }),
+  checkoutCommit: (hash) => invoke(Command.CheckoutCommit, { hash }),
+  createBranch: (name, hash, checkout) => invoke(Command.CreateBranch, { name, hash, checkout }),
+  createTag: (name, hash, message) => invoke(Command.CreateTag, { name, hash, message }),
+  cherryPick: (hash, branch) => invoke(Command.CherryPick, { hash, branch }),
+  openInBrowser: (url) => invoke(Command.OpenInBrowser, { url }),
 };

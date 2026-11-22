@@ -98,6 +98,14 @@ export interface GitOperations {
   /** Stashes all uncommitted changes. Resolves to true on success. */
   stashChanges: (message: string) => Promise<boolean>;
   checkoutBranch: (branch: string) => Promise<void>;
+  /** Checks out a commit itself (detached HEAD). */
+  checkoutCommit: (hash: string) => Promise<void>;
+  /** Creates a branch at `hash`, switching to it when `checkout`. Resolves to true on success. */
+  createBranch: (name: string, hash: string, checkout: boolean) => Promise<boolean>;
+  /** Tags `hash`. Resolves to true on success. */
+  createTag: (name: string, hash: string, message: string) => Promise<boolean>;
+  /** Cherry-picks `hash` onto `branch` (switching to it). Resolves to true on success. */
+  cherryPick: (hash: string, branch: string) => Promise<boolean>;
   /** True while the AI command is writing a commit message. */
   generatingMessage: boolean;
   /**
@@ -365,6 +373,11 @@ export function useGitOperations({
     [runOperation],
   );
 
+  const checkoutCommit = useCallback(
+    (hash: string): Promise<void> => runOperation(() => gitizen.checkoutCommit(hash)),
+    [runOperation],
+  );
+
   const sync = useCallback(
     async (action: SyncAction): Promise<void> => {
       setSyncing(action);
@@ -413,6 +426,23 @@ export function useGitOperations({
       setSyncing(null);
       return ok;
     },
+    [succeeds],
+  );
+
+  const createBranch = useCallback(
+    (name: string, hash: string, checkout: boolean) =>
+      succeeds(() => gitizen.createBranch(name, hash, checkout)),
+    [succeeds],
+  );
+
+  const createTag = useCallback(
+    (name: string, hash: string, message: string) =>
+      succeeds(() => gitizen.createTag(name, hash, message)),
+    [succeeds],
+  );
+
+  const cherryPick = useCallback(
+    (hash: string, branch: string) => succeeds(() => gitizen.cherryPick(hash, branch)),
     [succeeds],
   );
 
@@ -530,6 +560,10 @@ export function useGitOperations({
     undoLastCommit,
     stashChanges,
     checkoutBranch,
+    checkoutCommit,
+    createBranch,
+    createTag,
+    cherryPick,
     generatingMessage,
     generateCommitMessage,
     stageLines,

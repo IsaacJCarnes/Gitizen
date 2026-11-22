@@ -1,18 +1,25 @@
 import { useEffect, useState } from "react";
 import type { GitCommit } from "../../../shared/gitTypes";
+import { gitizen } from "../../api/gitizen";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
+import { githubCommitPage } from "../../utils/github";
 import ActionModal from "../common/ActionModal";
 import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
+import { CherryPickDialog, CreateBranchDialog, CreateTagDialog } from "./CommitActionDialogs";
 
 /** Rewriting the last commit of a branch. */
 type Rewrite = "undo" | "amend";
 
 /**
  * A dialog a menu item opens, which outlives the menu itself: confirming a
- * rewrite of a pushed commit, or asking to commit or stash local changes
- * before switching to another branch to rewrite its last commit.
+ * rewrite of a pushed commit, asking to commit or stash local changes
+ * before switching to another branch to rewrite its last commit, or one of
+ * the branch, tag and cherry-pick dialogs.
  */
-type Dialog = { kind: "confirmPushed"; rewrite: Rewrite } | { kind: "needsClean"; rewrite: Rewrite };
+type Dialog =
+  | { kind: "confirmPushed"; rewrite: Rewrite }
+  | { kind: "needsClean"; rewrite: Rewrite }
+  | { kind: "createBranch" | "createTag" | "cherryPick" };
 
 interface CommitContextMenuProps {
   commit: GitCommit;
@@ -24,8 +31,10 @@ interface CommitContextMenuProps {
 }
 
 /**
- * The right-click menu of a commit in the history. On the last commit of a
- * branch it offers undo and amend: on the current branch directly, on
+ * The right-click menu of a commit in the history: check it out (or a
+ * branch at it), start a branch or tag there, cherry-pick it onto a branch,
+ * copy its hash or open it on GitHub. On the last commit of a branch it
+ * also offers undo and amend: on the current branch directly, on
  * another branch by switching to it first (asking to commit or stash local
  * changes before that). Rewriting a commit that is already on a remote asks
  * first, since it then has to be force-pushed.
@@ -43,6 +52,10 @@ export default function CommitContextMenu({
     markPushedCommitRewritten,
     stashChanges,
     selectCommit,
+    remotes,
+    checkoutBranch,
+    checkoutCommit,
+    reportError,
   } = useGitOperationsContext();
   const [menuOpen, setMenuOpen] = useState(true);
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -81,10 +94,37 @@ export default function CommitContextMenu({
     else runWhenClean(rewrite, false);
   };
 
-  const entries: MenuEntry[] = [];
+  const localBranches = commit.refs.filter((ref) => ref.type === "branch" && !ref.current);
+  const githubPage = githubCommitPage(remotes, status?.upstream, commit.hash);
+
+  const entries: MenuEntry[] = [
+    // A branch pointing here is usually what's wanted; the bare commit
+    // (detached HEAD) is offered too.
+    ...localBranches.map((ref) => ({
+      label: `Checkout ${ref.name}`,
+      onSelect: () => void checkoutBranch(ref.name),
+    })),
+    {
+      label: "Checkout commit",
+      disabled: isHead,
+      title: isHead
+        ? "This commit is already checked out"
+        : "Check out this commit itself (detached HEAD), e.g. to look around or test it",
+      onSelect: () => void checkoutCommit(commit.hash),
+    },
+    { label: "Create branch from commit…", onSelect: () => setDialog({ kind: "createBranch" }) },
+    { label: "Create tag…", onSelect: () => setDialog({ kind: "createTag" }) },
+    {
+      label: "Cherry-pick to branch…",
+      disabled: isMerge,
+      title: isMerge ? "Merge commits can't be cherry-picked here" : undefined,
+      onSelect: () => setDialog({ kind: "cherryPick" }),
+    },
+  ];
   if (isHead || otherBranch) {
     const on = otherBranch ? ` on ${otherBranch}` : "";
     entries.push(
+      "separator",
       {
         label: `Amend commit${on}…`,
         title: otherBranch ? `Switch to ${otherBranch} and amend its last commit` : undefined,
@@ -102,14 +142,25 @@ export default function CommitContextMenu({
       },
     );
   }
+  entries.push(
+    "separator",
+    {
+      label: "Copy SHA",
+      onSelect: () => void navigator.clipboard.writeText(commit.hash).catch(reportError),
+    },
+    {
+      label: "View on GitHub",
+      disabled: !githubPage,
+      title: githubPage ? githubPage : "This repository has no github.com remote",
+      onSelect: () => githubPage && void gitizen.openInBrowser(githubPage).catch(reportError),
+    },
+  );
 
   // Choosing an item closes the menu and may open a dialog in the same
-  // (batched) update, so only report closed once neither is showing. A
-  // commit with nothing to offer closes straight away.
-  const hasEntries = entries.length > 0;
+  // (batched) update, so only report closed once neither is showing.
   useEffect(() => {
-    if ((!menuOpen || !hasEntries) && !dialog) onClose();
-  }, [menuOpen, hasEntries, dialog, onClose]);
+    if (!menuOpen && !dialog) onClose();
+  }, [menuOpen, dialog, onClose]);
 
   const closeDialog = (): void => setDialog(null);
   const pushedWarning = (
@@ -121,7 +172,7 @@ export default function CommitContextMenu({
 
   return (
     <>
-      {menuOpen && hasEntries && (
+      {menuOpen && (
         <ContextMenu x={x} y={y} entries={entries} onClose={() => setMenuOpen(false)} />
       )}
       {dialog?.kind === "confirmPushed" && (
@@ -179,6 +230,9 @@ export default function CommitContextMenu({
           </p>
         </ActionModal>
       )}
+      {dialog?.kind === "createBranch" && <CreateBranchDialog commit={commit} onDismiss={closeDialog} />}
+      {dialog?.kind === "createTag" && <CreateTagDialog commit={commit} onDismiss={closeDialog} />}
+      {dialog?.kind === "cherryPick" && <CherryPickDialog commit={commit} onDismiss={closeDialog} />}
     </>
   );
 }

@@ -45,6 +45,11 @@ export const Command = {
   Fetch: "fetch",
   Pull: "pull",
   Push: "push",
+  CheckoutCommit: "checkout_commit",
+  CreateBranch: "create_branch",
+  CreateTag: "create_tag",
+  CherryPick: "cherry_pick",
+  OpenInBrowser: "open_in_browser",
 } as const;
 
 export type CommandName = (typeof Command)[keyof typeof Command];
@@ -151,4 +156,17 @@ export interface GitizenApi {
    * for after amending or undoing a pushed commit.
    */
   push(force?: boolean): Promise<void>;
+  /** Checks out a commit itself, leaving HEAD detached. */
+  checkoutCommit(hash: string): Promise<void>;
+  /** Creates branch `name` at commit `hash`, switching to it when `checkout`. */
+  createBranch(name: string, hash: string, checkout: boolean): Promise<void>;
+  /** Creates an annotated tag at `hash`; an empty `message` uses the tag name. */
+  createTag(name: string, hash: string, message: string): Promise<void>;
+  /**
+   * Applies commit `hash` onto `branch` as a new commit, switching to that
+   * branch first (which needs a clean working tree) and staying on it.
+   */
+  cherryPick(hash: string, branch: string): Promise<void>;
+  /** Opens a https://github.com/ page in the default browser (other URLs are refused). */
+  openInBrowser(url: string): Promise<void>;
 }
