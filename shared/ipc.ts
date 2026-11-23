@@ -40,6 +40,8 @@ export const Command = {
   StashChanges: "stash_changes",
   Checkout: "checkout",
   SetStagedLines: "set_staged_lines",
+  DiscardFiles: "discard_files",
+  DiscardLines: "discard_lines",
   AiCommitCommand: "ai_commit_command",
   SetAiCommitCommand: "set_ai_commit_command",
   GenerateCommitMessage: "generate_commit_message",
@@ -133,6 +135,17 @@ export interface GitizenApi {
    * lines. Rejects without changing anything if the file changed since.
    */
   setStagedLines(path: string, diff: string, lines: number[], staged: boolean): Promise<void>;
+  /**
+   * Puts files back as they are in HEAD (staged and unstaged changes alike),
+   * deleting files HEAD doesn't have. Pass both paths of a rename.
+   */
+  discardFiles(paths: string[]): Promise<void>;
+  /**
+   * Throws away single changed lines of one file, in the working tree and
+   * the index. `diff` and `lines` are as for `setStagedLines`; rejects
+   * without changing anything if the file changed since.
+   */
+  discardLines(path: string, diff: string, lines: number[]): Promise<void>;
   /**
    * Commits the staged changes. With `amend`, replaces the last commit with
    * its changes plus what is staged now, under `message`.

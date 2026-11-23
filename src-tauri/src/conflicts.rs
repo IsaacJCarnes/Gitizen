@@ -13,7 +13,7 @@ use tauri::{AppHandle, State};
 use crate::ai_commit::{run_shell_command, shell, AppSettings, MAX_DIFF_BYTES, TIMEOUT};
 use crate::git::repository::{assert_hash, current_branch, Repo};
 use crate::git::runner::{git_command, run_git, run_git_bytes};
-use crate::util::{blocking, unique_temp_dir};
+use crate::util::{blocking, unique_temp_dir, write_keeping_line_endings};
 
 /// An operation that is in progress because it stopped part way, usually
 /// on a conflict.
@@ -317,12 +317,8 @@ pub async fn save_conflict_resolution(repo: Repo<'_>, path: String, text: String
 }
 
 fn save_in(dir: &Path, path: &str, text: &str) -> Result<(), String> {
-    let file = require_conflicted(dir, path)?;
     // The editor works in "\n"; a file checked out with CRLF keeps CRLF.
-    let crlf = std::fs::read(&file).is_ok_and(|bytes| bytes.windows(2).any(|pair| pair == b"\r\n"));
-    let normalized = text.replace("\r\n", "\n");
-    let contents = if crlf { normalized.replace('\n', "\r\n") } else { normalized };
-    std::fs::write(&file, contents).map_err(|error| error.to_string())
+    write_keeping_line_endings(&require_conflicted(dir, path)?, text)
 }
 
 /// How to settle one conflicted file.

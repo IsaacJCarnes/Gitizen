@@ -141,6 +141,13 @@ export interface GitOperations {
    * are hidden, since that diff can't be applied.
    */
   stageLines: (lines: number[], staged: boolean) => Promise<boolean>;
+  /** Throws away every change to the given paths (both paths of a rename). */
+  discardFiles: (paths: string[]) => Promise<boolean>;
+  /**
+   * Throws away single changed lines of the selected file. Like
+   * `stageLines`, does nothing while whitespace changes are hidden.
+   */
+  discardLines: (lines: number[]) => Promise<boolean>;
 }
 
 export interface GitOperationsOptions {
@@ -530,6 +537,21 @@ export function useGitOperations({
     [selectedFile, diff, hideWhitespace, runOperation],
   );
 
+  const discardFiles = useCallback(
+    (paths: string[]) => runOperation(() => gitizen.discardFiles(paths)),
+    [runOperation],
+  );
+
+  const discardLines = useCallback(
+    (lines: number[]): Promise<boolean> => {
+      if (!selectedFile || lines.length === 0 || hideWhitespace) {
+        return Promise.resolve(false);
+      }
+      return runOperation(() => gitizen.discardLines(selectedFile.path, diff, lines));
+    },
+    [selectedFile, diff, hideWhitespace, runOperation],
+  );
+
   // ---- Derived data loading ------------------------------------------------
 
   // Diff of the selected working-tree file against HEAD, staged and unstaged
@@ -647,5 +669,7 @@ export function useGitOperations({
     generatingMessage,
     generateCommitMessage,
     stageLines,
+    discardFiles,
+    discardLines,
   };
 }

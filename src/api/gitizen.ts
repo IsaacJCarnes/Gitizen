@@ -30,6 +30,8 @@ export const gitizen: GitizenApi = {
   unstage: (paths) => invoke(Command.Unstage, { paths }),
   setStagedLines: (path, diff, lines, staged) =>
     invoke(Command.SetStagedLines, { path, diff, lines, staged }),
+  discardFiles: (paths) => invoke(Command.DiscardFiles, { paths }),
+  discardLines: (path, diff, lines) => invoke(Command.DiscardLines, { path, diff, lines }),
   commit: (message, amend) => invoke(Command.Commit, { message, amend }),
   undoLastCommit: () => invoke(Command.UndoLastCommit),
   stashChanges: (message) => invoke(Command.StashChanges, { message }),

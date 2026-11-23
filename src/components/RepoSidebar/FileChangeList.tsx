@@ -1,6 +1,9 @@
+import { useState } from "react";
 import type { ConflictFile, FileChange } from "../../../shared/gitTypes";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
+import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
+import { useDiscardConfirmation } from "../common/DiscardConfirm";
 import FileListItem from "../common/FileListItem";
 import TriStateCheckbox from "../common/TriStateCheckbox";
 import ConflictBanner from "../Conflicts/ConflictBanner";
@@ -70,6 +73,8 @@ function stageState(entry: ChangedPath): CheckState {
  * While a merge (or similar) is stopped, a banner above the list says so,
  * and conflicted files show a "!" with a Mark resolved button instead of a
  * checkbox; clicking one opens it in the conflict editor.
+ *
+ * Right-clicking a file opens its menu, e.g. to discard its changes.
  */
 export default function FileChangeList(): React.JSX.Element {
   const {
@@ -80,8 +85,11 @@ export default function FileChangeList(): React.JSX.Element {
     conflicts: { operation, files },
     selectedConflict,
     setSelectedConflict,
+    discardFiles,
   } = useGitOperationsContext();
   const { view, setView } = useAppContext();
+  const { confirmDiscard, discardDialog } = useDiscardConfirmation();
+  const [menu, setMenu] = useState<{ entry: ChangedPath; x: number; y: number } | null>(null);
   const conflictByPath = new Map<string, ConflictFile>(
     files.map((file) => [file.path, file]),
   );
@@ -112,6 +120,24 @@ export default function FileChangeList(): React.JSX.Element {
 
   const toggleAll = () =>
     setFilesStaged(entries.flatMap(pathsOf), allState !== true);
+
+  const menuEntries = (entry: ChangedPath): MenuEntry[] => [
+    {
+      label: "Discard changes…",
+      title: "Put the file back as it was in the last commit",
+      onSelect: () =>
+        confirmDiscard({
+          title: `Discard changes to ${entry.path}?`,
+          what: (
+            <>
+              Every change to <code>{entry.path}</code>, staged or not,
+            </>
+          ),
+          confirmLabel: "Discard changes",
+          run: () => void discardFiles(pathsOf(entry)),
+        }),
+    },
+  ];
 
   return (
     <>
@@ -160,6 +186,10 @@ export default function FileChangeList(): React.JSX.Element {
               title={state === "mixed" ? `${entry.path} (partially staged)` : entry.path}
               selected={selectedFile?.path === entry.path}
               onSelect={() => open(entry)}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setMenu({ entry, x: event.clientX, y: event.clientY });
+              }}
               leading={
                 <TriStateCheckbox
                   state={state}
@@ -171,6 +201,15 @@ export default function FileChangeList(): React.JSX.Element {
           );
         })}
       </ul>
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          entries={menuEntries(menu.entry)}
+          onClose={() => setMenu(null)}
+        />
+      )}
+      {discardDialog}
     </>
   );
 }

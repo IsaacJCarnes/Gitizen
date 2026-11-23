@@ -4,8 +4,10 @@ import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import { useDiffSettings } from "../../hooks/useDiffSettings";
 import { gitizen } from "../../api/gitizen";
-import { shortHash } from "../../utils/format";
+import { pluralize, shortHash } from "../../utils/format";
+import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
 import DiffView, { type LineStaging } from "../common/DiffView";
+import { useDiscardConfirmation } from "../common/DiscardConfirm";
 
 /**
  * Diff of the file picked in the sidebar, with a header naming the file and
@@ -14,7 +16,8 @@ import DiffView, { type LineStaging } from "../common/DiffView";
  *
  * Working-tree diffs show every uncommitted change with a checkbox on each
  * changed line, ticked when that line is staged: tick to stage, untick to
- * unstage. The diff itself stays the same either way.
+ * unstage. The diff itself stays the same either way. Right-clicking a
+ * changed line offers to discard it, or its whole group of changes.
  */
 export default function FileDiff(): React.JSX.Element {
   const { setView } = useAppContext();
@@ -26,9 +29,12 @@ export default function FileDiff(): React.JSX.Element {
     diff,
     stagedLines,
     stageLines,
+    discardLines,
   } = useGitOperationsContext();
   const { settings, updateSettings } = useDiffSettings();
   const [applying, setApplying] = useState(false);
+  const { confirmDiscard, discardDialog } = useDiscardConfirmation();
+  const [lineMenu, setLineMenu] = useState<{ x: number; y: number; line: number; group: number[] } | null>(null);
 
   const path = selectedCommit ? selectedCommitFile?.path : selectedFile?.path;
   const shownDiff = selectedCommit ? commitDiff : diff;
@@ -47,6 +53,43 @@ export default function FileDiff(): React.JSX.Element {
       },
     };
   }
+
+  /** Asks, then throws away `lines` of the working-tree file. */
+  const discard = (lines: number[]): void => {
+    const count = lines.length;
+    confirmDiscard({
+      title: count === 1 ? "Discard this line?" : `Discard ${count} lines?`,
+      what: (
+        <>
+          {count === 1 ? "The change on this line" : `The changes on ${count} lines`} of{" "}
+          <code>{path}</code>
+        </>
+      ),
+      confirmLabel: count === 1 ? "Discard line" : "Discard lines",
+      run: () => {
+        setApplying(true);
+        void discardLines(lines).finally(() => setApplying(false));
+      },
+    });
+  };
+
+  const lineMenuEntries = (line: number, group: number[]): MenuEntry[] => {
+    // Discarding maps the lines back onto the file, like staging them.
+    const disabled = settings.hideWhitespace || applying;
+    const title = settings.hideWhitespace ? "Show whitespace to discard single lines" : undefined;
+    const entries: MenuEntry[] = [
+      { label: "Discard this line…", disabled, title, onSelect: () => discard([line]) },
+    ];
+    if (group.length > 1) {
+      entries.push({
+        label: `Discard these ${pluralize(group.length, "line")}…`,
+        disabled,
+        title: title ?? "Every changed line of this block",
+        onSelect: () => discard(group),
+      });
+    }
+    return entries;
+  };
 
   return (
     <div className="file-diff">
@@ -92,6 +135,11 @@ export default function FileDiff(): React.JSX.Element {
           layout={settings.layout}
           lineStaging={lineStaging}
           loadFile={() => gitizen.fileText(path, selectedCommit?.hash)}
+          onLineMenu={
+            selectedCommit
+              ? undefined
+              : (event, line, group) => setLineMenu({ x: event.clientX, y: event.clientY, line, group })
+          }
           emptyMessage={
             settings.hideWhitespace ? "No changes besides whitespace." : "No changes to show."
           }
@@ -99,6 +147,15 @@ export default function FileDiff(): React.JSX.Element {
       ) : (
         <p className="placeholder">Select a file in the sidebar.</p>
       )}
+      {lineMenu && (
+        <ContextMenu
+          x={lineMenu.x}
+          y={lineMenu.y}
+          entries={lineMenuEntries(lineMenu.line, lineMenu.group)}
+          onClose={() => setLineMenu(null)}
+        />
+      )}
+      {discardDialog}
     </div>
   );
 }

@@ -22,6 +22,7 @@ use crate::git::repository::{
 };
 use crate::git::runner::{run_git, run_git_bytes, run_git_with_input};
 use crate::git::types::{CommitFile, FileDiff, GitBranch, GitCommit, GitStatus};
+use crate::util::file_in_repo;
 
 /// Shows a folder picker and opens the chosen repository. Returns its path,
 /// or None if the picker was cancelled. A folder that isn't a repository
@@ -131,7 +132,7 @@ pub async fn file_diff(
     file_diff_in(&repo.require()?, &path, ignore_whitespace)
 }
 
-fn file_diff_in(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Result<FileDiff, String> {
+pub(crate) fn file_diff_in(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Result<FileDiff, String> {
     let diff = combined_diff(dir, path, ignore_whitespace)?;
     let staged_lines = staged_lines_of(dir, path, &diff)?;
     Ok(FileDiff { diff, staged_lines })
@@ -139,7 +140,7 @@ fn file_diff_in(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Resu
 
 /// True if git reports `path` as untracked. git refuses paths outside the
 /// repository here, so a file read after this can't leave the repository.
-fn is_untracked(dir: &Path, path: &str) -> Result<bool, String> {
+pub(crate) fn is_untracked(dir: &Path, path: &str) -> Result<bool, String> {
     let entry = run_git(
         dir,
         ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", path],
@@ -157,7 +158,7 @@ fn head_or_empty_tree(dir: &Path) -> &'static str {
 }
 
 /// The diff `file_diff` shows: HEAD to working tree for one file.
-fn combined_diff(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Result<String, String> {
+pub(crate) fn combined_diff(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Result<String, String> {
     if is_untracked(dir, path)? {
         // Store the file as git would (line endings normalised), so the diff
         // matches what `git diff HEAD` prints once the file is staged.
@@ -171,7 +172,7 @@ fn combined_diff(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Res
 
 /// Indices of the changed lines of `diff` (from `combined_diff`, whitespace
 /// shown or hidden) that are in the index.
-fn staged_lines_of(dir: &Path, path: &str, diff: &str) -> Result<Vec<usize>, String> {
+pub(crate) fn staged_lines_of(dir: &Path, path: &str, diff: &str) -> Result<Vec<usize>, String> {
     if is_untracked(dir, path)? {
         return Ok(Vec::new());
     }
@@ -253,17 +254,9 @@ fn file_text_in(dir: &Path, path: &str, hash: Option<&str>) -> Result<String, St
             run_git_bytes(dir, ["show", spec.as_str()]).unwrap_or_default()
         }
         None => {
-            let file = dir.join(path);
-            if !file.is_file() {
-                return Ok(String::new());
-            }
             // Only files inside the repository can be read.
-            let inside = file
-                .canonicalize()
-                .and_then(|file| Ok(file.starts_with(dir.canonicalize()?)))
-                .unwrap_or(false);
-            if !inside {
-                return Err(format!("{path} is outside the repository"));
+            if !file_in_repo(dir, path)?.is_file() {
+                return Ok(String::new());
             }
             worktree_blob(dir, path)?.1
         }
@@ -371,15 +364,31 @@ fn set_staged_lines_in(
         }
     }
 
+    write_index_lines(dir, path, &current, &selected)
+}
+
+/// The file's text in HEAD, or None when HEAD doesn't have it.
+pub(crate) fn head_text(dir: &Path, path: &str) -> Option<String> {
     // "./" makes git read the path relative to `dir`, like every other path here.
     let head_spec = format!("HEAD:./{path}");
-    let head = run_git(dir, ["show", head_spec.as_str()]).ok();
-    let content = index_content(head.as_deref().unwrap_or(""), &current, &selected)?;
+    run_git(dir, ["show", head_spec.as_str()]).ok()
+}
+
+/// Rewrites the index entry of `path` to HEAD plus exactly the `selected`
+/// changed lines of `current`, its up-to-date combined diff.
+pub(crate) fn write_index_lines(
+    dir: &Path,
+    path: &str,
+    current: &str,
+    selected: &HashSet<usize>,
+) -> Result<(), String> {
+    let head = head_text(dir, path);
+    let content = index_content(head.as_deref().unwrap_or(""), current, selected)?;
     let deleted = !dir.join(path).exists();
     // A new file with nothing staged, or a deletion with every line staged,
     // leaves no entry in the index at all.
     let remove = match &head {
-        None => !stages_any_addition(&current, &selected),
+        None => !stages_any_addition(current, selected),
         Some(_) => deleted && content.is_empty(),
     };
     if remove {

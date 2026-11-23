@@ -5,6 +5,7 @@ mod ai_commit;
 mod commands;
 mod commit_actions;
 mod conflicts;
+mod discard;
 mod git;
 mod recent_repos;
 mod remote;
@@ -43,6 +44,8 @@ pub fn run() {
             commands::stash_changes,
             commands::checkout,
             commands::set_staged_lines,
+            discard::discard_files,
+            discard::discard_lines,
             ai_commit::ai_commit_command,
             ai_commit::set_ai_commit_command,
             ai_commit::generate_commit_message,

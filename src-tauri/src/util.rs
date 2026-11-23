@@ -1,7 +1,7 @@
 //! Small helpers shared by the command modules.
 
 use std::marker::PhantomData;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::de::DeserializeOwned;
@@ -85,6 +85,33 @@ pub(crate) fn unique_temp_dir(label: &str) -> Result<PathBuf, String> {
     let dir = std::env::temp_dir().join(format!("gitizen-{label}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     Ok(dir)
+}
+
+/// Writes `text` (edited in the UI with "\n" line endings) to `file`,
+/// putting back the CRLF line endings the file already uses, if any.
+pub(crate) fn write_keeping_line_endings(file: &Path, text: &str) -> Result<(), String> {
+    let crlf = std::fs::read(file).is_ok_and(|bytes| bytes.windows(2).any(|pair| pair == b"\r\n"));
+    let normalized = text.replace("\r\n", "\n");
+    let contents = if crlf { normalized.replace('\n', "\r\n") } else { normalized };
+    std::fs::write(file, contents).map_err(|error| error.to_string())
+}
+
+/// `path` (relative to the repository folder `dir`) as a file inside the
+/// repository. Fails for paths that lead outside it, e.g. through "..".
+/// A file that doesn't exist yet is checked through its folder.
+pub(crate) fn file_in_repo(dir: &Path, path: &str) -> Result<PathBuf, String> {
+    let file = dir.join(path);
+    let root = dir.canonicalize().map_err(|error| error.to_string())?;
+    // The nearest part of the path that exists decides where it really is.
+    let existing = file.ancestors().find(|candidate| candidate.exists());
+    let inside = existing
+        .and_then(|candidate| candidate.canonicalize().ok())
+        .is_some_and(|candidate| candidate.starts_with(&root));
+    if inside && !path.split(['/', '\\']).any(|part| part == "..") {
+        Ok(file)
+    } else {
+        Err(format!("{path} is outside the repository"))
+    }
 }
 
 /// Test helpers for building throwaway repositories.
