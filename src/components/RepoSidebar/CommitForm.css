@@ -6,9 +6,16 @@
   border-top: 1px solid var(--line);
 }
 
+.description-container{
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
 .commit textarea {
   min-height: 70px;
   resize: vertical;
+  padding-bottom: 25px;
 }
 
 .commit-amend {
@@ -21,16 +28,24 @@
 }
 
 .commit-generate {
-  display: flex;
-  gap: 6px;
+  position: absolute;
+  display: inline-flex;
+  bottom: 3px;
+  right: 25px;
+  background-color: var(--panel);
+  justify-content: center;
 }
 
-.commit-generate-button {
-  flex: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
+.commit-generate button:first-child {
+  border-width: 0 1px 0 0;
+  border-radius: 6px 0 0 6px;
+  padding: 0px 4px 0px 4px;
+}
+
+.commit-generate button:last-child {
+  border-width: 0;
+  border-radius: 0 6px 6px 0;
+  padding: 0px 4px 0px 4px;
 }
 
 .commit-generate-settings {
@@ -38,8 +53,8 @@
 }
 
 .commit-spinner {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   border: 2px solid currentColor;
   border-right-color: transparent;
   border-radius: 50%;
@@ -50,11 +65,4 @@
   to {
     transform: rotate(360deg);
   }
-}
-
-.ai-command-input {
-  width: 100%;
-  box-sizing: border-box;
-  margin-bottom: 8px;
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
 }

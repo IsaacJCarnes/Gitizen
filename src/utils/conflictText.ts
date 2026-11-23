@@ -22,6 +22,8 @@ export interface CommonSegment {
 /** One conflict: the current branch's lines and the incoming lines. */
 export interface ConflictSegment {
   kind: "conflict";
+  /** Which conflict of the file this is, counting from 0; used in `lineKey`. */
+  index: number;
   current: string[];
   incoming: string[];
 }
@@ -45,6 +47,10 @@ export const lineKey = (conflict: number, side: Side, line: number): string =>
 const isMarker = (line: string, char: string): boolean =>
   line.startsWith(char.repeat(7)) && (line.length === 7 || line[7] === " ");
 
+/** True if any line opens a conflict, i.e. the text still needs resolving. */
+export const hasConflictMarkers = (text: string): boolean =>
+  text.split("\n").some((line) => isMarker(line, "<"));
+
 /**
  * Parses `git merge-file` output: `<<<<<<<` opens a conflict, `=======`
  * separates current from incoming, `>>>>>>>` closes it. A `|||||||` section
@@ -59,14 +65,19 @@ export function parseConflict(text: string): ParsedConflict {
   const segments: Segment[] = [];
   let common: string[] = [];
   let conflict: ConflictSegment | null = null;
+  let conflictCount = 0;
+  // Every line of the open conflict, markers included, in case it never closes.
+  let raw: string[] = [];
   // Where lines inside a conflict go: current side, base (skipped) or incoming.
   let part: "current" | "base" | "incoming" = "current";
 
   for (const line of lines) {
+    if (conflict) raw.push(line);
     if (!conflict && isMarker(line, "<")) {
       if (common.length > 0) segments.push({ kind: "common", lines: common });
       common = [];
-      conflict = { kind: "conflict", current: [], incoming: [] };
+      conflict = { kind: "conflict", index: conflictCount++, current: [], incoming: [] };
+      raw = [line];
       part = "current";
     } else if (conflict && part !== "incoming" && isMarker(line, "|")) {
       part = "base";
@@ -83,9 +94,7 @@ export function parseConflict(text: string): ParsedConflict {
     }
   }
   // An unterminated conflict (malformed input) is shown as plain text.
-  if (conflict) {
-    common.push(...conflict.current, ...conflict.incoming);
-  }
+  if (conflict) common.push(...raw);
   if (common.length > 0) segments.push({ kind: "common", lines: common });
   return { segments, finalNewline };
 }
@@ -98,14 +107,12 @@ export function parseConflict(text: string): ParsedConflict {
  */
 export function buildOutput(parsed: ParsedConflict, picked: ReadonlySet<string>): string {
   const out: string[] = [];
-  let conflictIndex = 0;
   for (const segment of parsed.segments) {
     if (segment.kind === "common") {
       out.push(...segment.lines);
       continue;
     }
-    const index = conflictIndex++;
-    const prefix = `${index}:`;
+    const prefix = `${segment.index}:`;
     for (const key of picked) {
       if (!key.startsWith(prefix)) continue;
       // Keys are "<conflict>:<side>:<line>" (see `lineKey`).
@@ -117,3 +124,11 @@ export function buildOutput(parsed: ParsedConflict, picked: ReadonlySet<string>)
   const text = out.join("\n");
   return parsed.finalNewline && out.length > 0 ? `${text}\n` : text;
 }
+
+/** Keys of every line on one side of every conflict, e.g. for "Take all current". */
+export const sideKeys = (parsed: ParsedConflict, side: Side): string[] =>
+  parsed.segments.flatMap((segment) =>
+    segment.kind === "conflict"
+      ? segment[side].map((_, line) => lineKey(segment.index, side, line))
+      : [],
+  );

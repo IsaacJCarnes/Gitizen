@@ -1,10 +1,10 @@
 import "./CommitForm.css";
-import { useEffect, useState } from "react";
-import { gitizen } from "../../api/gitizen";
+import { useState } from "react";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
+import { useAiCommitCommand } from "../../hooks/useSavedCommand";
 import { OPERATION_NAME } from "../../utils/conflictText";
 import { pluralize } from "../../utils/format";
-import AiCommandModal from "./AiCommandModal";
+import AiCommitCommandModal from "./AiCommitCommandModal";
 
 /**
  * Commit summary (required, one line) and description (optional) with the
@@ -20,32 +20,27 @@ export default function CommitForm(): React.JSX.Element {
     commitDescription,
     setCommitDescription,
     commitChanges,
-    conflicts,
+    conflicts: { operation, files },
     amending,
     cancelAmend,
     generatingMessage,
     generateCommitMessage,
-    reportError,
   } = useGitOperationsContext();
-  // null until loaded from the backend; "" means not set up.
-  const [aiCommand, setAiCommand] = useState<string | null>(null);
+  const { command: aiCommand, save: saveAiCommand } = useAiCommitCommand();
+  // Which button opened the AI command modal: "generate" runs it once saved.
   const [settingUp, setSettingUp] = useState<"change" | "generate" | null>(
     null,
   );
   const stagedCount = status?.files.filter((file) => file.staged).length ?? 0;
   // Committing is blocked until every conflict is resolved.
-  const conflictCount = conflicts.files.length;
+  const conflictCount = files.length;
   // Amending may just reword the last commit, and finishing a merge may
   // keep only the current side, so neither needs anything staged.
   const canCommit =
     commitSummary.trim() !== "" &&
-    (stagedCount > 0 || amending || conflicts.operation !== null) &&
+    (stagedCount > 0 || amending || operation !== null) &&
     conflictCount === 0 &&
     !generatingMessage;
-
-  useEffect(() => {
-    gitizen.aiCommitCommand().then(setAiCommand, () => setAiCommand(""));
-  }, []);
 
   // Ctrl+Enter (Cmd+Enter on macOS) in either field commits.
   const commitOnCtrlEnter = (event: React.KeyboardEvent): void => {
@@ -67,10 +62,9 @@ export default function CommitForm(): React.JSX.Element {
   const saveCommand = (command: string): void => {
     const generateAfter = settingUp === "generate";
     setSettingUp(null);
-    gitizen.setAiCommitCommand(command).then((saved) => {
-      setAiCommand(saved);
+    void saveAiCommand(command).then((saved) => {
       if (generateAfter && saved) void generateCommitMessage();
-    }, reportError);
+    });
   };
 
   return (
@@ -84,48 +78,53 @@ export default function CommitForm(): React.JSX.Element {
         onChange={(event) => setCommitSummary(event.target.value)}
         onKeyDown={commitOnCtrlEnter}
       />
-      <textarea
-        placeholder={
-          generatingMessage ? "Writing a commit message…" : "Description"
-        }
-        aria-label="Commit description"
-        value={commitDescription}
-        readOnly={generatingMessage}
-        onChange={(event) => setCommitDescription(event.target.value)}
-        onKeyDown={commitOnCtrlEnter}
-      />
-      <div className="commit-generate">
-        <button
-          className="commit-generate-button"
-          disabled={
-            stagedCount === 0 || generatingMessage || aiCommand === null
+      <div className="description-container">
+        <textarea
+          placeholder={
+            generatingMessage ? "Writing a commit message…" : "Description"
           }
-          title={
-            stagedCount === 0
-              ? "Stage changes to generate a message for them"
-              : aiCommand
-                ? `Write the message with AI`
-                : "Set up an AI command to write commit messages"
-          }
-          onClick={generate}
-        >
-          {generatingMessage ? (
-            <>
-              <span className="commit-spinner" aria-hidden="true" /> Generating…
-            </>
-          ) : (
-            "Generate message"
-          )}
-        </button>
-        <button
-          className="commit-generate-settings"
-          aria-label="AI command settings"
-          title="AI command settings"
-          disabled={generatingMessage || aiCommand === null}
-          onClick={() => setSettingUp("change")}
-        >
-          &#9881;
-        </button>
+          aria-label="Commit description"
+          value={commitDescription}
+          readOnly={generatingMessage}
+          onChange={(event) => setCommitDescription(event.target.value)}
+          onKeyDown={commitOnCtrlEnter}
+        />
+        <span className="commit-generate">
+          <button
+            className="commit-generate-button"
+            disabled={
+              operation !== null ||
+              stagedCount === 0 ||
+              generatingMessage ||
+              aiCommand === null
+            }
+            title={
+              operation !== null
+                ? "Fix conflicts before generating a message"
+                : stagedCount === 0
+                  ? "Stage changes to generate a message for them"
+                  : aiCommand
+                    ? `Write the message with AI`
+                    : "Set up an AI command to write commit messages"
+            }
+            onClick={generate}
+          >
+            {generatingMessage ? (
+              <div className="commit-spinner" aria-hidden="true"></div>
+            ) : (
+              <>&#10023;</>
+            )}
+          </button>
+          <button
+            className="commit-generate-settings"
+            aria-label="AI commit message settings"
+            title="AI commit message settings"
+            disabled={generatingMessage || aiCommand === null}
+            onClick={() => setSettingUp("change")}
+          >
+            &#9881;
+          </button>
+        </span>
       </div>
       {amending ? (
         <div className="commit-amend">
@@ -150,13 +149,13 @@ export default function CommitForm(): React.JSX.Element {
           }
           onClick={commitChanges}
         >
-          {conflicts.operation
-            ? `Commit ${OPERATION_NAME[conflicts.operation]}`
+          {operation
+            ? `Commit ${OPERATION_NAME[operation]}`
             : `Commit ${pluralize(stagedCount, "file")}`}
         </button>
       )}
       {settingUp && (
-        <AiCommandModal
+        <AiCommitCommandModal
           initialCommand={aiCommand ?? ""}
           onSave={saveCommand}
           onDismiss={() => setSettingUp(null)}

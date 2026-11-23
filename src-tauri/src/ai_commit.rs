@@ -9,18 +9,16 @@
 //! as it would be in a terminal, and npm shims like `claude.cmd` are found.
 
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, State};
 
-use crate::git::repository::OpenRepository;
-use crate::git::runner::run_git;
-
-const FILE_NAME: &str = "settings.json";
+use crate::git::repository::Repo;
+use crate::git::runner::{hide_console_window, run_git};
+use crate::util::{blocking, ConfigFile};
 
 /// How long the command may run before Gitizen gives up on it.
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(180);
@@ -35,26 +33,44 @@ The first line is a summary in the imperative mood, at most 72 characters. \
 If the change needs explaining, add a blank line and then a short description \
 of what changed and why, wrapped at 72 characters.";
 
-/// Settings saved in `settings.json`. Missing fields take their defaults, so
-/// older or hand-edited files still load.
+/// Settings saved in `settings.json` (see `AppSettings`). Missing fields take
+/// their defaults, so older or hand-edited files still load.
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub(crate) struct Settings {
     /// Shell command that reads a prompt on stdin and prints a commit
-    /// message (also used to resolve merge conflicts). Empty when not set up yet.
+    /// message. Empty when not set up yet.
     pub(crate) ai_commit_command: String,
+    /// Shell command that reads a conflicted file (with a prompt) on stdin
+    /// and prints it resolved. Empty when not set up yet.
+    pub(crate) ai_resolve_command: String,
     /// Shell command that opens a conflicted file for editing, with `{file}`
     /// standing for its path. Empty means the system's plain text editor.
     pub(crate) editor_command: String,
 }
 
-/// Serialises reads and writes of the settings file.
-#[derive(Default)]
-pub struct AppSettings(Mutex<()>);
+/// The settings file, kept in Tauri's managed state.
+pub(crate) type AppSettings = ConfigFile<Settings>;
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        ConfigFile::new("settings.json")
+    }
+}
 
 impl AppSettings {
-    pub(crate) fn lock(&self) -> Result<MutexGuard<'_, ()>, String> {
-        self.0.lock().map_err(|_| "Settings are unavailable".to_string())
+    /// One of the saved AI commands (`field` picks which), or an error
+    /// asking to set it up.
+    pub(crate) fn ai_command(
+        &self,
+        app: &AppHandle,
+        field: impl FnOnce(Settings) -> String,
+    ) -> Result<String, String> {
+        let command = field(self.read(app)?);
+        if command.is_empty() {
+            return Err("No AI command is set up yet".to_string());
+        }
+        Ok(command)
     }
 }
 
@@ -65,52 +81,25 @@ pub struct CommitMessage {
     pub description: String,
 }
 
-fn file_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
-    Ok(dir.join(FILE_NAME))
-}
-
-/// A missing or unreadable file is the default settings, so a corrupt file
-/// never stops the app from working.
-pub(crate) fn load(app: &AppHandle) -> Result<Settings, String> {
-    let path = file_path(app)?;
-    Ok(std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default())
-}
-
-pub(crate) fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
-    let path = file_path(app)?;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
-    }
-    let text = serde_json::to_string_pretty(settings).map_err(|error| error.to_string())?;
-    std::fs::write(path, text).map_err(|error| error.to_string())
-}
-
-/// The saved AI command, or an empty string if none is set up.
+/// The saved AI commit message command, or an empty string if none is set up.
 #[tauri::command]
 pub async fn ai_commit_command(
     app: AppHandle,
     state: State<'_, AppSettings>,
 ) -> Result<String, String> {
-    let _guard = state.lock()?;
-    Ok(load(&app)?.ai_commit_command)
+    Ok(state.read(&app)?.ai_commit_command)
 }
 
-/// Saves the AI command (trimmed; empty clears it) and returns what was saved.
+/// Saves the AI commit message command (trimmed; empty clears it) and
+/// returns what was saved.
 #[tauri::command]
 pub async fn set_ai_commit_command(
     app: AppHandle,
     state: State<'_, AppSettings>,
     command: String,
 ) -> Result<String, String> {
-    let _guard = state.lock()?;
-    let mut settings = load(&app)?;
-    settings.ai_commit_command = command.trim().to_string();
-    save(&app, &settings)?;
-    Ok(settings.ai_commit_command)
+    let saved = state.update(&app, |settings| settings.ai_commit_command = command.trim().to_string())?;
+    Ok(saved.ai_commit_command)
 }
 
 /// Runs the saved AI command on the staged changes of the open repository
@@ -119,21 +108,12 @@ pub async fn set_ai_commit_command(
 pub async fn generate_commit_message(
     app: AppHandle,
     state: State<'_, AppSettings>,
-    repo: State<'_, OpenRepository>,
+    repo: Repo<'_>,
 ) -> Result<CommitMessage, String> {
     let dir = repo.require()?;
-    let command = {
-        let _guard = state.lock()?;
-        load(&app)?.ai_commit_command
-    };
-    if command.is_empty() {
-        return Err("No AI command is set up yet".to_string());
-    }
-    // The command can take a while; run it off the async runtime's workers
-    // so other git calls keep answering meanwhile.
-    tauri::async_runtime::spawn_blocking(move || generate_in(&dir, &command))
-        .await
-        .map_err(|error| error.to_string())?
+    let command = state.ai_command(&app, |settings| settings.ai_commit_command)?;
+    // The command can take a while; other git calls keep answering meanwhile.
+    blocking(move || generate_in(&dir, &command)).await
 }
 
 /// Builds the prompt from the staged diff in `dir`, runs `command` on it and
@@ -236,16 +216,12 @@ pub(crate) fn run_shell_command(
 /// Stops the shell and whatever it started (on Windows, killing `cmd` alone
 /// would leave the AI tool running).
 fn kill_tree(child: &mut std::process::Child) {
+    // /T kills the whole tree under the process id, /F without asking it to close.
     #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let _ = Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &child.id().to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(0x0800_0000)
-            .status();
-    }
+    let _ = hide_console_window(Command::new("taskkill").args(["/F", "/T", "/PID", &child.id().to_string()]))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
     let _ = child.kill();
 }
 
@@ -262,9 +238,10 @@ fn read_on_thread(mut pipe: impl Read + Send + 'static) -> std::thread::JoinHand
 #[cfg(windows)]
 pub(crate) fn shell(command: &str) -> Command {
     use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut shell = Command::new("cmd");
-    shell.args(["/D", "/S", "/C"]).raw_arg(format!("\"{command}\"")).creation_flags(CREATE_NO_WINDOW);
+    // /D skips AutoRun scripts; raw_arg passes the quotes through untouched,
+    // where `arg` would escape them.
+    hide_console_window(shell.args(["/D", "/S", "/C"]).raw_arg(format!("\"{command}\"")));
     shell
 }
 
@@ -312,22 +289,22 @@ mod tests {
         assert_eq!(settings, Settings::default());
         let settings: Settings = serde_json::from_str(r#"{"aiCommitCommand":"claude -p"}"#).unwrap();
         assert_eq!(settings.ai_commit_command, "claude -p");
+        // The resolve command is saved on its own, and is empty until set.
+        assert_eq!(settings.ai_resolve_command, "");
+        let settings: Settings = serde_json::from_str(r#"{"aiResolveCommand":"codex exec"}"#).unwrap();
+        assert_eq!((settings.ai_commit_command.as_str(), settings.ai_resolve_command.as_str()), ("", "codex exec"));
     }
 
     /// Runs a fake "AI" through the real shell against a temp repository.
     #[test]
     fn runs_the_command_on_the_staged_diff() {
-        let dir = std::env::temp_dir().join(format!("gitizen-ai-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let git = |args: &[&str]| run_git(&dir, args).unwrap();
-        git(&["init", "-q"]);
+        let dir = crate::util::test_support::new_repo("ai");
 
         let error = generate_in(&dir, "echo Unused").unwrap_err();
         assert!(error.contains("Stage some changes"), "{error}");
 
         std::fs::write(dir.join("notes.txt"), "hello\n").unwrap();
-        git(&["add", "notes.txt"]);
+        run_git(&dir, ["add", "notes.txt"]).unwrap();
 
         // Echoes stdin back, so the output starts with the prompt's first line.
         let echo = if cfg!(windows) { "findstr \"^\"" } else { "cat" };

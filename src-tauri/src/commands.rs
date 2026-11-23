@@ -6,7 +6,7 @@
 //! call never freezes the window. Errors reach the UI as rejected promises
 //! carrying git's message.
 
-use tauri::{AppHandle, State};
+use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
 
 use std::collections::HashSet;
@@ -18,12 +18,10 @@ use crate::git::patch::{
 };
 use crate::git::repository::{
     assert_branch_name, assert_hash, first_parent_of, init_repository as git_init, OpenError,
-    OpenRepository, EMPTY_TREE,
+    Repo, EMPTY_TREE,
 };
 use crate::git::runner::{run_git, run_git_bytes, run_git_with_input};
 use crate::git::types::{CommitFile, FileDiff, GitBranch, GitCommit, GitStatus};
-
-type Repo<'a> = State<'a, OpenRepository>;
 
 /// Shows a folder picker and opens the chosen repository. Returns its path,
 /// or None if the picker was cancelled. A folder that isn't a repository
@@ -484,19 +482,13 @@ mod tests {
     use tauri::{WebviewWindow, WebviewWindowBuilder};
 
     use super::*;
+    use crate::git::repository::OpenRepository;
 
+    /// Commits "First" (a.txt) and "Rename" (a.txt moved to b.txt) on main,
+    /// plus a branch "other" at the same commit.
     fn temp_repo() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "gitizen-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::util::test_support::new_repo("test");
         let git = |args: &[&str]| run_git(&dir, args).unwrap();
-        git(&["init", "-q", "-b", "main"]);
-        git(&["config", "user.name", "Test"]);
-        git(&["config", "user.email", "test@example.com"]);
-        git(&["config", "core.autocrlf", "false"]);
         std::fs::write(dir.join("a.txt"), "one\n").unwrap();
         git(&["add", "a.txt"]);
         git(&["commit", "-q", "-m", "First"]);

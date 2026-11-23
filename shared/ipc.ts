@@ -58,6 +58,8 @@ export const Command = {
   ResolveConflict: "resolve_conflict",
   ContinueOperation: "continue_operation",
   AbortOperation: "abort_operation",
+  AiResolveCommand: "ai_resolve_command",
+  SetAiResolveCommand: "set_ai_resolve_command",
   AiResolveConflict: "ai_resolve_conflict",
   ConflictVersions: "conflict_versions",
   SaveConflictResolution: "save_conflict_resolution",
@@ -197,6 +199,10 @@ export interface GitizenApi {
    * still has conflict markers.
    */
   aiResolveConflict(path: string): Promise<string>;
+  /** The saved AI command for resolving conflicts (separate from the commit one), or "" if none is set up. */
+  aiResolveCommand(): Promise<string>;
+  /** Saves the AI resolve command (trimmed; "" clears it). Resolves to what was saved. */
+  setAiResolveCommand(command: string): Promise<string>;
   /** Both sides of a conflicted file merged with conflict markers, plus the file as it is now. */
   conflictVersions(path: string): Promise<ConflictVersions>;
   /** Writes `text` to a conflicted file (keeping its line endings), without staging it. */

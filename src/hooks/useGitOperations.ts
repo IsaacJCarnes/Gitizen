@@ -17,7 +17,11 @@ import { useDiffSettings } from "./useDiffSettings";
 /** A network operation the header's sync buttons can run. */
 export type SyncAction = "fetch" | "pull" | "push";
 
-/** Everything the UI reads about the open repository, plus the actions it can take. */
+/**
+ * Everything the UI reads about the open repository, plus the actions it can
+ * take. Actions that run git resolve to true when they worked; on failure
+ * they show the error modal and resolve to false (they never reject).
+ */
 export interface GitOperations {
   /** Path of the open repository, or null before one is opened. */
   repo: string | null;
@@ -29,15 +33,15 @@ export interface GitOperations {
   /** The sync operation running now, or null. Only one runs at a time. */
   syncing: SyncAction | null;
   /** Fetches, pulls or pushes the current branch, then refreshes. */
-  sync: (action: SyncAction) => Promise<void>;
+  sync: (action: SyncAction) => Promise<boolean>;
   /**
    * True after amending or undoing a commit that was already pushed: the
    * branch no longer matches the remote, so Push becomes a force push.
    */
   needsForcePush: boolean;
-  /** Adds a remote pointing at an existing repository. Resolves to true on success. */
+  /** Adds a remote pointing at an existing repository. */
   addRemote: (name: string, url: string) => Promise<boolean>;
-  /** Creates the repository on GitHub with the GitHub CLI and pushes to it. Resolves to true on success. */
+  /** Creates the repository on GitHub with the GitHub CLI and pushes to it. */
   publishRepository: (name: string, description: string, isPrivate: boolean) => Promise<boolean>;
   /** Working-tree file chosen in the sidebar, and its diff. */
   selectedFile: FileChange | null;
@@ -73,12 +77,12 @@ export interface GitOperations {
   initRepository: (path: string) => Promise<void>;
   refresh: () => Promise<void>;
   /** Stages (`staged` true) or unstages every given path in one git call. */
-  setFilesStaged: (paths: string[], staged: boolean) => Promise<void>;
+  setFilesStaged: (paths: string[], staged: boolean) => Promise<boolean>;
   /**
    * Commits the staged files with the summary, plus the description as the
    * body if given. While `amending`, replaces the last commit instead.
    */
-  commitChanges: () => Promise<void>;
+  commitChanges: () => Promise<boolean>;
   /** True while the commit form amends the last commit instead of making a new one. */
   amending: boolean;
   /**
@@ -97,16 +101,16 @@ export interface GitOperations {
    * the tip of the current branch, or of `branch`, which is checked out first.
    */
   undoLastCommit: (commit: GitCommit, branch?: string) => Promise<void>;
-  /** Stashes all uncommitted changes. Resolves to true on success. */
+  /** Stashes all uncommitted changes. */
   stashChanges: (message: string) => Promise<boolean>;
-  checkoutBranch: (branch: string) => Promise<void>;
+  checkoutBranch: (branch: string) => Promise<boolean>;
   /** Checks out a commit itself (detached HEAD). */
-  checkoutCommit: (hash: string) => Promise<void>;
-  /** Creates a branch at `hash`, switching to it when `checkout`. Resolves to true on success. */
+  checkoutCommit: (hash: string) => Promise<boolean>;
+  /** Creates a branch at `hash`, switching to it when `checkout`. */
   createBranch: (name: string, hash: string, checkout: boolean) => Promise<boolean>;
-  /** Tags `hash`. Resolves to true on success. */
+  /** Tags `hash`. */
   createTag: (name: string, hash: string, message: string) => Promise<boolean>;
-  /** Cherry-picks `hash` onto `branch` (switching to it). Resolves to true on success. */
+  /** Cherry-picks `hash` onto `branch` (switching to it). */
   cherryPick: (hash: string, branch: string) => Promise<boolean>;
   /** The stopped merge, cherry-pick, rebase or revert, and its unresolved files. */
   conflicts: ConflictState;
@@ -117,13 +121,13 @@ export interface GitOperations {
   selectedConflict: string | null;
   setSelectedConflict: (path: string | null) => void;
   /** Takes one side for a conflicted file, or keeps it as saved ("asIs"), and stages it. */
-  resolveConflict: (path: string, resolution: Resolution) => Promise<void>;
-  /** Writes the conflict editor's output to the file (unstaged). Resolves to true on success. */
+  resolveConflict: (path: string, resolution: Resolution) => Promise<boolean>;
+  /** Writes the conflict editor's output to the file (unstaged). */
   saveConflictResolution: (path: string, text: string) => Promise<boolean>;
   /** Opens the file in the external tool, refreshing after a merge tool closes. */
-  openInMergeTool: (path: string) => Promise<void>;
-  continueOperation: () => Promise<void>;
-  abortOperation: () => Promise<void>;
+  openInMergeTool: (path: string) => Promise<boolean>;
+  continueOperation: () => Promise<boolean>;
+  abortOperation: () => Promise<boolean>;
   /** True while the AI command is writing a commit message. */
   generatingMessage: boolean;
   /**
@@ -136,7 +140,7 @@ export interface GitOperations {
    * `lines` index `diff.split("\n")`. Does nothing while whitespace changes
    * are hidden, since that diff can't be applied.
    */
-  stageLines: (lines: number[], staged: boolean) => Promise<void>;
+  stageLines: (lines: number[], staged: boolean) => Promise<boolean>;
 }
 
 export interface GitOperationsOptions {
@@ -204,6 +208,11 @@ export function useGitOperations({
   const summaryRef = useRef(commitSummary);
   summaryRef.current = commitSummary;
   const [commitDescription, setCommitDescription] = useState("");
+  /** Fills both commit form fields at once; no arguments clears them. */
+  const setMessage = useCallback((summary = "", description = ""): void => {
+    setCommitSummary(summary);
+    setCommitDescription(description);
+  }, []);
   const [error, setError] = useState<AppError | null>(null);
   const [generatingMessage, setGeneratingMessage] = useState(false);
   const [amending, setAmending] = useState(false);
@@ -261,8 +270,7 @@ export function useGitOperations({
           const prepared = nextConflicts.message;
           if (prepared && !summaryRef.current.trim()) {
             const [first, ...rest] = prepared.split("\n");
-            setCommitSummary(first);
-            setCommitDescription(rest.join("\n").trim());
+            setMessage(first, rest.join("\n").trim());
           }
         }
         lastOperation.current = nextConflicts.operation;
@@ -270,16 +278,21 @@ export function useGitOperations({
     } catch (refreshError) {
       reportError(refreshError);
     }
-  }, [reportError, selectCommit]);
+  }, [reportError, selectCommit, setMessage]);
 
-  /** Runs a git command, then refreshes; any failure is shown as the error. */
+  /**
+   * Runs a git command, then refreshes. Resolves to false (with the error
+   * shown) if it failed, so callers can tell without a try/catch of their own.
+   */
   const runOperation = useCallback(
-    async (operation: () => Promise<unknown>): Promise<void> => {
+    async (operation: () => Promise<unknown>): Promise<boolean> => {
       try {
         await operation();
         await refresh();
+        return true;
       } catch (operationError) {
         reportError(operationError);
+        return false;
       }
     },
     [refresh, reportError],
@@ -330,8 +343,8 @@ export function useGitOperations({
   );
 
   const setFilesStaged = useCallback(
-    (paths: string[], staged: boolean): Promise<void> => {
-      if (paths.length === 0) return Promise.resolve();
+    (paths: string[], staged: boolean): Promise<boolean> => {
+      if (paths.length === 0) return Promise.resolve(true);
       return runOperation(() =>
         staged ? gitizen.stage(paths) : gitizen.unstage(paths),
       );
@@ -339,45 +352,36 @@ export function useGitOperations({
     [runOperation],
   );
 
-  const commitChanges = useCallback(async (): Promise<void> => {
+  const commitChanges = useCallback(async (): Promise<boolean> => {
     const summary = commitSummary.trim();
-    if (!summary) return;
+    if (!summary) return false;
     const description = commitDescription.trim();
     // Git convention: subject line, blank line, then the body.
     const message = description ? `${summary}\n\n${description}` : summary;
 
-    await runOperation(async () => {
+    return runOperation(async () => {
       await gitizen.commit(message, amending);
       // Committing finishes a merge, cherry-pick or revert by itself; a
       // rebase then moves on to its next commit.
       if (conflicts.operation === "rebase") await gitizen.continueOperation();
       if (amending && pendingForcePush.current) setNeedsForcePush(true);
       pendingForcePush.current = false;
-      setCommitSummary("");
-      setCommitDescription("");
+      setMessage();
       setAmending(false);
     });
-  }, [commitSummary, commitDescription, amending, conflicts.operation, runOperation]);
+  }, [commitSummary, commitDescription, amending, conflicts.operation, runOperation, setMessage]);
 
   const startAmend = useCallback(
     async (commit: GitCommit, branch?: string): Promise<void> => {
       // Another branch's tip: switch to that branch first. If switching
       // fails (the error is shown), stay out of amend mode.
-      if (branch) {
-        let switched = false;
-        await runOperation(async () => {
-          await gitizen.checkout(branch);
-          switched = true;
-        });
-        if (!switched) return;
-      }
-      setCommitSummary(commit.message);
-      setCommitDescription(commit.body);
+      if (branch && !(await runOperation(() => gitizen.checkout(branch)))) return;
+      setMessage(commit.message, commit.body);
       setAmending(true);
       // Amending happens in the working tree's commit form.
       selectCommit(null);
     },
-    [runOperation, selectCommit],
+    [runOperation, selectCommit, setMessage],
   );
 
   // Set when amending a pushed commit; only takes effect once the amend is
@@ -390,12 +394,10 @@ export function useGitOperations({
   const cancelAmend = useCallback((): void => {
     pendingForcePush.current = false;
     setAmending(false);
-    setCommitSummary("");
-    setCommitDescription("");
-  }, []);
+    setMessage();
+  }, [setMessage]);
 
   const undoLastCommit = useCallback(async (commit: GitCommit, branch?: string): Promise<void> => {
-    const { message, body } = commit;
     await runOperation(async () => {
       // Another branch's tip: switch to that branch so it is the last commit.
       if (branch) await gitizen.checkout(branch);
@@ -404,40 +406,35 @@ export function useGitOperations({
       pendingForcePush.current = false;
       setAmending(false);
       // Don't overwrite a message the user is already writing.
-      if (!commitSummary.trim()) {
-        setCommitSummary(message);
-        setCommitDescription(body);
-      }
+      if (!commitSummary.trim()) setMessage(commit.message, commit.body);
       selectCommit(null);
     });
-  }, [commitSummary, runOperation, selectCommit]);
+  }, [commitSummary, runOperation, selectCommit, setMessage]);
 
   const generateCommitMessage = useCallback(async (): Promise<void> => {
     setGeneratingMessage(true);
     try {
       const { summary, description } = await gitizen.generateCommitMessage();
-      setCommitSummary(summary);
-      setCommitDescription(description);
+      setMessage(summary, description);
     } catch (generateError) {
       reportError(generateError);
     } finally {
       setGeneratingMessage(false);
     }
-  }, [reportError]);
+  }, [reportError, setMessage]);
 
   const checkoutBranch = useCallback(
-    (branch: string): Promise<void> =>
-      runOperation(() => gitizen.checkout(branch)),
+    (branch: string) => runOperation(() => gitizen.checkout(branch)),
     [runOperation],
   );
 
   const checkoutCommit = useCallback(
-    (hash: string): Promise<void> => runOperation(() => gitizen.checkoutCommit(hash)),
+    (hash: string) => runOperation(() => gitizen.checkoutCommit(hash)),
     [runOperation],
   );
 
   const sync = useCallback(
-    async (action: SyncAction): Promise<void> => {
+    async (action: SyncAction): Promise<boolean> => {
       setSyncing(action);
       const run = {
         fetch: gitizen.fetch,
@@ -447,95 +444,84 @@ export function useGitOperations({
           setNeedsForcePush(false);
         },
       }[action];
-      await runOperation(run);
+      const ok = await runOperation(run);
       setSyncing(null);
+      return ok;
     },
     [runOperation, needsForcePush],
   );
 
-  /** Runs `operation` and refreshes; resolves to false (with the error shown) if it failed. */
-  const succeeds = useCallback(
-    async (operation: () => Promise<unknown>): Promise<boolean> => {
-      let ok = false;
-      await runOperation(async () => {
-        await operation();
-        ok = true;
-      });
-      return ok;
-    },
+  const stashChanges = useCallback(
+    (message: string) => runOperation(() => gitizen.stashChanges(message)),
     [runOperation],
   );
 
-  const stashChanges = useCallback(
-    (message: string) => succeeds(() => gitizen.stashChanges(message)),
-    [succeeds],
-  );
-
   const addRemote = useCallback(
-    (name: string, url: string) => succeeds(() => gitizen.addRemote(name, url)),
-    [succeeds],
+    (name: string, url: string) => runOperation(() => gitizen.addRemote(name, url)),
+    [runOperation],
   );
 
   const publishRepository = useCallback(
     async (name: string, description: string, isPrivate: boolean): Promise<boolean> => {
       // Publishing pushes, so the header shows it like a push meanwhile.
       setSyncing("push");
-      const ok = await succeeds(() => gitizen.publishRepository(name, description, isPrivate));
+      const ok = await runOperation(() => gitizen.publishRepository(name, description, isPrivate));
       setSyncing(null);
       return ok;
     },
-    [succeeds],
+    [runOperation],
   );
 
   const createBranch = useCallback(
     (name: string, hash: string, checkout: boolean) =>
-      succeeds(() => gitizen.createBranch(name, hash, checkout)),
-    [succeeds],
+      runOperation(() => gitizen.createBranch(name, hash, checkout)),
+    [runOperation],
   );
 
   const createTag = useCallback(
     (name: string, hash: string, message: string) =>
-      succeeds(() => gitizen.createTag(name, hash, message)),
-    [succeeds],
+      runOperation(() => gitizen.createTag(name, hash, message)),
+    [runOperation],
   );
 
   const cherryPick = useCallback(
-    (hash: string, branch: string) => succeeds(() => gitizen.cherryPick(hash, branch)),
-    [succeeds],
+    (hash: string, branch: string) => runOperation(() => gitizen.cherryPick(hash, branch)),
+    [runOperation],
   );
 
   const resolveConflict = useCallback(
-    (path: string, resolution: Resolution): Promise<void> =>
+    (path: string, resolution: Resolution) =>
       runOperation(() => gitizen.resolveConflict(path, resolution)),
     [runOperation],
   );
 
   const saveConflictResolution = useCallback(
-    (path: string, text: string) => succeeds(() => gitizen.saveConflictResolution(path, text)),
-    [succeeds],
+    (path: string, text: string) => runOperation(() => gitizen.saveConflictResolution(path, text)),
+    [runOperation],
   );
 
   // A merge tool is waited for and may stage the file itself; an editor
   // returns at once. Refreshing covers both.
   const openInMergeTool = useCallback(
-    (path: string): Promise<void> => runOperation(() => gitizen.openInMergeTool(path)),
+    (path: string) => runOperation(() => gitizen.openInMergeTool(path)),
     [runOperation],
   );
 
   const continueOperation = useCallback(
-    (): Promise<void> => runOperation(gitizen.continueOperation),
+    () => runOperation(gitizen.continueOperation),
     [runOperation],
   );
 
   const abortOperation = useCallback(
-    (): Promise<void> => runOperation(gitizen.abortOperation),
+    () => runOperation(gitizen.abortOperation),
     [runOperation],
   );
 
   const stageLines = useCallback(
-    (lines: number[], staged: boolean): Promise<void> => {
+    (lines: number[], staged: boolean): Promise<boolean> => {
+      // Lines of a whitespace-hidden diff can't be mapped back onto the file.
       if (!selectedFile || lines.length === 0 || hideWhitespace) {
-        return Promise.resolve();
+        return Promise.resolve(false);
       }
       return runOperation(() =>
         gitizen.setStagedLines(selectedFile.path, diff, lines, staged),

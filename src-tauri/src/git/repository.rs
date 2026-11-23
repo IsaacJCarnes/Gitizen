@@ -76,6 +76,17 @@ impl OpenRepository {
     }
 }
 
+/// How commands receive the open repository from Tauri's managed state.
+pub type Repo<'a> = tauri::State<'a, OpenRepository>;
+
+/// The checked-out branch's short name, or None when HEAD is detached.
+pub fn current_branch(dir: &Path) -> Option<String> {
+    // --quiet makes a detached HEAD a plain failure instead of an error message.
+    run_git(dir, ["symbolic-ref", "--short", "--quiet", "HEAD"])
+        .ok()
+        .map(|name| name.trim().to_string())
+}
+
 /// True when `directory` is inside a git work tree.
 pub fn is_work_tree(directory: &Path) -> bool {
     run_git(directory, ["rev-parse", "--is-inside-work-tree"])
@@ -141,12 +152,7 @@ mod tests {
 
     #[test]
     fn open_reports_non_repositories_with_their_path() {
-        let dir = std::env::temp_dir().join(format!(
-            "gitizen-open-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::util::unique_temp_dir("open-test").unwrap();
         let repo = OpenRepository::default();
 
         let error = repo.open(dir.clone()).unwrap_err();
@@ -164,7 +170,7 @@ mod tests {
         assert!(repo.require().is_err());
 
         init_repository(&dir).unwrap();
-        assert_eq!(run_git(&dir, ["symbolic-ref", "--short", "HEAD"]).unwrap().trim(), "main");
+        assert_eq!(current_branch(&dir).as_deref(), Some("main"));
         assert!(init_repository(&dir).unwrap_err().contains("already"));
         repo.open(dir.clone()).unwrap();
         assert_eq!(repo.require().unwrap(), dir);

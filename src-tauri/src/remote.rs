@@ -10,13 +10,11 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 use serde::Serialize;
-use tauri::State;
 
 use crate::conflicts::unless_conflicted;
-use crate::git::repository::OpenRepository;
-use crate::git::runner::run_git;
-
-type Repo<'a> = State<'a, OpenRepository>;
+use crate::git::repository::{current_branch, Repo};
+use crate::git::runner::{hide_console_window, into_result, run_git};
+use crate::util::blocking;
 
 /// A configured remote, e.g. `origin` and its fetch URL.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -113,25 +111,19 @@ fn publish_in(dir: &Path, name: &str, description: &str, private: bool) -> Resul
 /// Runs the GitHub CLI without letting it prompt, returning its message on
 /// failure.
 fn run_gh(dir: &Path, args: &[&str]) -> Result<(), String> {
-    let mut command = Command::new("gh");
-    command
+    let output = hide_console_window(&mut Command::new("gh"))
         .current_dir(dir)
         .args(args)
         .env("GH_PROMPT_DISABLED", "1")
-        .stdin(Stdio::null());
-    hide_console_window(&mut command);
-    let output = command.output().map_err(|_| {
-        "Publishing to GitHub needs the GitHub CLI. Install it from https://cli.github.com, run \
-         `gh auth login` once, then try again. Or add an existing remote URL instead."
-            .to_string()
-    })?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let message = if stderr.trim().is_empty() { stdout } else { stderr };
-    Err(message.trim().to_string())
+        .stdin(Stdio::null())
+        .output()
+        // Failing to start at all means gh isn't installed (or not on PATH).
+        .map_err(|_| {
+            "Publishing to GitHub needs the GitHub CLI. Install it from https://cli.github.com, run \
+             `gh auth login` once, then try again. Or add an existing remote URL instead."
+                .to_string()
+        })?;
+    into_result(output).map(drop)
 }
 
 /// Downloads new commits from every remote (removing remote branches that
@@ -153,7 +145,7 @@ pub async fn pull(repo: Repo<'_>) -> Result<(), String> {
 }
 
 fn pull_in(dir: &Path) -> Result<(), String> {
-    current_branch(dir)?;
+    checked_out_branch(dir)?;
     if upstream_of(dir).is_none() {
         return Err("This branch isn't on the remote yet. Push it first.".into());
     }
@@ -178,7 +170,7 @@ pub async fn push(repo: Repo<'_>, force: Option<bool>) -> Result<(), String> {
 }
 
 fn push_in(dir: &Path, force: bool) -> Result<(), String> {
-    let branch = current_branch(dir)?;
+    let branch = checked_out_branch(dir)?;
     let local = format!("refs/heads/{branch}");
     if let Some((remote, merge)) = upstream_of(dir) {
         // Explicit "<local>:<upstream>" pushes to the tracked branch even
@@ -200,16 +192,14 @@ fn push_in(dir: &Path, force: bool) -> Result<(), String> {
 }
 
 /// The checked-out branch, or an error when HEAD is detached.
-fn current_branch(dir: &Path) -> Result<String, String> {
-    run_git(dir, ["symbolic-ref", "--short", "--quiet", "HEAD"])
-        .map(|name| name.trim().to_string())
-        .map_err(|_| "Check out a branch first. HEAD is detached.".to_string())
+fn checked_out_branch(dir: &Path) -> Result<String, String> {
+    current_branch(dir).ok_or_else(|| "Check out a branch first. HEAD is detached.".to_string())
 }
 
 /// The current branch's upstream as (remote, "refs/heads/<branch>"), read
 /// from `branch.<name>.remote` and `branch.<name>.merge`.
 fn upstream_of(dir: &Path) -> Option<(String, String)> {
-    let branch = current_branch(dir).ok()?;
+    let branch = current_branch(dir)?;
     let config = |key: &str| {
         run_git(dir, ["config", "--get", &format!("branch.{branch}.{key}")])
             .ok()
@@ -233,55 +223,11 @@ fn default_remote(dir: &Path) -> Option<String> {
     }
 }
 
-/// Runs `work` on a blocking thread so a slow network call doesn't hold up
-/// the async runtime's workers.
-async fn blocking(work: impl FnOnce() -> Result<(), String> + Send + 'static) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(work).await.map_err(|error| error.to_string())?
-}
-
-#[cfg(windows)]
-fn hide_console_window(command: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NO_WINDOW);
-}
-
-#[cfg(not(windows))]
-fn hide_console_window(_command: &mut Command) {}
-
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
-
-    fn temp_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "gitizen-remote-{label}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    fn git(dir: &Path, args: &[&str]) -> String {
-        run_git(dir, args).unwrap()
-    }
-
-    fn new_repo(label: &str) -> PathBuf {
-        let dir = temp_dir(label);
-        git(&dir, &["init", "-q", "-b", "main"]);
-        git(&dir, &["config", "user.name", "Test"]);
-        git(&dir, &["config", "user.email", "test@example.com"]);
-        dir
-    }
-
-    fn commit_file(dir: &Path, name: &str, text: &str) {
-        std::fs::write(dir.join(name), text).unwrap();
-        git(dir, &["add", name]);
-        git(dir, &["commit", "-q", "-m", name]);
-    }
+    use crate::util::test_support::{commit_file, git, new_repo};
+    use crate::util::unique_temp_dir;
 
     #[test]
     fn parses_remote_names_with_dots() {
@@ -301,11 +247,11 @@ mod tests {
     /// fetching and pulling between them.
     #[test]
     fn publishes_pushes_and_pulls_through_a_remote() {
-        let server = temp_dir("server");
+        let server = unique_temp_dir("remote-server").unwrap();
         git(&server, &["init", "-q", "--bare", "-b", "main"]);
         let server_url = server.to_string_lossy().into_owned();
 
-        let alice = new_repo("alice");
+        let alice = new_repo("remote-alice");
         assert!(remotes_in(&alice).is_empty());
         commit_file(&alice, "a.txt", "one\n");
         let error = push_in(&alice, false).unwrap_err();
@@ -319,7 +265,7 @@ mod tests {
         push_in(&alice, false).unwrap();
         assert_eq!(upstream_of(&alice), Some(("origin".into(), "refs/heads/main".into())));
 
-        let bob = temp_dir("bob");
+        let bob = unique_temp_dir("remote-bob").unwrap();
         git(&bob, &["clone", "-q", &server_url, "."]);
         git(&bob, &["config", "user.name", "Bob"]);
         git(&bob, &["config", "user.email", "bob@example.com"]);

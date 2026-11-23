@@ -65,9 +65,3 @@
   color: #c7811a;
   font-weight: 600;
 }
-
-.editor-command-input {
-  width: 100%;
-  margin-bottom: 8px;
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
-}

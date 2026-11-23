@@ -5,13 +5,9 @@
 use std::path::Path;
 use std::process::Command;
 
-use tauri::State;
-
 use crate::conflicts::unless_conflicted;
-use crate::git::repository::{assert_branch_name, assert_hash, OpenRepository};
+use crate::git::repository::{assert_branch_name, assert_hash, current_branch, Repo};
 use crate::git::runner::run_git;
-
-type Repo<'a> = State<'a, OpenRepository>;
 
 /// Checks out the commit itself (a detached HEAD), not a branch.
 #[tauri::command]
@@ -81,8 +77,7 @@ pub async fn cherry_pick(repo: Repo<'_>, hash: String, branch: String) -> Result
 fn cherry_pick_in(dir: &Path, hash: &str, branch: &str) -> Result<(), String> {
     let hash = assert_hash(hash)?;
     let branch = assert_branch_name(branch)?;
-    let current = run_git(dir, ["symbolic-ref", "--short", "--quiet", "HEAD"]).unwrap_or_default();
-    if current.trim() != branch {
+    if current_branch(dir).as_deref() != Some(branch) {
         let changes = run_git(dir, ["status", "--porcelain", "--untracked-files=no"])?;
         if !changes.trim().is_empty() {
             return Err(format!(
@@ -137,22 +132,13 @@ fn open_url(url: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    use crate::util::test_support::{commit_file, new_repo};
+
+    /// Two commits on main: a.txt, then b.txt.
     fn temp_repo() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "gitizen-commit-actions-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let git = |args: &[&str]| run_git(&dir, args).unwrap();
-        git(&["init", "-q", "-b", "main"]);
-        git(&["config", "user.name", "Test"]);
-        git(&["config", "user.email", "test@example.com"]);
-        for (file, text) in [("a.txt", "a\n"), ("b.txt", "b\n")] {
-            std::fs::write(dir.join(file), text).unwrap();
-            git(&["add", file]);
-            git(&["commit", "-q", "-m", file]);
-        }
+        let dir = new_repo("commit-actions");
+        commit_file(&dir, "a.txt", "a\n");
+        commit_file(&dir, "b.txt", "b\n");
         dir
     }
 

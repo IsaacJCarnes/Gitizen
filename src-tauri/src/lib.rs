@@ -8,6 +8,7 @@ mod conflicts;
 mod git;
 mod recent_repos;
 mod remote;
+mod util;
 
 use git::repository::OpenRepository;
 use ai_commit::AppSettings;
@@ -63,6 +64,8 @@ pub fn run() {
             conflicts::ai_resolve_conflict,
             conflicts::conflict_versions,
             conflicts::save_conflict_resolution,
+            conflicts::ai_resolve_command,
+            conflicts::set_ai_resolve_command,
             conflicts::editor_command,
             conflicts::set_editor_command,
             conflicts::open_in_merge_tool,

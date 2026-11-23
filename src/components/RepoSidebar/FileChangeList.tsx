@@ -77,7 +77,7 @@ export default function FileChangeList(): React.JSX.Element {
     selectedFile,
     setSelectedFile,
     setFilesStaged,
-    conflicts: {operation, files},
+    conflicts: { operation, files },
     selectedConflict,
     setSelectedConflict,
   } = useGitOperationsContext();
@@ -107,26 +107,28 @@ export default function FileChangeList(): React.JSX.Element {
   };
 
   // A mixed checkbox stages the rest, like a select-all, rather than unstaging.
-  const toggle = (entry: ChangedPath): Promise<void> =>
+  const toggle = (entry: ChangedPath) =>
     setFilesStaged(pathsOf(entry), stageState(entry) !== true);
 
-  const toggleAll = (): Promise<void> =>
+  const toggleAll = () =>
     setFilesStaged(entries.flatMap(pathsOf), allState !== true);
 
   return (
     <>
       <ConflictBanner />
-      {!operation &&
-      <h2 className="changes-header">
-        <TriStateCheckbox
-          state={allState}
-          onChange={toggleAll}
-          label={allState === true ? "Unstage all files" : "Stage all files"}
-          disabled={entries.length === 0}
-        />
-        Changes ({all.length})
-        <small>{fullyStaged} staged</small>
-      </h2>}
+      {/* The banner takes the header's place while an operation is stopped. */}
+      {!operation && (
+        <h2 className="changes-header">
+          <TriStateCheckbox
+            state={allState}
+            onChange={toggleAll}
+            label={allState === true ? "Unstage all files" : "Stage all files"}
+            disabled={entries.length === 0}
+          />
+          Changes ({all.length})
+          <small>{fullyStaged} staged</small>
+        </h2>
+      )}
       <ul className="file-change-list">
         {conflicted.map((entry) => {
           const file = conflictByPath.get(entry.path)!;

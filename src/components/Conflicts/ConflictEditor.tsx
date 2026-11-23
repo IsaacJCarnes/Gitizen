@@ -1,17 +1,21 @@
 import "./ConflictEditor.css";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ConflictVersions } from "../../../shared/gitTypes";
 import { gitizen } from "../../api/gitizen";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
+import { useAiResolveCommand, useEditorCommand } from "../../hooks/useSavedCommand";
 import {
   buildOutput,
+  hasConflictMarkers,
   lineKey,
   parseConflict,
+  sideKeys,
+  type ConflictSegment,
   type Side,
 } from "../../utils/conflictText";
 import { pluralize } from "../../utils/format";
-import AiCommandModal from "../RepoSidebar/AiCommandModal";
+import AiResolveCommandModal from "./AiResolveCommandModal";
 import EditorCommandModal from "./EditorCommandModal";
 
 /** Unchanged stretches longer than this are folded to their ends. */
@@ -19,9 +23,12 @@ const FOLD_OVER = 8;
 /** Lines kept visible at each end of a folded stretch. */
 const FOLD_CONTEXT = 3;
 
+/** The editor works in "\n"; saving puts the file's own line endings back. */
+const toLf = (text: string): string => text.replace(/\r\n/g, "\n");
+
 /** Line endings don't matter when comparing the editor's text with the file's. */
 const sameText = (a: string | null, b: string | null): boolean =>
-  (a ?? "").replace(/\r\n/g, "\n") === (b ?? "").replace(/\r\n/g, "\n");
+  toLf(a ?? "") === toLf(b ?? "");
 
 interface ConflictEditorProps {
   /** The conflicted file to edit. Remount (key) per file, so state starts fresh. */
@@ -32,9 +39,9 @@ interface ConflictEditorProps {
  * The conflict editor in the main panel. The top shows each conflict with
  * the current branch's lines beside the incoming lines, each line with a
  * checkbox; ticking adds it to the output below, in the order lines are
- * ticked (so an incoming line ticked first lands above a current one). The output can also be edited by hand or
- * filled by the AI command, and Save writes it to the file. Marking the file
- * resolved happens in the sidebar.
+ * ticked (so an incoming line ticked first lands above a current one). The
+ * output can also be edited by hand or filled by the AI command, and Save
+ * writes it to the file. Marking the file resolved happens in the sidebar.
  */
 export default function ConflictEditor({
   path,
@@ -47,21 +54,19 @@ export default function ConflictEditor({
     resolveConflict,
     reportError,
   } = useGitOperationsContext();
+  const ai = useAiResolveCommand();
+  const editor = useEditorCommand();
   const [versions, setVersions] = useState<ConflictVersions | null>(null);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [output, setOutput] = useState("");
   // True once the output no longer matches the ticked lines (typed in, the
   // AI's answer, or a saved file loaded back).
   const [handEdited, setHandEdited] = useState(false);
-  const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
   const [busy, setBusy] = useState<"ai" | "save" | "tool" | null>(null);
-  // null until loaded from the backend; "" means not set up.
-  const [aiCommand, setAiCommand] = useState<string | null>(null);
-  const [editorCommand, setEditorCommand] = useState<string | null>(null);
-  const [settingUpAi, setSettingUpAi] = useState(false);
-  const [changingTool, setChangingTool] = useState(false);
+  const [modal, setModal] = useState<"ai" | "tool" | null>(null);
   // The working file's text the output was last synced with, to tell our
   // own saves apart from changes made outside (an external tool).
+  // undefined until the first load.
   const syncedWorking = useRef<string | null | undefined>(undefined);
 
   const file = conflicts.files.find((candidate) => candidate.path === path);
@@ -72,11 +77,6 @@ export default function ConflictEditor({
   const conflictCount = parsed.segments.filter(
     (segment) => segment.kind === "conflict",
   ).length;
-
-  useEffect(() => {
-    gitizen.aiCommitCommand().then(setAiCommand, () => setAiCommand(""));
-    gitizen.editorCommand().then(setEditorCommand, () => setEditorCommand(""));
-  }, []);
 
   // (Re)load after every refresh while the file is still conflicted. The
   // output is replaced only when the file changed since we last synced with
@@ -93,14 +93,13 @@ export default function ConflictEditor({
       )
         return;
       syncedWorking.current = next.working;
-      const saved = next.working !== null && !/^<{7}( |$)/m.test(next.working);
+      const working = next.working;
       // A resolution saved earlier is shown as it is; otherwise start from
       // the unconflicted lines with nothing picked.
+      const saved = working !== null && !hasConflictMarkers(working);
       setPicked(new Set());
       setOutput(
-        saved
-          ? next.working!.replace(/\r\n/g, "\n")
-          : buildOutput(parseConflict(next.merged), new Set()),
+        saved ? toLf(working) : buildOutput(parseConflict(next.merged), new Set()),
       );
       setHandEdited(saved);
     }, reportError);
@@ -123,25 +122,12 @@ export default function ConflictEditor({
     pickLines(next);
   };
 
-  /** Ticks every line of one side in every conflict, and nothing of the other. */
-  const pickAll = (side: Side): void => {
-    const next = new Set<string>();
-    let index = 0;
-    for (const segment of parsed.segments) {
-      if (segment.kind !== "conflict") continue;
-      segment[side].forEach((_, line) => next.add(lineKey(index, side, line)));
-      index++;
-    }
-    pickLines(next);
-  };
-
   const save = async (): Promise<void> => {
     setBusy("save");
     // Remember what we wrote, so the reload after saving keeps the picks.
     const previous = syncedWorking.current;
     syncedWorking.current = output;
-    const ok = await saveConflictResolution(path, output);
-    if (!ok) syncedWorking.current = previous;
+    if (!(await saveConflictResolution(path, output))) syncedWorking.current = previous;
     setBusy(null);
   };
 
@@ -156,14 +142,6 @@ export default function ConflictEditor({
       reportError(error);
     }
     setBusy(null);
-  };
-
-  const saveAiCommand = (command: string): void => {
-    setSettingUpAi(false);
-    gitizen.setAiCommitCommand(command).then((saved) => {
-      setAiCommand(saved);
-      //if (saved) void resolveWithAi();
-    }, reportError);
   };
 
   const openTool = async (): Promise<void> => {
@@ -181,61 +159,40 @@ export default function ConflictEditor({
       <small>{file ? pluralize(conflictCount, "conflict") : "Resolved"}</small>
       {file && versions && !versions.binary && (
         <span className="conflict-editor-tools">
-          <span className="conflict-tool">
-            <button
-              disabled={
-                busy !== null || aiCommand === null || conflictCount === 0
-              }
-              title={
-                aiCommand
-                  ? "Ask AI to resolve the conflict"
-                  : "Set up an AI command to resolve conflicts"
-              }
-              onClick={() =>
-                aiCommand ? void resolveWithAi() : setSettingUpAi(true)
-              }
-            >
-              {busy === "ai" ? (
-                <>
-                  <span className="conflict-spinner" aria-hidden="true" />{" "}
-                  Resolving…
-                </>
-              ) : (
-                "Resolve with AI"
-              )}
-            </button>
-            <button
-              aria-label="Resolve with AI settings"
-              title="Resolve with AI settings"
-              disabled={busy !== null}
-              onClick={() => setSettingUpAi(true)}
-            >
-              &#9881;
-            </button>
-          </span>
-          <span className="conflict-tool">
-            <button
-              disabled={busy !== null}
-              title={
-                editorCommand
-                  ? `Open with ${editorCommand}`
-                  : "Open in git's merge tool, or the text editor if none is configured"
-              }
-              onClick={() => void openTool()}
-            >
-              {busy === "tool"
-                ? "Waiting for merge tool…"
-                : "Open in merge tool"}
-            </button>
-            <button
-              aria-label="External merge tool settings"
-              title="External merge tool settings"
-              disabled={busy !== null || editorCommand === null}
-              onClick={() => setChangingTool(true)}
-            >
-              &#9881;
-            </button>
-          </span>
+          <ToolWithSettings
+            disabled={busy !== null || ai.command === null || conflictCount === 0}
+            title={
+              ai.command
+                ? "Ask AI to resolve the conflict"
+                : "Set up an AI command to resolve conflicts"
+            }
+            onClick={() => (ai.command ? void resolveWithAi() : setModal("ai"))}
+            settingsLabel="Resolve with AI settings"
+            settingsDisabled={busy !== null}
+            onSettings={() => setModal("ai")}
+          >
+            {busy === "ai" ? (
+              <>
+                <span className="conflict-spinner" aria-hidden="true" /> Resolving…
+              </>
+            ) : (
+              "Resolve with AI"
+            )}
+          </ToolWithSettings>
+          <ToolWithSettings
+            disabled={busy !== null}
+            title={
+              editor.command
+                ? `Open with ${editor.command}`
+                : "Open in git's merge tool, or the text editor if none is configured"
+            }
+            onClick={() => void openTool()}
+            settingsLabel="External merge tool settings"
+            settingsDisabled={busy !== null || editor.command === null}
+            onSettings={() => setModal("tool")}
+          >
+            {busy === "tool" ? "Waiting for merge tool…" : "Open in merge tool"}
+          </ToolWithSettings>
           <button
             className="primary"
             disabled={busy !== null}
@@ -249,148 +206,76 @@ export default function ConflictEditor({
     </header>
   );
 
-  const modals = (
-    <>
-      {settingUpAi && (
-        <AiCommandModal
-          initialCommand={aiCommand ?? ""}
-          onSave={saveAiCommand}
-          onDismiss={() => setSettingUpAi(false)}
-        />
-      )}
-      {changingTool && (
-        <EditorCommandModal
-          initialCommand={editorCommand ?? ""}
+  /** The editor's frame: the header and its setup modals around `body`. */
+  const frame = (body: ReactNode): React.JSX.Element => (
+    <div className="conflict-editor">
+      {header}
+      {body}
+      {modal === "ai" && (
+        <AiResolveCommandModal
+          initialCommand={ai.command ?? ""}
           onSave={(command) => {
-            setChangingTool(false);
-            gitizen
-              .setEditorCommand(command)
-              .then(setEditorCommand, reportError);
+            setModal(null);
+            void ai.save(command);
           }}
-          onDismiss={() => setChangingTool(false)}
+          onDismiss={() => setModal(null)}
         />
       )}
-    </>
+      {modal === "tool" && (
+        <EditorCommandModal
+          initialCommand={editor.command ?? ""}
+          onSave={(command) => {
+            setModal(null);
+            void editor.save(command);
+          }}
+          onDismiss={() => setModal(null)}
+        />
+      )}
+    </div>
   );
 
   if (!file) {
-    return (
-      <div className="conflict-editor">
-        {header}
-        <p className="placeholder">
-          This file is resolved. Pick another conflicted file in the sidebar.
-        </p>
-      </div>
+    return frame(
+      <p className="placeholder">
+        This file is resolved. Pick another conflicted file in the sidebar.
+      </p>,
     );
   }
-  if (!versions) {
-    return (
-      <div className="conflict-editor">
-        {header}
-        <p className="placeholder">Loading…</p>
-      </div>
-    );
-  }
+  if (!versions) return frame(<p className="placeholder">Loading…</p>);
   if (versions.binary) {
-    return (
-      <div className="conflict-editor">
-        {header}
-        <div className="conflict-binary">
-          <p>
-            This is a binary file, so its lines can&apos;t be picked. Keep one
-            whole version:
-          </p>
-          <button onClick={() => void resolveConflict(path, "ours")}>
-            Keep current version
-          </button>
-          <button onClick={() => void resolveConflict(path, "theirs")}>
-            Use incoming version
-          </button>
-        </div>
-      </div>
+    return frame(
+      <div className="conflict-binary">
+        <p>
+          This is a binary file, so its lines can&apos;t be picked. Keep one
+          whole version:
+        </p>
+        <button onClick={() => void resolveConflict(path, "ours")}>
+          Keep current version
+        </button>
+        <button onClick={() => void resolveConflict(path, "theirs")}>
+          Use incoming version
+        </button>
+      </div>,
     );
   }
 
-  let conflictIndex = 0;
-  return (
-    <div className="conflict-editor">
-      {header}
+  return frame(
+    <>
       <div className="conflict-sides">
         <div className="conflict-columns-head">
           <span>Current{conflicts.current && ` (${conflicts.current})`}</span>
           <span>Incoming{conflicts.incoming && ` (${conflicts.incoming})`}</span>
         </div>
-        {parsed.segments.map((segment, segmentIndex) => {
-          if (segment.kind === "common") {
-            const folded =
-              segment.lines.length > FOLD_OVER && !expanded.has(segmentIndex);
-            const shown = folded
-              ? [
-                  segment.lines.slice(0, FOLD_CONTEXT),
-                  segment.lines.slice(-FOLD_CONTEXT),
-                ]
-              : [segment.lines];
-            return (
-              <div key={segmentIndex} className="conflict-common">
-                {shown.map((lines, part) => (
-                  <Fragment key={part}>
-                    {part === 1 && (
-                      <button
-                        className="conflict-fold"
-                        onClick={() =>
-                          setExpanded(new Set(expanded).add(segmentIndex))
-                        }
-                      >
-                        ⋯{" "}
-                        {pluralize(
-                          segment.lines.length - 2 * FOLD_CONTEXT,
-                          "unchanged line",
-                        )}
-                      </button>
-                    )}
-                    {lines.map((line, i) => (
-                      <div key={i} className="conflict-line">
-                        <span className="code">{line || " "}</span>
-                      </div>
-                    ))}
-                  </Fragment>
-                ))}
-              </div>
-            );
-          }
-          const index = conflictIndex++;
-          const side = (name: Side) => {
-            const keys = segment[name].map((_, line) =>
-              lineKey(index, name, line),
-            );
-            return (
-              <div className={`conflict-side ${name}`}>
-                {keys.length === 0 && (
-                  <div className="conflict-side-empty">No lines</div>
-                )}
-                {segment[name].map((line, i) => (
-                  <label
-                    key={i}
-                    className={`conflict-line${picked.has(keys[i]) ? " picked" : ""}`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={picked.has(keys[i])}
-                      onChange={() => toggle(keys[i])}
-                    />
-                    <span className="code">{line || " "}</span>
-                  </label>
-                ))}
-              </div>
-            );
-          };
-          return (
+        {parsed.segments.map((segment, segmentIndex) =>
+          segment.kind === "common" ? (
+            <CommonLines key={segmentIndex} lines={segment.lines} />
+          ) : (
             <div key={segmentIndex} className="conflict-block">
-              {side("current")}
-              {side("incoming")}
+              <ConflictSide segment={segment} side="current" picked={picked} onToggle={toggle} />
+              <ConflictSide segment={segment} side="incoming" picked={picked} onToggle={toggle} />
             </div>
-          );
-        })}
+          ),
+        )}
       </div>
       <section className="conflict-output">
         <div className="conflict-output-head">
@@ -401,8 +286,10 @@ export default function ConflictEditor({
               : "Tick lines above to add them. You can also type here."}
           </small>
           <span className="conflict-output-picks">
-            <button onClick={() => pickAll("current")}>Take all current</button>
-            <button onClick={() => pickAll("incoming")}>
+            <button onClick={() => pickLines(new Set(sideKeys(parsed, "current")))}>
+              Take all current
+            </button>
+            <button onClick={() => pickLines(new Set(sideKeys(parsed, "incoming")))}>
               Take all incoming
             </button>
           </span>
@@ -418,7 +305,103 @@ export default function ConflictEditor({
           }}
         />
       </section>
-      {modals}
+    </>,
+  );
+}
+
+interface ToolWithSettingsProps {
+  /** The main button's label. */
+  children: ReactNode;
+  title: string;
+  disabled: boolean;
+  onClick: () => void;
+  /** Accessible name and tooltip of the gear button beside it. */
+  settingsLabel: string;
+  settingsDisabled: boolean;
+  onSettings: () => void;
+}
+
+/** A header button with a gear button beside it that opens its settings. */
+function ToolWithSettings({
+  children,
+  title,
+  disabled,
+  onClick,
+  settingsLabel,
+  settingsDisabled,
+  onSettings,
+}: ToolWithSettingsProps): React.JSX.Element {
+  return (
+    <span className="conflict-tool">
+      <button disabled={disabled} title={title} onClick={onClick}>
+        {children}
+      </button>
+      <button
+        aria-label={settingsLabel}
+        title={settingsLabel}
+        disabled={settingsDisabled}
+        onClick={onSettings}
+      >
+        &#9881;
+      </button>
+    </span>
+  );
+}
+
+/**
+ * Lines both sides agree on. A long stretch is folded to its first and last
+ * few lines, with a button between them that unfolds it.
+ */
+function CommonLines({ lines }: { lines: string[] }): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const folded = lines.length > FOLD_OVER && !expanded;
+  const parts = folded
+    ? [lines.slice(0, FOLD_CONTEXT), lines.slice(-FOLD_CONTEXT)]
+    : [lines];
+  return (
+    <div className="conflict-common">
+      {parts.map((part, index) => (
+        <Fragment key={index}>
+          {/* The fold sits between the two visible ends. */}
+          {index === 1 && (
+            <button className="conflict-fold" onClick={() => setExpanded(true)}>
+              ⋯ {pluralize(lines.length - 2 * FOLD_CONTEXT, "unchanged line")}
+            </button>
+          )}
+          {part.map((line, i) => (
+            <div key={i} className="conflict-line">
+              {/* A space keeps an empty line one line tall. */}
+              <span className="code">{line || " "}</span>
+            </div>
+          ))}
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+interface ConflictSideProps {
+  segment: ConflictSegment;
+  side: Side;
+  picked: ReadonlySet<string>;
+  onToggle: (key: string) => void;
+}
+
+/** One side of a conflict, each line with a checkbox that picks it for the output. */
+function ConflictSide({ segment, side, picked, onToggle }: ConflictSideProps): React.JSX.Element {
+  const lines = segment[side];
+  return (
+    <div className={`conflict-side ${side}`}>
+      {lines.length === 0 && <div className="conflict-side-empty">No lines</div>}
+      {lines.map((line, i) => {
+        const key = lineKey(segment.index, side, i);
+        return (
+          <label key={i} className={`conflict-line${picked.has(key) ? " picked" : ""}`}>
+            <input type="checkbox" checked={picked.has(key)} onChange={() => onToggle(key)} />
+            <span className="code">{line || " "}</span>
+          </label>
+        );
+      })}
     </div>
   );
 }

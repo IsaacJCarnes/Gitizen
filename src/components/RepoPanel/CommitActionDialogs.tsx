@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { GitCommit } from "../../../shared/gitTypes";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import { shortHash } from "../../utils/format";
-import ActionModal from "../common/ActionModal";
+import FormModal from "../common/FormModal";
 
 interface DialogProps {
   commit: GitCommit;
@@ -19,23 +19,6 @@ function CommitLine({ commit }: { commit: GitCommit }): React.JSX.Element {
   );
 }
 
-/**
- * Runs `action` once, shows "Working…" meanwhile, and closes the dialog only
- * if it worked (on failure the error modal explains, and the dialog stays
- * open to try again).
- */
-function useSubmit(action: () => Promise<boolean>, onDismiss: () => void) {
-  const [working, setWorking] = useState(false);
-  const submit = async (): Promise<void> => {
-    if (working) return;
-    setWorking(true);
-    const ok = await action();
-    setWorking(false);
-    if (ok) onDismiss();
-  };
-  return { working, submit };
-}
-
 /** Asks for a branch name and creates it at the commit. */
 export function CreateBranchDialog({
   commit,
@@ -44,53 +27,36 @@ export function CreateBranchDialog({
   const { createBranch } = useGitOperationsContext();
   const [name, setName] = useState("");
   const [checkout, setCheckout] = useState(true);
-  const ready = name.trim() !== "";
-  const { working, submit } = useSubmit(
-    () => createBranch(name, commit.hash, checkout),
-    onDismiss,
-  );
 
   return (
-    <ActionModal
+    <FormModal
       title="Create branch"
+      submitLabel="Create branch"
+      workingLabel="Creating…"
+      ready={name.trim() !== ""}
+      onSubmit={() => createBranch(name, commit.hash, checkout)}
       onDismiss={onDismiss}
-      actions={[
-        {
-          label: working ? "Creating…" : "Create branch",
-          primary: true,
-          disabled: !ready || working,
-          onClick: () => void submit(),
-        },
-      ]}
+      className="commit-dialog"
     >
-      <form
-        className="commit-dialog"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (ready) void submit();
-        }}
-      >
-        <CommitLine commit={commit} />
-        <label>
-          Name
-          <input
-            value={name}
-            autoFocus
-            placeholder="feature/my-change"
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-        <label className="inline">
-          <input
-            type="checkbox"
-            checked={checkout}
-            onChange={(event) => setCheckout(event.target.checked)}
-          />
-          Switch to the new branch
-        </label>
-        <button type="submit" hidden />
-      </form>
-    </ActionModal>
+      <CommitLine commit={commit} />
+      <label>
+        Name
+        <input
+          value={name}
+          autoFocus
+          placeholder="feature/my-change"
+          onChange={(event) => setName(event.target.value)}
+        />
+      </label>
+      <label className="inline">
+        <input
+          type="checkbox"
+          checked={checkout}
+          onChange={(event) => setCheckout(event.target.checked)}
+        />
+        Switch to the new branch
+      </label>
+    </FormModal>
   );
 }
 
@@ -102,55 +68,38 @@ export function CreateTagDialog({
   const { createTag } = useGitOperationsContext();
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
-  const ready = name.trim() !== "";
-  const { working, submit } = useSubmit(
-    () => createTag(name, commit.hash, message),
-    onDismiss,
-  );
 
   return (
-    <ActionModal
+    <FormModal
       title="Create tag"
+      submitLabel="Create tag"
+      workingLabel="Creating…"
+      ready={name.trim() !== ""}
+      onSubmit={() => createTag(name, commit.hash, message)}
       onDismiss={onDismiss}
-      actions={[
-        {
-          label: working ? "Creating…" : "Create tag",
-          primary: true,
-          disabled: !ready || working,
-          onClick: () => void submit(),
-        },
-      ]}
+      className="commit-dialog"
     >
-      <form
-        className="commit-dialog"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (ready) void submit();
-        }}
-      >
-        <CommitLine commit={commit} />
-        <label>
-          Name
-          <input
-            value={name}
-            autoFocus
-            placeholder="v1.0.0"
-            onChange={(event) => setName(event.target.value)}
-          />
-        </label>
-        <label>
-          Message (optional)
-          <input
-            value={message}
-            onChange={(event) => setMessage(event.target.value)}
-          />
-        </label>
-        <p className="hint">
-          The tag is pushed along with its branch the next time you push.
-        </p>
-        <button type="submit" hidden />
-      </form>
-    </ActionModal>
+      <CommitLine commit={commit} />
+      <label>
+        Name
+        <input
+          value={name}
+          autoFocus
+          placeholder="v1.0.0"
+          onChange={(event) => setName(event.target.value)}
+        />
+      </label>
+      <label>
+        Message (optional)
+        <input
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+        />
+      </label>
+      <p className="hint">
+        The tag is pushed along with its branch the next time you push.
+      </p>
+    </FormModal>
   );
 }
 
@@ -169,47 +118,38 @@ export function CherryPickDialog({
   const switching = branches.some(
     (candidate) => candidate.name === branch && !candidate.current,
   );
-  const { working, submit } = useSubmit(
-    () => cherryPick(commit.hash, branch),
-    onDismiss,
-  );
 
   return (
-    <ActionModal
+    <FormModal
       title="Cherry-pick commit"
+      submitLabel="Cherry-pick"
+      workingLabel="Cherry-picking…"
+      ready={branch !== ""}
+      onSubmit={() => cherryPick(commit.hash, branch)}
       onDismiss={onDismiss}
-      actions={[
-        {
-          label: working ? "Cherry-picking…" : "Cherry-pick",
-          primary: true,
-          disabled: branch === "" || working,
-          onClick: () => void submit(),
-        },
-      ]}
+      className="commit-dialog"
     >
-      <div className="commit-dialog">
-        <CommitLine commit={commit} />
-        <label>
-          Onto branch
-          <select
-            value={branch}
-            onChange={(event) => setBranch(event.target.value)}
-          >
-            {branches.map((candidate) => (
-              <option key={candidate.name} value={candidate.name}>
-                {candidate.name}
-                {candidate.current ? " (current)" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <p className="hint">
-          {switching
-            ? `Gitizen switches to ${branch} and adds a copy of this commit there. Commit or stash your changes first. `
-            : "A copy of this commit is added on top of the current branch. "}
-          If it conflicts, you can resolve or abort it.
-        </p>
-      </div>
-    </ActionModal>
+      <CommitLine commit={commit} />
+      <label>
+        Onto branch
+        <select
+          value={branch}
+          onChange={(event) => setBranch(event.target.value)}
+        >
+          {branches.map((candidate) => (
+            <option key={candidate.name} value={candidate.name}>
+              {candidate.name}
+              {candidate.current ? " (current)" : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="hint">
+        {switching
+          ? `Gitizen switches to ${branch} and adds a copy of this commit there. Commit or stash your changes first. `
+          : "A copy of this commit is added on top of the current branch. "}
+        If it conflicts, you can resolve or abort it.
+      </p>
+    </FormModal>
   );
 }

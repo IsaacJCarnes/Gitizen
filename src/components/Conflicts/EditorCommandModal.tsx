@@ -1,31 +1,16 @@
-import { useState } from "react";
-import ActionModal from "../common/ActionModal";
-
-interface EditorCommandModalProps {
-  /** The command saved now ("" when none is set). */
-  initialCommand: string;
-  /** Called with the trimmed command when the user saves. */
-  onSave: (command: string) => void;
-  onDismiss: () => void;
-}
+import CommandModal, { type CommandSetupProps } from "../common/CommandModal";
 
 /**
  * Sets the external tool that opens conflicted files. Empty falls back to
  * git's configured merge tool, or the system text editor.
  */
-export default function EditorCommandModal({
-  initialCommand,
-  onSave,
-  onDismiss,
-}: EditorCommandModalProps): React.JSX.Element {
-  const [command, setCommand] = useState(initialCommand);
-  const save = (): void => onSave(command.trim());
-
+export default function EditorCommandModal(props: CommandSetupProps): React.JSX.Element {
   return (
-    <ActionModal
+    <CommandModal
+      {...props}
       title="External merge tool"
-      onDismiss={onDismiss}
-      actions={[{ label: "Save", primary: true, onClick: save }]}
+      label="External tool command"
+      placeholder="code {file}"
     >
       <p>
         Enter a command to open conflicted files. Use <code>{"{file}"}</code> for the file path;
@@ -35,21 +20,6 @@ export default function EditorCommandModal({
         Leave blank to use Git's configured merge tool, or your system text editor if none is
         set.
       </p>
-      <input
-        type="text"
-        className="editor-command-input"
-        aria-label="External tool command"
-        placeholder="code {file}"
-        value={command}
-        autoFocus
-        onChange={(event) => setCommand(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            save();
-          }
-        }}
-      />
-    </ActionModal>
+    </CommandModal>
   );
 }

@@ -70,9 +70,9 @@ fn could_not_run(error: std::io::Error) -> String {
     format!("Could not run git (is it installed and on PATH?): {error}")
 }
 
-/// stdout on success, otherwise git's own message: stderr, or stdout when
-/// stderr is empty (as for `git commit` with nothing to commit).
-fn into_result(output: Output) -> Result<Vec<u8>, String> {
+/// stdout on success, otherwise the program's own message: stderr, or stdout
+/// when stderr is empty (as for `git commit` with nothing to commit).
+pub(crate) fn into_result(output: Output) -> Result<Vec<u8>, String> {
     if output.status.success() {
         return Ok(output.stdout);
     }
@@ -82,13 +82,16 @@ fn into_result(output: Output) -> Result<Vec<u8>, String> {
     Err(message.trim().to_string())
 }
 
-/// Stops Windows from flashing a console window for every git call.
+/// Stops Windows from flashing a console window for every git call (and
+/// every other program Gitizen runs in the background).
 #[cfg(windows)]
-fn hide_console_window(command: &mut Command) {
+pub(crate) fn hide_console_window(command: &mut Command) -> &mut Command {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    command.creation_flags(CREATE_NO_WINDOW);
+    command.creation_flags(CREATE_NO_WINDOW)
 }
 
 #[cfg(not(windows))]
-fn hide_console_window(_command: &mut Command) {}
+pub(crate) fn hide_console_window(command: &mut Command) -> &mut Command {
+    command
+}

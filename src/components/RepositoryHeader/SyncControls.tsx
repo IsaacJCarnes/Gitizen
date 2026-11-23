@@ -24,6 +24,7 @@ export default function SyncControls(): React.JSX.Element | null {
   const detached = status.branch === null;
   const button = (action: SyncAction, label: string, title: string, count?: number) => (
     <button
+      // Pull and push work on a branch; fetch works anywhere.
       disabled={busy || (detached && action !== "fetch")}
       // A non-zero count makes it the obvious next step.
       className={count ? "primary" : undefined}
@@ -59,14 +60,14 @@ export default function SyncControls(): React.JSX.Element | null {
       <>
         {button("fetch", "Fetch", `Download new commits from ${status.upstream}`)}
         {button("pull", "Pull ↓", `Pull ${status.upstream} into this branch`, status.behind)}
-        {needsForcePush
-          ? button(
-              "push",
-              "Force push ↑",
-              `Replace ${status.upstream} with this branch (refused if someone else pushed since)`,
-              status.ahead,
-            )
-          : button("push", "Push ↑", `Push this branch to ${status.upstream}`, status.ahead)}
+        {button(
+          "push",
+          needsForcePush ? "Force push ↑" : "Push ↑",
+          needsForcePush
+            ? `Replace ${status.upstream} with this branch (refused if someone else pushed since)`
+            : `Push this branch to ${status.upstream}`,
+          status.ahead,
+        )}
       </>
     );
   }

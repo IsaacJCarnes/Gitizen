@@ -10,11 +10,10 @@ use std::process::{Command, Stdio};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
-use crate::ai_commit::{self, AppSettings, MAX_DIFF_BYTES, TIMEOUT};
-use crate::git::repository::OpenRepository;
+use crate::ai_commit::{run_shell_command, shell, AppSettings, MAX_DIFF_BYTES, TIMEOUT};
+use crate::git::repository::{assert_hash, current_branch, Repo};
 use crate::git::runner::{git_command, run_git, run_git_bytes};
-
-type Repo<'a> = State<'a, OpenRepository>;
+use crate::util::{blocking, unique_temp_dir};
 
 /// An operation that is in progress because it stopped part way, usually
 /// on a conflict.
@@ -25,6 +24,18 @@ pub enum Operation {
     CherryPick,
     Rebase,
     Revert,
+}
+
+impl Operation {
+    /// The git command that runs it, which also takes `--continue` and `--abort`.
+    fn git_name(self) -> &'static str {
+        match self {
+            Operation::Merge => "merge",
+            Operation::CherryPick => "cherry-pick",
+            Operation::Rebase => "rebase",
+            Operation::Revert => "revert",
+        }
+    }
 }
 
 /// A file git couldn't merge by itself.
@@ -82,12 +93,18 @@ fn conflicts_in(dir: &Path) -> Result<ConflictState, String> {
     Ok(ConflictState { operation, files, message, incoming, current })
 }
 
+/// Where `name` (e.g. "MERGE_HEAD") is in the git folder. `--git-path`
+/// resolves inside worktrees and custom git dirs too; the printed path is
+/// relative to `dir` (or absolute), so it is joined on.
+fn git_file(dir: &Path, name: &str) -> Option<PathBuf> {
+    run_git(dir, ["rev-parse", "--git-path", name]).ok().map(|path| dir.join(path.trim()))
+}
+
 /// Names the incoming and current sides of a stopped operation.
 fn branch_names(dir: &Path, operation: Operation) -> (Option<String>, Option<String>) {
-    // Reads a file from the git folder (e.g. MERGE_HEAD), trimmed.
+    // The first line of a file in the git folder (e.g. MERGE_HEAD), trimmed.
     let read = |name: &str| {
-        let path = run_git(dir, ["rev-parse", "--git-path", name]).ok()?;
-        let text = std::fs::read_to_string(dir.join(path.trim())).ok()?;
+        let text = std::fs::read_to_string(git_file(dir, name)?).ok()?;
         let first = text.lines().next()?.trim().to_string();
         (!first.is_empty()).then_some(first)
     };
@@ -103,11 +120,9 @@ fn branch_names(dir: &Path, operation: Operation) -> (Option<String>, Option<Str
             rebase_file("head-name").map(|name| name.trim_start_matches("refs/heads/").to_string()),
         ),
     };
-    let current = current.or_else(|| {
-        run_git(dir, ["symbolic-ref", "--short", "--quiet", "HEAD"])
-            .or_else(|_| run_git(dir, ["rev-parse", "--short", "HEAD"]))
-            .ok()
-            .map(|name| name.trim().to_string())
+    // Otherwise the checked-out branch, or the short hash of a detached HEAD.
+    let current = current.or_else(|| current_branch(dir)).or_else(|| {
+        run_git(dir, ["rev-parse", "--short", "HEAD"]).ok().map(|hash| hash.trim().to_string())
     });
     let incoming = incoming_hash.map(|hash| commit_name(dir, &hash, current.as_deref()));
     (incoming, current)
@@ -117,7 +132,7 @@ fn branch_names(dir: &Path, operation: Operation) -> (Option<String>, Option<Str
 /// points at it other than `current`, else git's name relative to a branch
 /// ("side~2"), else its short hash.
 fn commit_name(dir: &Path, hash: &str, current: Option<&str>) -> String {
-    let Ok(hash) = crate::git::repository::assert_hash(hash) else {
+    let Ok(hash) = assert_hash(hash) else {
         return hash.to_string();
     };
     let pointing = run_git(
@@ -139,8 +154,7 @@ fn commit_name(dir: &Path, hash: &str, current: Option<&str>) -> String {
 /// `MERGE_MSG`, which merge, cherry-pick and revert write for the commit
 /// that finishes them, minus git's "#" comment lines.
 fn prepared_message(dir: &Path) -> Option<String> {
-    let path = run_git(dir, ["rev-parse", "--git-path", "MERGE_MSG"]).ok()?;
-    let text = std::fs::read_to_string(dir.join(path.trim())).ok()?;
+    let text = std::fs::read_to_string(git_file(dir, "MERGE_MSG")?).ok()?;
     let message = text
         .lines()
         .filter(|line| !line.starts_with('#'))
@@ -188,13 +202,7 @@ fn has_conflict_markers(text: &str) -> bool {
 /// Which operation is in progress, from the marker files git keeps in the
 /// git folder while one is stopped.
 fn operation_in(dir: &Path) -> Option<Operation> {
-    // `--git-path` resolves inside worktrees and custom git dirs too; the
-    // printed path is relative to `dir` (or absolute), so join it on.
-    let exists = |name: &str| {
-        run_git(dir, ["rev-parse", "--git-path", name])
-            .map(|path| dir.join(path.trim()).exists())
-            .unwrap_or(false)
-    };
+    let exists = |name: &str| git_file(dir, name).is_some_and(|path| path.exists());
     // A rebase replays commits as cherry-picks, so it is checked first.
     if exists("rebase-merge") || exists("rebase-apply") {
         Some(Operation::Rebase)
@@ -270,17 +278,14 @@ fn merge_from_index(dir: &Path, path: &str) -> Result<(String, bool), String> {
         return Ok((String::new(), true));
     }
 
-    let temp = std::env::temp_dir().join(format!(
-        "gitizen-merge-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos())
-    ));
-    std::fs::create_dir_all(&temp).map_err(|error| error.to_string())?;
+    // merge-file only reads files, so the three stages go to a temp folder.
+    let temp = unique_temp_dir("merge")?;
     let write = |name: &str, bytes: &[u8]| -> Result<String, String> {
         let file = temp.join(name);
         std::fs::write(&file, bytes).map_err(|error| error.to_string())?;
         Ok(file.to_string_lossy().into_owned())
     };
+    // A closure so `?` inside it can't skip removing the temp folder below.
     let result = (|| {
         let (current, base, incoming) =
             (write("current", &current)?, write("base", &base)?, write("incoming", &incoming)?);
@@ -373,10 +378,9 @@ fn continue_in(dir: &Path) -> Result<(), String> {
         return Err("Resolve every conflicted file first.".into());
     }
     let result = match operation_in(dir).ok_or("Nothing is in progress")? {
+        // `merge --continue` would do the same, but needs git 2.12+.
         Operation::Merge => run_git(dir, ["commit", "--no-edit"]),
-        Operation::CherryPick => run_git(dir, ["cherry-pick", "--continue"]),
-        Operation::Rebase => run_git(dir, ["rebase", "--continue"]),
-        Operation::Revert => run_git(dir, ["revert", "--continue"]),
+        operation => run_git(dir, [operation.git_name(), "--continue"]),
     };
     unless_conflicted(dir, result.map(drop))
 }
@@ -389,13 +393,8 @@ pub async fn abort_operation(repo: Repo<'_>) -> Result<(), String> {
 }
 
 fn abort_in(dir: &Path) -> Result<(), String> {
-    let command = match operation_in(dir).ok_or("Nothing is in progress")? {
-        Operation::Merge => "merge",
-        Operation::CherryPick => "cherry-pick",
-        Operation::Rebase => "rebase",
-        Operation::Revert => "revert",
-    };
-    run_git(dir, [command, "--abort"]).map(drop)
+    let operation = operation_in(dir).ok_or("Nothing is in progress")?;
+    run_git(dir, [operation.git_name(), "--abort"]).map(drop)
 }
 
 const RESOLVE_PROMPT: &str = "The file below has git conflicts: each conflict is a block \
@@ -404,7 +403,25 @@ branch's version first, then =======, then the incoming version. Resolve every c
 keeping the intent of both sides where they don't contradict. Reply with only the complete \
 resolved file: no commentary, no code fences, and no conflict markers.";
 
-/// Asks the saved AI command to resolve one conflicted file and returns its
+/// The saved AI resolve command, or "" when none is set up. It is separate
+/// from the commit message command, so each can use its own tool or model.
+#[tauri::command]
+pub async fn ai_resolve_command(app: AppHandle, state: State<'_, AppSettings>) -> Result<String, String> {
+    Ok(state.read(&app)?.ai_resolve_command)
+}
+
+/// Saves the AI resolve command (trimmed; "" clears it) and returns what was saved.
+#[tauri::command]
+pub async fn set_ai_resolve_command(
+    app: AppHandle,
+    state: State<'_, AppSettings>,
+    command: String,
+) -> Result<String, String> {
+    let saved = state.update(&app, |settings| settings.ai_resolve_command = command.trim().to_string())?;
+    Ok(saved.ai_resolve_command)
+}
+
+/// Asks the saved AI resolve command to resolve one conflicted file and returns its
 /// answer. Nothing is written: the conflict editor shows it in the output
 /// for review, and Save writes it.
 #[tauri::command]
@@ -415,17 +432,9 @@ pub async fn ai_resolve_conflict(
     path: String,
 ) -> Result<String, String> {
     let dir = repo.require()?;
-    let command = {
-        let _guard = state.lock()?;
-        ai_commit::load(&app)?.ai_commit_command
-    };
-    if command.is_empty() {
-        return Err("No AI command is set up yet".to_string());
-    }
-    // The AI can take minutes; keep it off the async runtime's workers.
-    tauri::async_runtime::spawn_blocking(move || ai_resolve_in(&dir, &path, &command))
-        .await
-        .map_err(|error| error.to_string())?
+    let command = state.ai_command(&app, |settings| settings.ai_resolve_command)?;
+    // The AI can take minutes; other git calls keep answering meanwhile.
+    blocking(move || ai_resolve_in(&dir, &path, &command)).await
 }
 
 fn ai_resolve_in(dir: &Path, path: &str, command: &str) -> Result<String, String> {
@@ -439,17 +448,12 @@ fn ai_resolve_in(dir: &Path, path: &str, command: &str) -> Result<String, String
     if !has_conflict_markers(&versions.merged) {
         return Err(format!("{path} has no conflicting lines to resolve"));
     }
-    let operation = match operation_in(dir) {
-        Some(Operation::Merge) | None => "merge",
-        Some(Operation::CherryPick) => "cherry-pick",
-        Some(Operation::Rebase) => "rebase",
-        Some(Operation::Revert) => "revert",
-    };
+    let operation = operation_in(dir).map_or("merge", Operation::git_name);
     let prompt = format!(
         "{RESOLVE_PROMPT}\n\nThe conflicts come from a {operation}.\n\nFile: {path}\n\n{}",
         versions.merged
     );
-    let output = ai_commit::run_shell_command(dir, command, &prompt, TIMEOUT)?;
+    let output = run_shell_command(dir, command, &prompt, TIMEOUT)?;
     clean_resolution(&output, versions.merged.ends_with('\n'))
 }
 
@@ -489,8 +493,7 @@ fn clean_resolution(output: &str, final_newline: bool) -> Result<String, String>
 /// The external tool command for conflicted files, or "" when none is set.
 #[tauri::command]
 pub async fn editor_command(app: AppHandle, state: State<'_, AppSettings>) -> Result<String, String> {
-    let _guard = state.lock()?;
-    Ok(ai_commit::load(&app)?.editor_command)
+    Ok(state.read(&app)?.editor_command)
 }
 
 /// Saves the external tool command (trimmed; "" falls back to git's merge
@@ -501,11 +504,8 @@ pub async fn set_editor_command(
     state: State<'_, AppSettings>,
     command: String,
 ) -> Result<String, String> {
-    let _guard = state.lock()?;
-    let mut settings = ai_commit::load(&app)?;
-    settings.editor_command = command.trim().to_string();
-    ai_commit::save(&app, &settings)?;
-    Ok(settings.editor_command)
+    let saved = state.update(&app, |settings| settings.editor_command = command.trim().to_string())?;
+    Ok(saved.editor_command)
 }
 
 /// Which external tool `open_in_merge_tool` used.
@@ -531,28 +531,21 @@ pub async fn open_in_merge_tool(
 ) -> Result<ExternalTool, String> {
     let dir = repo.require()?;
     let file = require_conflicted(&dir, &path)?;
-    let command = {
-        let _guard = state.lock()?;
-        ai_commit::load(&app)?.editor_command
-    };
+    let command = state.read(&app)?.editor_command;
     let merge_tool = run_git(&dir, ["config", "--get", "merge.tool"]).unwrap_or_default();
     if command.is_empty() && !merge_tool.trim().is_empty() {
-        // The tool runs until its window is closed, so wait off the async
-        // workers. keepBackup=false stops it leaving "*.orig" files behind.
-        return tauri::async_runtime::spawn_blocking(move || {
-            run_git(
-                &dir,
-                ["-c", "mergetool.keepBackup=false", "mergetool", "--no-prompt", "--", path.as_str()],
-            )
-            .map(|_| ExternalTool::MergeTool)
+        // The tool runs until its window is closed, so it is waited for on a
+        // blocking thread. keepBackup=false stops it leaving "*.orig" files.
+        return blocking(move || {
+            let args = ["-c", "mergetool.keepBackup=false", "mergetool", "--no-prompt", "--", path.as_str()];
+            run_git(&dir, args).map(|_| ExternalTool::MergeTool)
         })
-        .await
-        .map_err(|error| error.to_string())?;
+        .await;
     }
     let mut editor = if command.is_empty() {
         default_editor(&file)
     } else {
-        ai_commit::shell(&editor_command_line(&command, &file))
+        shell(&editor_command_line(&command, &file))
     };
     let mut child = editor
         .current_dir(&dir)
@@ -613,24 +606,12 @@ fn default_editor(file: &Path) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn git(dir: &Path, args: &[&str]) -> String {
-        run_git(dir, args).unwrap()
-    }
+    use crate::util::test_support::{git, new_repo};
 
     /// A repository whose `main` and `side` branches both changed the middle
     /// line of `a.txt` (and `side` deleted `gone.txt`, which main edited).
     fn diverged_repo() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "gitizen-conflicts-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        git(&dir, &["init", "-q", "-b", "main"]);
-        git(&dir, &["config", "user.name", "Test"]);
-        git(&dir, &["config", "user.email", "test@example.com"]);
-        git(&dir, &["config", "core.autocrlf", "false"]);
+        let dir = new_repo("conflicts");
         let commit = |files: &[(&str, Option<&str>)], message: &str| {
             for (name, text) in files {
                 match text {

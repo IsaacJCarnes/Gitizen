@@ -47,3 +47,11 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* A one-line command typed into a modal, e.g. the AI command. */
+.action-modal .command-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+}

@@ -26,15 +26,13 @@ export function githubCommitPage(
   upstream: string | undefined,
   hash: string,
 ): string | undefined {
-  const tracked = upstream && remotes.find((remote) => upstream.startsWith(`${remote.name}/`));
-  const ordered = [
-    ...(tracked ? [tracked] : []),
-    ...remotes.filter((remote) => remote.name === "origin"),
-    ...remotes,
-  ];
-  for (const remote of ordered) {
-    const page = githubRepoPage(remote.url);
-    if (page) return `${page}/commit/${hash}`;
-  }
-  return undefined;
+  // Ranks each remote: 0 the tracked one, 1 origin, 2 the rest. `sort` is
+  // stable, so remotes of equal rank keep git's order.
+  const rank = (remote: Remote): number =>
+    upstream?.startsWith(`${remote.name}/`) ? 0 : remote.name === "origin" ? 1 : 2;
+  const page = [...remotes]
+    .sort((a, b) => rank(a) - rank(b))
+    .map((remote) => githubRepoPage(remote.url))
+    .find((candidate) => candidate !== undefined);
+  return page && `${page}/commit/${hash}`;
 }

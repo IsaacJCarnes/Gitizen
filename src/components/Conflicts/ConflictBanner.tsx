@@ -22,6 +22,7 @@ export default function ConflictBanner(): React.JSX.Element | null {
   return (
     <div className="conflict-banner">
       <span>
+        {/* e.g. "Cherry-pick in progress" */}
         <b>{name[0].toUpperCase() + name.slice(1)} in progress</b>
         {incoming && current && (
           <span className="conflict-branches" title={`${incoming} into ${current}`}>
