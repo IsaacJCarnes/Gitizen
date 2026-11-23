@@ -10,9 +10,9 @@ interface AiCommandModalProps {
 }
 
 /**
- * Sets up the command line tool that writes commit messages: Gitizen pipes
- * a prompt plus the staged diff to its stdin and reads the message from its
- * stdout.
+ * Sets up the AI command line tool: Gitizen pipes a prompt (plus the staged
+ * diff, or a conflicted file) to its stdin and reads the commit message (or
+ * the resolved file) from its stdout.
  */
 export default function AiCommandModal({
   initialCommand,
@@ -24,14 +24,15 @@ export default function AiCommandModal({
 
   return (
     <ActionModal
-      title="Set up AI commit messages"
+      title="Set up AI merge resolve"
       onDismiss={onDismiss}
       actions={[{ label: "Save", primary: true, onClick: save }]}
     >
       <p>
-        Enter a command that reads a prompt on stdin and prints a commit message,
-        for example <code>claude -p</code>. It runs in the repository folder, the
-        same way it would in a terminal.
+        Enter a command that reads stdin and prints a response, such as{" "}
+        <code>claude -p</code>. It runs in the repository folder to generate
+        commit messages and resolve conflicts. For commits, it fills in only the
+        summary and description. 
       </p>
       <input
         type="text"
@@ -48,7 +49,7 @@ export default function AiCommandModal({
           }
         }}
       />
-      <p>Gitizen only fills in the summary and description. Nothing is staged or committed for you.</p>
+      <small>Nothing will be staged or committed.</small>
     </ActionModal>
   );
 }

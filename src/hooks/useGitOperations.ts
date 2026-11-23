@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   CommitFile,
+  ConflictState,
   FileChange,
   FileDiff,
   GitBranch,
   GitCommit,
   GitStatus,
   Remote,
+  Resolution,
 } from "../../shared/gitTypes";
 import { gitizen } from "../api/gitizen";
 import { toAppError, type AppError } from "../utils/errors";
@@ -106,6 +108,22 @@ export interface GitOperations {
   createTag: (name: string, hash: string, message: string) => Promise<boolean>;
   /** Cherry-picks `hash` onto `branch` (switching to it). Resolves to true on success. */
   cherryPick: (hash: string, branch: string) => Promise<boolean>;
+  /** The stopped merge, cherry-pick, rebase or revert, and its unresolved files. */
+  conflicts: ConflictState;
+  /**
+   * Conflicted file open in the conflict editor, or null. Set to the first
+   * conflicted file by itself when an operation stops on conflicts.
+   */
+  selectedConflict: string | null;
+  setSelectedConflict: (path: string | null) => void;
+  /** Takes one side for a conflicted file, or keeps it as saved ("asIs"), and stages it. */
+  resolveConflict: (path: string, resolution: Resolution) => Promise<void>;
+  /** Writes the conflict editor's output to the file (unstaged). Resolves to true on success. */
+  saveConflictResolution: (path: string, text: string) => Promise<boolean>;
+  /** Opens the file in the external tool, refreshing after a merge tool closes. */
+  openInMergeTool: (path: string) => Promise<void>;
+  continueOperation: () => Promise<void>;
+  abortOperation: () => Promise<void>;
   /** True while the AI command is writing a commit message. */
   generatingMessage: boolean;
   /**
@@ -127,6 +145,13 @@ export interface GitOperationsOptions {
 }
 
 const NO_DIFF: FileDiff = { diff: "", stagedLines: [] };
+const NO_CONFLICTS: ConflictState = {
+  operation: null,
+  files: [],
+  message: null,
+  incoming: null,
+  current: null,
+};
 
 /**
  * Runs `request` and passes its result to `onResult` (or its error to
@@ -167,9 +192,17 @@ export function useGitOperations({
   const [branches, setBranches] = useState<GitBranch[]>([]);
   const [remotes, setRemotes] = useState<Remote[]>([]);
   const [syncing, setSyncing] = useState<SyncAction | null>(null);
+  const [conflicts, setConflicts] = useState<ConflictState>(NO_CONFLICTS);
+  const [selectedConflict, setSelectedConflict] = useState<string | null>(null);
+  // The operation seen by the last refresh, to notice one starting.
+  const lastOperation = useRef<ConflictState["operation"]>(null);
   const [selectedFile, setSelectedFile] = useState<FileChange | null>(null);
   const [{ diff, stagedLines }, setFileDiff] = useState(NO_DIFF);
   const [commitSummary, setCommitSummary] = useState("");
+  // The summary as typed, readable from `refresh` without re-creating it on
+  // every keystroke.
+  const summaryRef = useRef(commitSummary);
+  summaryRef.current = commitSummary;
   const [commitDescription, setCommitDescription] = useState("");
   const [error, setError] = useState<AppError | null>(null);
   const [generatingMessage, setGeneratingMessage] = useState(false);
@@ -200,23 +233,44 @@ export function useGitOperations({
     setCommitDiff("");
   }, []);
 
-  /** Reloads status, history, branches and remotes together. */
+  /** Reloads status, history, branches, remotes and conflicts together. */
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const [nextStatus, nextCommits, nextBranches, nextRemotes] = await Promise.all([
-        gitizen.status(),
-        gitizen.log(),
-        gitizen.branches(),
-        gitizen.remotes(),
-      ]);
+      const [nextStatus, nextCommits, nextBranches, nextRemotes, nextConflicts] =
+        await Promise.all([
+          gitizen.status(),
+          gitizen.log(),
+          gitizen.branches(),
+          gitizen.remotes(),
+          gitizen.conflicts(),
+        ]);
       setStatus(nextStatus);
       setCommits(nextCommits);
       setBranches(nextBranches);
       setRemotes(nextRemotes);
+      setConflicts(nextConflicts);
+      // Open the first conflicted file when an operation has just stopped (or
+      // is found stopped on opening a repository), and close it once finished.
+      if (nextConflicts.operation !== lastOperation.current) {
+        setSelectedConflict(nextConflicts.files[0]?.path ?? null);
+        if (nextConflicts.operation) {
+          // Show the working tree, where the conflicted files are listed.
+          selectCommit(null);
+          // Start the commit form with git's message for finishing it
+          // ("Merge branch 'x'"), unless the user is already writing one.
+          const prepared = nextConflicts.message;
+          if (prepared && !summaryRef.current.trim()) {
+            const [first, ...rest] = prepared.split("\n");
+            setCommitSummary(first);
+            setCommitDescription(rest.join("\n").trim());
+          }
+        }
+        lastOperation.current = nextConflicts.operation;
+      }
     } catch (refreshError) {
       reportError(refreshError);
     }
-  }, [reportError]);
+  }, [reportError, selectCommit]);
 
   /** Runs a git command, then refreshes; any failure is shown as the error. */
   const runOperation = useCallback(
@@ -239,6 +293,7 @@ export function useGitOperations({
   const showRepository = useCallback(
     async (directory: string): Promise<void> => {
       setRepo(directory);
+      lastOperation.current = null;
       setAmending(false);
       setNeedsForcePush(false);
       pendingForcePush.current = false;
@@ -293,13 +348,16 @@ export function useGitOperations({
 
     await runOperation(async () => {
       await gitizen.commit(message, amending);
+      // Committing finishes a merge, cherry-pick or revert by itself; a
+      // rebase then moves on to its next commit.
+      if (conflicts.operation === "rebase") await gitizen.continueOperation();
       if (amending && pendingForcePush.current) setNeedsForcePush(true);
       pendingForcePush.current = false;
       setCommitSummary("");
       setCommitDescription("");
       setAmending(false);
     });
-  }, [commitSummary, commitDescription, amending, runOperation]);
+  }, [commitSummary, commitDescription, amending, conflicts.operation, runOperation]);
 
   const startAmend = useCallback(
     async (commit: GitCommit, branch?: string): Promise<void> => {
@@ -446,6 +504,34 @@ export function useGitOperations({
     [succeeds],
   );
 
+  const resolveConflict = useCallback(
+    (path: string, resolution: Resolution): Promise<void> =>
+      runOperation(() => gitizen.resolveConflict(path, resolution)),
+    [runOperation],
+  );
+
+  const saveConflictResolution = useCallback(
+    (path: string, text: string) => succeeds(() => gitizen.saveConflictResolution(path, text)),
+    [succeeds],
+  );
+
+  // A merge tool is waited for and may stage the file itself; an editor
+  // returns at once. Refreshing covers both.
+  const openInMergeTool = useCallback(
+    (path: string): Promise<void> => runOperation(() => gitizen.openInMergeTool(path)),
+    [runOperation],
+  );
+
+  const continueOperation = useCallback(
+    (): Promise<void> => runOperation(gitizen.continueOperation),
+    [runOperation],
+  );
+
+  const abortOperation = useCallback(
+    (): Promise<void> => runOperation(gitizen.abortOperation),
+    [runOperation],
+  );
+
   const stageLines = useCallback(
     (lines: number[], staged: boolean): Promise<void> => {
       if (!selectedFile || lines.length === 0 || hideWhitespace) {
@@ -564,6 +650,14 @@ export function useGitOperations({
     createBranch,
     createTag,
     cherryPick,
+    conflicts,
+    selectedConflict,
+    setSelectedConflict,
+    resolveConflict,
+    saveConflictResolution,
+    openInMergeTool,
+    continueOperation,
+    abortOperation,
     generatingMessage,
     generateCommitMessage,
     stageLines,

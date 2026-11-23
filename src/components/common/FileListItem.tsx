@@ -11,6 +11,10 @@ interface FileListItemProps {
   title?: string;
   /** Optional control before the status code, e.g. a stage checkbox. */
   leading?: ReactNode;
+  /** Optional control after the path, e.g. a Mark resolved button. */
+  trailing?: ReactNode;
+  /** Extra class for the row, e.g. "conflicted". */
+  className?: string;
 }
 
 /**
@@ -24,14 +28,18 @@ export default function FileListItem({
   onSelect,
   title,
   leading,
+  trailing,
+  className,
 }: FileListItemProps): React.JSX.Element {
+  const classes = [selected ? "on" : "", className ?? ""].filter(Boolean).join(" ");
   return (
-    <li className={selected ? "on" : ""}>
+    <li className={classes}>
       {leading}
       <button className="name" title={title} onClick={onSelect}>
         <span className={`code c-${code}`}>{code}</span>
         {path}
       </button>
+      {trailing}
     </li>
   );
 }

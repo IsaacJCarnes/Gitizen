@@ -12,6 +12,7 @@ use std::process::{Command, Stdio};
 use serde::Serialize;
 use tauri::State;
 
+use crate::conflicts::unless_conflicted;
 use crate::git::repository::OpenRepository;
 use crate::git::runner::run_git;
 
@@ -143,7 +144,8 @@ pub async fn fetch(repo: Repo<'_>) -> Result<(), String> {
 
 /// Pulls the current branch's upstream into it. Without a `pull.rebase`
 /// setting this merges, as GitHub Desktop does; git's own settings win
-/// otherwise.
+/// otherwise. Stopping on conflicts succeeds, leaving them to the conflict
+/// popup.
 #[tauri::command]
 pub async fn pull(repo: Repo<'_>) -> Result<(), String> {
     let dir = repo.require()?;
@@ -161,7 +163,7 @@ fn pull_in(dir: &Path) -> Result<(), String> {
     if run_git(dir, ["config", "--get", "pull.rebase"]).is_err() {
         args.push("--no-rebase");
     }
-    run_git(dir, args).map(drop)
+    unless_conflicted(dir, run_git(dir, args).map(drop))
 }
 
 /// Pushes the current branch. A branch with an upstream goes to it; a new

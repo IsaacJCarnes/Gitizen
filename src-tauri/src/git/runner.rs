@@ -48,7 +48,9 @@ where
     Ok(String::from_utf8_lossy(&stdout).into_owned())
 }
 
-fn git_command<I, S>(dir: &Path, args: I) -> Command
+/// A `git` command in `dir` that never prompts or opens an editor, for
+/// callers that need the exit code or output themselves.
+pub(crate) fn git_command<I, S>(dir: &Path, args: I) -> Command
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,

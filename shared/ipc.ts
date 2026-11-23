@@ -8,11 +8,15 @@
  */
 import type {
   CommitFile,
+  ConflictState,
+  ConflictVersions,
+  ExternalTool,
   FileDiff,
   GitBranch,
   GitCommit,
   GitStatus,
   Remote,
+  Resolution,
 } from "./gitTypes";
 
 export const Command = {
@@ -50,6 +54,16 @@ export const Command = {
   CreateTag: "create_tag",
   CherryPick: "cherry_pick",
   OpenInBrowser: "open_in_browser",
+  Conflicts: "conflicts",
+  ResolveConflict: "resolve_conflict",
+  ContinueOperation: "continue_operation",
+  AbortOperation: "abort_operation",
+  AiResolveConflict: "ai_resolve_conflict",
+  ConflictVersions: "conflict_versions",
+  SaveConflictResolution: "save_conflict_resolution",
+  EditorCommand: "editor_command",
+  SetEditorCommand: "set_editor_command",
+  OpenInMergeTool: "open_in_merge_tool",
 } as const;
 
 export type CommandName = (typeof Command)[keyof typeof Command];
@@ -169,4 +183,31 @@ export interface GitizenApi {
   cherryPick(hash: string, branch: string): Promise<void>;
   /** Opens a https://github.com/ page in the default browser (other URLs are refused). */
   openInBrowser(url: string): Promise<void>;
+  /** The stopped merge, cherry-pick, rebase or revert (if any) and its unresolved files. */
+  conflicts(): Promise<ConflictState>;
+  /** Settles one conflicted file (our version, theirs, or as it is now) and stages it. */
+  resolveConflict(path: string, resolution: Resolution): Promise<void>;
+  /** Finishes the stopped operation once every file is resolved. */
+  continueOperation(): Promise<void>;
+  /** Abandons the stopped operation, restoring the state from before it began. */
+  abortOperation(): Promise<void>;
+  /**
+   * Has the saved AI command resolve one conflicted file and resolves to its
+   * answer, without writing anything. Rejects if the answer is empty or
+   * still has conflict markers.
+   */
+  aiResolveConflict(path: string): Promise<string>;
+  /** Both sides of a conflicted file merged with conflict markers, plus the file as it is now. */
+  conflictVersions(path: string): Promise<ConflictVersions>;
+  /** Writes `text` to a conflicted file (keeping its line endings), without staging it. */
+  saveConflictResolution(path: string, text: string): Promise<void>;
+  /** The external tool command for conflicted files, e.g. `code {file}`; "" when none is set. */
+  editorCommand(): Promise<string>;
+  /** Saves the external tool command (trimmed; "" clears it). Resolves to what was saved. */
+  setEditorCommand(command: string): Promise<string>;
+  /**
+   * Opens a conflicted file in the saved command, else git's `merge.tool`
+   * (waiting until it closes), else the system text editor.
+   */
+  openInMergeTool(path: string): Promise<ExternalTool>;
 }

@@ -23,11 +23,11 @@ use crate::git::runner::run_git;
 const FILE_NAME: &str = "settings.json";
 
 /// How long the command may run before Gitizen gives up on it.
-const TIMEOUT: Duration = Duration::from_secs(180);
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(180);
 
 /// The most diff text sent to the command; longer diffs are cut here so a
 /// huge change (or a committed build output) can't overflow the tool.
-const MAX_DIFF_BYTES: usize = 200_000;
+pub(crate) const MAX_DIFF_BYTES: usize = 200_000;
 
 const PROMPT: &str = "Write a git commit message for the staged changes below. \
 Reply with only the commit message: no commentary, no quotes and no code fences. \
@@ -39,10 +39,13 @@ of what changed and why, wrapped at 72 characters.";
 /// older or hand-edited files still load.
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
-struct Settings {
+pub(crate) struct Settings {
     /// Shell command that reads a prompt on stdin and prints a commit
-    /// message. Empty when not set up yet.
-    ai_commit_command: String,
+    /// message (also used to resolve merge conflicts). Empty when not set up yet.
+    pub(crate) ai_commit_command: String,
+    /// Shell command that opens a conflicted file for editing, with `{file}`
+    /// standing for its path. Empty means the system's plain text editor.
+    pub(crate) editor_command: String,
 }
 
 /// Serialises reads and writes of the settings file.
@@ -50,7 +53,7 @@ struct Settings {
 pub struct AppSettings(Mutex<()>);
 
 impl AppSettings {
-    fn lock(&self) -> Result<MutexGuard<'_, ()>, String> {
+    pub(crate) fn lock(&self) -> Result<MutexGuard<'_, ()>, String> {
         self.0.lock().map_err(|_| "Settings are unavailable".to_string())
     }
 }
@@ -69,7 +72,7 @@ fn file_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 /// A missing or unreadable file is the default settings, so a corrupt file
 /// never stops the app from working.
-fn load(app: &AppHandle) -> Result<Settings, String> {
+pub(crate) fn load(app: &AppHandle) -> Result<Settings, String> {
     let path = file_path(app)?;
     Ok(std::fs::read_to_string(path)
         .ok()
@@ -77,7 +80,7 @@ fn load(app: &AppHandle) -> Result<Settings, String> {
         .unwrap_or_default())
 }
 
-fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
+pub(crate) fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     let path = file_path(app)?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
@@ -177,7 +180,7 @@ fn parse_message(output: &str) -> Option<CommitMessage> {
 /// Runs `command` through the system shell in `dir`, writes `input` to its
 /// stdin and returns its stdout. A non-zero exit, or running past `timeout`,
 /// is an error carrying the command's own message.
-fn run_shell_command(
+pub(crate) fn run_shell_command(
     dir: &Path,
     command: &str,
     input: &str,
@@ -257,7 +260,7 @@ fn read_on_thread(mut pipe: impl Read + Send + 'static) -> std::thread::JoinHand
 /// `cmd /S /C "<command>"` on Windows: with /S, cmd strips just the outer
 /// quotes and runs the rest exactly as typed. No console window flashes up.
 #[cfg(windows)]
-fn shell(command: &str) -> Command {
+pub(crate) fn shell(command: &str) -> Command {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut shell = Command::new("cmd");
@@ -266,7 +269,7 @@ fn shell(command: &str) -> Command {
 }
 
 #[cfg(not(windows))]
-fn shell(command: &str) -> Command {
+pub(crate) fn shell(command: &str) -> Command {
     let mut shell = Command::new("sh");
     shell.args(["-c", command]);
     shell

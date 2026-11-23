@@ -1,0 +1,208 @@
+.conflict-editor {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.conflict-editor-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conflict-editor-tools button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 13px;
+}
+
+/* The merge tool button and its settings gear read as one control. */
+.conflict-tool {
+  display: inline-flex;
+}
+
+.conflict-tool button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+
+.conflict-tool button:last-child {
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+  padding-inline: 8px;
+}
+
+.conflict-spinner {
+  width: 11px;
+  height: 11px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: conflict-spin 0.8s linear infinite;
+}
+
+@keyframes conflict-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Both sides, scrolling above the output. */
+.conflict-sides {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font:
+    12.5px/1.5 ui-monospace,
+    Menlo,
+    Consolas,
+    monospace;
+}
+
+.conflict-columns-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  font: 600 12px system-ui, sans-serif;
+  color: var(--mute);
+}
+
+.conflict-columns-head span {
+  padding: 4px 16px;
+}
+
+.conflict-line {
+  display: flex;
+  align-items: center;
+  min-height: 19px;
+}
+
+.conflict-line .code {
+  flex: 1;
+  padding: 0 12px;
+  white-space: pre;
+}
+
+.conflict-common .conflict-line .code {
+  padding-left: 42px;
+  color: var(--mute);
+}
+
+.conflict-fold {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 0;
+  padding: 1px 42px;
+  background: var(--hunk);
+  color: var(--mute);
+  font-size: 12px;
+}
+
+.conflict-block {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 4px 0;
+  border-block: 1px solid var(--line);
+}
+
+.conflict-side {
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.conflict-side.current {
+  background: color-mix(in srgb, var(--hunk) 60%, transparent);
+  border-right: 1px solid var(--line);
+}
+
+.conflict-side.incoming {
+  background: color-mix(in srgb, #c7811a 10%, transparent);
+}
+
+.conflict-side input {
+  margin: 0 8px 0 14px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.conflict-side-empty {
+  padding: 0 14px;
+  font: italic 12px system-ui, sans-serif;
+  color: var(--mute);
+}
+
+.conflict-side .conflict-line {
+  cursor: pointer;
+}
+
+.conflict-side .conflict-line .code {
+  padding-left: 0;
+}
+
+.conflict-side .conflict-line.picked {
+  background: var(--add);
+}
+
+.conflict-output {
+  flex: 0 0 38%;
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  border-top: 2px solid var(--line);
+  background: var(--panel);
+}
+
+.conflict-output-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+}
+
+.conflict-output-head small {
+  color: var(--mute);
+}
+
+.conflict-output-picks {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.conflict-output-picks button {
+  padding: 2px 9px;
+  font-size: 12.5px;
+}
+
+.conflict-output textarea {
+  flex: 1;
+  margin: 0 16px 12px;
+  resize: none;
+  white-space: pre;
+  font:
+    12.5px/1.5 ui-monospace,
+    Menlo,
+    Consolas,
+    monospace;
+}
+
+.conflict-binary {
+  padding: 24px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.conflict-binary p {
+  flex-basis: 100%;
+  margin: 0 0 4px;
+}

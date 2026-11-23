@@ -2,9 +2,10 @@ import { useContext, createContext } from "react";
 
 /**
  * What the main panel shows: "history" is the commit graph, "diff" is the
- * file picked in the sidebar.
+ * file picked in the sidebar, "conflict" the conflict editor for the
+ * conflicted file picked in the sidebar.
  */
-export type RepoView = "history" | "diff";
+export type RepoView = "history" | "diff" | "conflict";
 
 /** UI state shared across components that isn't git data. */
 export interface AppData {

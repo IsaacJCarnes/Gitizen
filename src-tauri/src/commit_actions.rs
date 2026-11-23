@@ -7,6 +7,7 @@ use std::process::Command;
 
 use tauri::State;
 
+use crate::conflicts::unless_conflicted;
 use crate::git::repository::{assert_branch_name, assert_hash, OpenRepository};
 use crate::git::runner::run_git;
 
@@ -70,7 +71,8 @@ fn create_tag_in(dir: &Path, name: &str, hash: &str, message: &str) -> Result<()
 /// Applies the change made by `hash` as a new commit on `branch`, switching
 /// to that branch first when it isn't the current one (and staying there,
 /// as GitHub Desktop does). Switching needs a clean working tree, so local
-/// changes can't get mixed into the other branch.
+/// changes can't get mixed into the other branch. Stopping on conflicts
+/// succeeds, leaving them to the conflict popup.
 #[tauri::command]
 pub async fn cherry_pick(repo: Repo<'_>, hash: String, branch: String) -> Result<(), String> {
     cherry_pick_in(&repo.require()?, &hash, &branch)
@@ -89,7 +91,7 @@ fn cherry_pick_in(dir: &Path, hash: &str, branch: &str) -> Result<(), String> {
         }
         run_git(dir, ["checkout", branch])?;
     }
-    run_git(dir, ["cherry-pick", hash]).map(drop)
+    unless_conflicted(dir, run_git(dir, ["cherry-pick", hash]).map(drop))
 }
 
 /// Opens a GitHub page in the default browser. Only `https://github.com/`

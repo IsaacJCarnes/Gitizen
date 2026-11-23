@@ -1,0 +1,73 @@
+.conflict-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 8px 2px;
+  padding: 6px 8px;
+  border: 1px solid #c7811a;
+  border-radius: 6px;
+  background: color-mix(in srgb, #c7811a 10%, transparent);
+}
+
+.conflict-banner span {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+}
+
+.conflict-banner b {
+  color: #c7811a;
+  font-size: 13px;
+}
+
+.conflict-banner .conflict-branches {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conflict-banner small {
+  color: var(--mute);
+  font-size: 12px;
+}
+
+.conflict-banner button {
+  flex: none;
+  padding: 2px 9px;
+  font-size: 12.5px;
+}
+
+/* A conflicted file's row: amber "!" code and a Mark resolved button. */
+.file-change-list li.conflicted .code {
+  color: #c7811a;
+}
+
+.file-change-list li.conflicted .conflict-spacer {
+  flex: none;
+  width: 13px;
+}
+
+.file-change-list li.conflicted .mini {
+  flex: none;
+}
+
+.commit-blocked {
+  margin: 0;
+  color: #c7811a;
+  font-size: 12.5px;
+}
+
+.repository-header .conflict-button {
+  border-color: #c7811a;
+  color: #c7811a;
+  font-weight: 600;
+}
+
+.editor-command-input {
+  width: 100%;
+  margin-bottom: 8px;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+}

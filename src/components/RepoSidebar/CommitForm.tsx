@@ -2,6 +2,7 @@ import "./CommitForm.css";
 import { useEffect, useState } from "react";
 import { gitizen } from "../../api/gitizen";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
+import { OPERATION_NAME } from "../../utils/conflictText";
 import { pluralize } from "../../utils/format";
 import AiCommandModal from "./AiCommandModal";
 
@@ -19,6 +20,7 @@ export default function CommitForm(): React.JSX.Element {
     commitDescription,
     setCommitDescription,
     commitChanges,
+    conflicts,
     amending,
     cancelAmend,
     generatingMessage,
@@ -27,11 +29,19 @@ export default function CommitForm(): React.JSX.Element {
   } = useGitOperationsContext();
   // null until loaded from the backend; "" means not set up.
   const [aiCommand, setAiCommand] = useState<string | null>(null);
-  const [settingUp, setSettingUp] = useState<"change" | "generate" | null>(null);
+  const [settingUp, setSettingUp] = useState<"change" | "generate" | null>(
+    null,
+  );
   const stagedCount = status?.files.filter((file) => file.staged).length ?? 0;
-  // Amending may just reword the last commit, so it needs nothing staged.
+  // Committing is blocked until every conflict is resolved.
+  const conflictCount = conflicts.files.length;
+  // Amending may just reword the last commit, and finishing a merge may
+  // keep only the current side, so neither needs anything staged.
   const canCommit =
-    commitSummary.trim() !== "" && (stagedCount > 0 || amending) && !generatingMessage;
+    commitSummary.trim() !== "" &&
+    (stagedCount > 0 || amending || conflicts.operation !== null) &&
+    conflictCount === 0 &&
+    !generatingMessage;
 
   useEffect(() => {
     gitizen.aiCommitCommand().then(setAiCommand, () => setAiCommand(""));
@@ -39,7 +49,11 @@ export default function CommitForm(): React.JSX.Element {
 
   // Ctrl+Enter (Cmd+Enter on macOS) in either field commits.
   const commitOnCtrlEnter = (event: React.KeyboardEvent): void => {
-    if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && canCommit) {
+    if (
+      event.key === "Enter" &&
+      (event.ctrlKey || event.metaKey) &&
+      canCommit
+    ) {
       event.preventDefault();
       void commitChanges();
     }
@@ -71,7 +85,9 @@ export default function CommitForm(): React.JSX.Element {
         onKeyDown={commitOnCtrlEnter}
       />
       <textarea
-        placeholder={generatingMessage ? "Writing a commit message…" : "Description"}
+        placeholder={
+          generatingMessage ? "Writing a commit message…" : "Description"
+        }
         aria-label="Commit description"
         value={commitDescription}
         readOnly={generatingMessage}
@@ -81,12 +97,14 @@ export default function CommitForm(): React.JSX.Element {
       <div className="commit-generate">
         <button
           className="commit-generate-button"
-          disabled={stagedCount === 0 || generatingMessage || aiCommand === null}
+          disabled={
+            stagedCount === 0 || generatingMessage || aiCommand === null
+          }
           title={
             stagedCount === 0
               ? "Stage changes to generate a message for them"
               : aiCommand
-                ? `Write the message with ${aiCommand}`
+                ? `Write the message with AI`
                 : "Set up an AI command to write commit messages"
           }
           onClick={generate}
@@ -111,14 +129,30 @@ export default function CommitForm(): React.JSX.Element {
       </div>
       {amending ? (
         <div className="commit-amend">
-          <button className="primary" disabled={!canCommit} onClick={commitChanges}>
-            Amend last commit{stagedCount > 0 && ` (+${pluralize(stagedCount, "file")})`}
+          <button
+            className="primary"
+            disabled={!canCommit}
+            onClick={commitChanges}
+          >
+            Amend last commit
+            {stagedCount > 0 && ` (+${pluralize(stagedCount, "file")})`}
           </button>
           <button onClick={cancelAmend}>Cancel</button>
         </div>
       ) : (
-        <button className="primary" disabled={!canCommit} onClick={commitChanges}>
-          Commit {pluralize(stagedCount, "file")}
+        <button
+          className="primary"
+          disabled={!canCommit}
+          title={
+            conflictCount > 0
+              ? "Resolve every conflicted file first"
+              : undefined
+          }
+          onClick={commitChanges}
+        >
+          {conflicts.operation
+            ? `Commit ${OPERATION_NAME[conflicts.operation]}`
+            : `Commit ${pluralize(stagedCount, "file")}`}
         </button>
       )}
       {settingUp && (

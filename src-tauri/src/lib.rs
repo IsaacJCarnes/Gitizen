@@ -4,6 +4,7 @@
 mod ai_commit;
 mod commands;
 mod commit_actions;
+mod conflicts;
 mod git;
 mod recent_repos;
 mod remote;
@@ -55,6 +56,16 @@ pub fn run() {
             commit_actions::create_tag,
             commit_actions::cherry_pick,
             commit_actions::open_in_browser,
+            conflicts::conflicts,
+            conflicts::resolve_conflict,
+            conflicts::continue_operation,
+            conflicts::abort_operation,
+            conflicts::ai_resolve_conflict,
+            conflicts::conflict_versions,
+            conflicts::save_conflict_resolution,
+            conflicts::editor_command,
+            conflicts::set_editor_command,
+            conflicts::open_in_merge_tool,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Gitizen");
