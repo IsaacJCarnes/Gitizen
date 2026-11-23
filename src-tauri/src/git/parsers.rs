@@ -99,6 +99,7 @@ pub fn parse_name_status(output: &str) -> Vec<CommitFile> {
 pub fn parse_status(output: &str) -> GitStatus {
     let mut status = GitStatus {
         branch: None,
+        upstream: None,
         ahead: 0,
         behind: 0,
         files: Vec::new(),
@@ -157,8 +158,13 @@ fn parse_branch_header(header: &str, status: &mut GitStatus) {
         Some((names, tracking)) => (names, tracking.trim_end_matches(']')),
         None => (header, ""),
     };
-    let branch = names.split_once("...").map_or(names, |(local, _)| local);
+    // "<local>...<upstream>" when the branch tracks one, else just "<local>".
+    let (branch, upstream) = match names.split_once("...") {
+        Some((local, upstream)) => (local, Some(upstream.to_string())),
+        None => (names, None),
+    };
     status.branch = Some(branch.to_string());
+    status.upstream = upstream;
 
     for part in tracking.split(", ") {
         if let Some(count) = part.strip_prefix("ahead ") {
@@ -222,6 +228,7 @@ mod tests {
         let status = parse_status(output);
         assert_eq!(status.branch.as_deref(), Some("main"));
         assert_eq!((status.ahead, status.behind), (2, 1));
+        assert_eq!(status.upstream.as_deref(), Some("origin/main"));
         let summary: Vec<(&str, bool, &str)> = status
             .files
             .iter()
@@ -245,6 +252,7 @@ mod tests {
     #[test]
     fn parses_branch_headers() {
         assert_eq!(parse_status("## main\0").branch.as_deref(), Some("main"));
+        assert_eq!(parse_status("## main\0").upstream, None);
         assert_eq!(parse_status("## No commits yet on dev\0").branch.as_deref(), Some("dev"));
         assert_eq!(parse_status("## HEAD (no branch)\0").branch, None);
         let gone = parse_status("## main...origin/main [gone]\0");

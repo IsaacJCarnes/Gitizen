@@ -29,6 +29,8 @@ export interface FileDiff {
 export interface GitStatus {
   /** Current branch name, or null when HEAD is detached. */
   branch: string | null;
+  /** The branch it tracks, e.g. "origin/main"; absent when it tracks none. */
+  upstream?: string;
   ahead: number;
   behind: number;
   files: FileChange[];
@@ -56,6 +58,57 @@ export interface GitCommit {
   /** Author date in ISO 8601 format. */
   date: string;
 }
+
+/** A configured remote, e.g. `origin` and its fetch URL. */
+export interface Remote {
+  name: string;
+  url: string;
+}
+
+/** An operation that stopped part way, usually on a conflict. */
+export type Operation = "merge" | "cherryPick" | "rebase" | "revert";
+
+/** A file git couldn't merge by itself. */
+export interface ConflictFile {
+  path: string;
+  /** git's two-letter unmerged status: "UU" both changed, "AA" both added, "UD" deleted by them, "DU" deleted by us, and so on. */
+  code: string;
+  /** True while the file still has `<<<<<<<` / `>>>>>>>` markers. */
+  hasMarkers: boolean;
+}
+
+/** The repository's conflict state; `operation` is null when nothing is in progress. */
+export interface ConflictState {
+  operation: Operation | null;
+  /** Files still unresolved. */
+  files: ConflictFile[];
+  /** The commit message git prepared for finishing it (e.g. "Merge branch 'side'"), or null. */
+  message: string | null;
+  /** What is being brought in: a branch name, "side~2", or a short hash. Null when nothing is in progress. */
+  incoming: string | null;
+  /** The branch it is being brought into (the branch being rebased, for a rebase), or a short hash. */
+  current: string | null;
+}
+
+/** What the conflict editor shows for one file. */
+export interface ConflictVersions {
+  /**
+   * Both sides merged by git, each conflict between `<<<<<<< current`,
+   * `=======` and `>>>>>>> incoming` lines. Rebuilt from the index, so it is
+   * still there after a resolution was saved.
+   */
+  merged: string;
+  /** The working-tree file now (e.g. a resolution saved earlier), or null if it doesn't exist. */
+  working: string | null;
+  /** True when either side is binary; such files can only take one side. */
+  binary: boolean;
+}
+
+/** The external tool a conflicted file was opened in: git's merge tool (waited for) or an editor. */
+export type ExternalTool = "mergeTool" | "editor";
+
+/** How to settle a conflicted file: our side, their side, or the file as it is now. */
+export type Resolution = "ours" | "theirs" | "asIs";
 
 /** A local branch. */
 export interface GitBranch {

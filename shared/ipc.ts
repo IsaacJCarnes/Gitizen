@@ -8,10 +8,15 @@
  */
 import type {
   CommitFile,
+  ConflictState,
+  ConflictVersions,
+  ExternalTool,
   FileDiff,
   GitBranch,
   GitCommit,
   GitStatus,
+  Remote,
+  Resolution,
 } from "./gitTypes";
 
 export const Command = {
@@ -31,8 +36,36 @@ export const Command = {
   Stage: "stage",
   Unstage: "unstage",
   Commit: "commit",
+  UndoLastCommit: "undo_last_commit",
+  StashChanges: "stash_changes",
   Checkout: "checkout",
   SetStagedLines: "set_staged_lines",
+  AiCommitCommand: "ai_commit_command",
+  SetAiCommitCommand: "set_ai_commit_command",
+  GenerateCommitMessage: "generate_commit_message",
+  Remotes: "remotes",
+  AddRemote: "add_remote",
+  PublishRepository: "publish_repository",
+  Fetch: "fetch",
+  Pull: "pull",
+  Push: "push",
+  CheckoutCommit: "checkout_commit",
+  CreateBranch: "create_branch",
+  CreateTag: "create_tag",
+  CherryPick: "cherry_pick",
+  OpenInBrowser: "open_in_browser",
+  Conflicts: "conflicts",
+  ResolveConflict: "resolve_conflict",
+  ContinueOperation: "continue_operation",
+  AbortOperation: "abort_operation",
+  AiResolveCommand: "ai_resolve_command",
+  SetAiResolveCommand: "set_ai_resolve_command",
+  AiResolveConflict: "ai_resolve_conflict",
+  ConflictVersions: "conflict_versions",
+  SaveConflictResolution: "save_conflict_resolution",
+  EditorCommand: "editor_command",
+  SetEditorCommand: "set_editor_command",
+  OpenInMergeTool: "open_in_merge_tool",
 } as const;
 
 export type CommandName = (typeof Command)[keyof typeof Command];
@@ -46,6 +79,12 @@ export type CommandName = (typeof Command)[keyof typeof Command];
 export type OpenRepositoryError =
   | { kind: "notARepository"; path: string; message: string }
   | { kind: "failed"; message: string };
+
+/** A commit message split the way the commit form shows it. */
+export interface GeneratedCommitMessage {
+  summary: string;
+  description: string;
+}
 
 export interface GitizenApi {
   /** Shows a folder picker and opens the chosen repository. Resolves to its path, or null if cancelled. */
@@ -94,6 +133,87 @@ export interface GitizenApi {
    * lines. Rejects without changing anything if the file changed since.
    */
   setStagedLines(path: string, diff: string, lines: number[], staged: boolean): Promise<void>;
-  commit(message: string): Promise<void>;
+  /**
+   * Commits the staged changes. With `amend`, replaces the last commit with
+   * its changes plus what is staged now, under `message`.
+   */
+  commit(message: string, amend?: boolean): Promise<void>;
+  /** Undoes the last commit, keeping its changes staged. Rejects for merge commits. */
+  undoLastCommit(): Promise<void>;
+  /** Stashes every uncommitted change (untracked files too), leaving a clean working tree. */
+  stashChanges(message: string): Promise<void>;
   checkout(branch: string): Promise<void>;
+  /** The saved AI command line tool for commit messages (e.g. `claude -p`), or "" if none is set up. */
+  aiCommitCommand(): Promise<string>;
+  /** Saves the AI command (trimmed; "" clears it). Resolves to what was saved. */
+  setAiCommitCommand(command: string): Promise<string>;
+  /**
+   * Pipes a prompt plus the staged diff to the saved AI command and splits
+   * what it prints into summary and description. Stages and commits nothing.
+   */
+  generateCommitMessage(): Promise<GeneratedCommitMessage>;
+  /** Every configured remote with its URL. */
+  remotes(): Promise<Remote[]>;
+  /** Adds a remote (normally `origin`) pointing at an existing repository URL. */
+  addRemote(name: string, url: string): Promise<void>;
+  /**
+   * Creates a GitHub repository with the GitHub CLI (`gh`), adds it as
+   * `origin` and pushes the current branch. Rejects with gh's message (or
+   * install instructions when gh is missing).
+   */
+  publishRepository(name: string, description: string, isPrivate: boolean): Promise<void>;
+  /** Fetches every remote and prunes deleted remote branches. */
+  fetch(): Promise<void>;
+  /** Pulls the current branch's upstream into it (a merge unless `pull.rebase` is set). */
+  pull(): Promise<void>;
+  /**
+   * Pushes the current branch, publishing it to `origin` with tracking if it
+   * has no upstream yet. `force` overwrites the remote branch (with lease),
+   * for after amending or undoing a pushed commit.
+   */
+  push(force?: boolean): Promise<void>;
+  /** Checks out a commit itself, leaving HEAD detached. */
+  checkoutCommit(hash: string): Promise<void>;
+  /** Creates branch `name` at commit `hash`, switching to it when `checkout`. */
+  createBranch(name: string, hash: string, checkout: boolean): Promise<void>;
+  /** Creates an annotated tag at `hash`; an empty `message` uses the tag name. */
+  createTag(name: string, hash: string, message: string): Promise<void>;
+  /**
+   * Applies commit `hash` onto `branch` as a new commit, switching to that
+   * branch first (which needs a clean working tree) and staying on it.
+   */
+  cherryPick(hash: string, branch: string): Promise<void>;
+  /** Opens a https://github.com/ page in the default browser (other URLs are refused). */
+  openInBrowser(url: string): Promise<void>;
+  /** The stopped merge, cherry-pick, rebase or revert (if any) and its unresolved files. */
+  conflicts(): Promise<ConflictState>;
+  /** Settles one conflicted file (our version, theirs, or as it is now) and stages it. */
+  resolveConflict(path: string, resolution: Resolution): Promise<void>;
+  /** Finishes the stopped operation once every file is resolved. */
+  continueOperation(): Promise<void>;
+  /** Abandons the stopped operation, restoring the state from before it began. */
+  abortOperation(): Promise<void>;
+  /**
+   * Has the saved AI command resolve one conflicted file and resolves to its
+   * answer, without writing anything. Rejects if the answer is empty or
+   * still has conflict markers.
+   */
+  aiResolveConflict(path: string): Promise<string>;
+  /** The saved AI command for resolving conflicts (separate from the commit one), or "" if none is set up. */
+  aiResolveCommand(): Promise<string>;
+  /** Saves the AI resolve command (trimmed; "" clears it). Resolves to what was saved. */
+  setAiResolveCommand(command: string): Promise<string>;
+  /** Both sides of a conflicted file merged with conflict markers, plus the file as it is now. */
+  conflictVersions(path: string): Promise<ConflictVersions>;
+  /** Writes `text` to a conflicted file (keeping its line endings), without staging it. */
+  saveConflictResolution(path: string, text: string): Promise<void>;
+  /** The external tool command for conflicted files, e.g. `code {file}`; "" when none is set. */
+  editorCommand(): Promise<string>;
+  /** Saves the external tool command (trimmed; "" clears it). Resolves to what was saved. */
+  setEditorCommand(command: string): Promise<string>;
+  /**
+   * Opens a conflicted file in the saved command, else git's `merge.tool`
+   * (waiting until it closes), else the system text editor.
+   */
+  openInMergeTool(path: string): Promise<ExternalTool>;
 }

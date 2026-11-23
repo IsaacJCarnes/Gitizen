@@ -33,6 +33,9 @@ pub struct FileDiff {
 pub struct GitStatus {
     /// Current branch name, or None (null) when HEAD is detached.
     pub branch: Option<String>,
+    /// The branch it tracks, e.g. "origin/main"; omitted when it tracks none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<String>,
     pub ahead: u32,
     pub behind: u32,
     pub files: Vec<FileChange>,

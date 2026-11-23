@@ -1,8 +1,10 @@
-import type { FileChange } from "../../../shared/gitTypes";
+import type { ConflictFile, FileChange } from "../../../shared/gitTypes";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import FileListItem from "../common/FileListItem";
 import TriStateCheckbox from "../common/TriStateCheckbox";
+import ConflictBanner from "../Conflicts/ConflictBanner";
+import MarkResolvedButton from "../Conflicts/MarkResolvedButton";
 import { combineStates, type CheckState } from "../../utils/checkState";
 
 /**
@@ -64,16 +66,39 @@ function stageState(entry: ChangedPath): CheckState {
  * Working-tree files with uncommitted changes, in a single list. Each row's
  * checkbox stages or unstages the file; the header checkbox does every file
  * at once. Clicking a row opens its diff.
+ *
+ * While a merge (or similar) is stopped, a banner above the list says so,
+ * and conflicted files show a "!" with a Mark resolved button instead of a
+ * checkbox; clicking one opens it in the conflict editor.
  */
 export default function FileChangeList(): React.JSX.Element {
-  const { status, selectedFile, setSelectedFile, setFilesStaged } =
-    useGitOperationsContext();
-  const { setView } = useAppContext();
-  const entries = groupByPath(status?.files ?? []);
+  const {
+    status,
+    selectedFile,
+    setSelectedFile,
+    setFilesStaged,
+    conflicts: { operation, files },
+    selectedConflict,
+    setSelectedConflict,
+  } = useGitOperationsContext();
+  const { view, setView } = useAppContext();
+  const conflictByPath = new Map<string, ConflictFile>(
+    files.map((file) => [file.path, file]),
+  );
+  const all = groupByPath(status?.files ?? []);
+  // Staging a conflicted file would mark it resolved, so the checkboxes
+  // (and "stage all") only cover the rest.
+  const entries = all.filter((entry) => !conflictByPath.has(entry.path));
+  const conflicted = all.filter((entry) => conflictByPath.has(entry.path));
 
   const states = entries.map(stageState);
   const fullyStaged = states.filter((state) => state === true).length;
   const allState = combineStates(states);
+
+  const openConflict = (path: string): void => {
+    setSelectedConflict(path);
+    setView("conflict");
+  };
 
   const open = (entry: ChangedPath): void => {
     // Either entry works: the diff covers staged and unstaged changes alike.
@@ -82,25 +107,49 @@ export default function FileChangeList(): React.JSX.Element {
   };
 
   // A mixed checkbox stages the rest, like a select-all, rather than unstaging.
-  const toggle = (entry: ChangedPath): Promise<void> =>
+  const toggle = (entry: ChangedPath) =>
     setFilesStaged(pathsOf(entry), stageState(entry) !== true);
 
-  const toggleAll = (): Promise<void> =>
+  const toggleAll = () =>
     setFilesStaged(entries.flatMap(pathsOf), allState !== true);
 
   return (
     <>
-      <h2 className="changes-header">
-        <TriStateCheckbox
-          state={allState}
-          onChange={toggleAll}
-          label={allState === true ? "Unstage all files" : "Stage all files"}
-          disabled={entries.length === 0}
-        />
-        Changes ({entries.length})
-        <small>{fullyStaged} staged</small>
-      </h2>
+      <ConflictBanner />
+      {/* The banner takes the header's place while an operation is stopped. */}
+      {!operation && (
+        <h2 className="changes-header">
+          <TriStateCheckbox
+            state={allState}
+            onChange={toggleAll}
+            label={allState === true ? "Unstage all files" : "Stage all files"}
+            disabled={entries.length === 0}
+          />
+          Changes ({all.length})
+          <small>{fullyStaged} staged</small>
+        </h2>
+      )}
       <ul className="file-change-list">
+        {conflicted.map((entry) => {
+          const file = conflictByPath.get(entry.path)!;
+          return (
+            <FileListItem
+              key={entry.path}
+              path={entry.path}
+              code="!"
+              className="conflicted"
+              title={
+                file.hasMarkers
+                  ? `${entry.path} (conflicted, open to resolve)`
+                  : `${entry.path} (saved, ready to mark resolved)`
+              }
+              selected={view === "conflict" && selectedConflict === entry.path}
+              onSelect={() => openConflict(entry.path)}
+              leading={<span className="conflict-spacer" />}
+              trailing={<MarkResolvedButton file={file} />}
+            />
+          );
+        })}
         {entries.map((entry, index) => {
           const state = states[index];
           return (

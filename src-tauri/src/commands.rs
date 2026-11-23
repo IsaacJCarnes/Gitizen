@@ -6,7 +6,7 @@
 //! call never freezes the window. Errors reach the UI as rejected promises
 //! carrying git's message.
 
-use tauri::{AppHandle, State};
+use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
 
 use std::collections::HashSet;
@@ -18,12 +18,10 @@ use crate::git::patch::{
 };
 use crate::git::repository::{
     assert_branch_name, assert_hash, first_parent_of, init_repository as git_init, OpenError,
-    OpenRepository, EMPTY_TREE,
+    Repo, EMPTY_TREE,
 };
 use crate::git::runner::{run_git, run_git_bytes, run_git_with_input};
 use crate::git::types::{CommitFile, FileDiff, GitBranch, GitCommit, GitStatus};
-
-type Repo<'a> = State<'a, OpenRepository>;
 
 /// Shows a folder picker and opens the chosen repository. Returns its path,
 /// or None if the picker was cancelled. A folder that isn't a repository
@@ -410,9 +408,60 @@ fn file_mode(dir: &Path, path: &str) -> Result<String, String> {
     Ok(mode)
 }
 
+/// Commits the staged changes. With `amend`, replaces the last commit
+/// instead: its changes plus whatever is staged now, under `message` (so
+/// amending with nothing staged just rewords it).
 #[tauri::command]
-pub async fn commit(repo: Repo<'_>, message: String) -> Result<(), String> {
-    run_git(&repo.require()?, ["commit", "-m", &message]).map(drop)
+pub async fn commit(repo: Repo<'_>, message: String, amend: Option<bool>) -> Result<(), String> {
+    commit_in(&repo.require()?, &message, amend == Some(true))
+}
+
+fn commit_in(dir: &Path, message: &str, amend: bool) -> Result<(), String> {
+    let mut args = vec!["commit", "-m", message];
+    if amend {
+        args.push("--amend");
+    }
+    run_git(dir, args).map(drop)
+}
+
+/// Saves every uncommitted change, untracked files included, to a new stash
+/// and leaves the working tree clean, e.g. before switching branches.
+/// `git stash pop` brings the changes back.
+#[tauri::command]
+pub async fn stash_changes(repo: Repo<'_>, message: String) -> Result<(), String> {
+    stash_in(&repo.require()?, &message)
+}
+
+fn stash_in(dir: &Path, message: &str) -> Result<(), String> {
+    // "-m=<message>" can't be read as an option even if the message starts with "-".
+    let message = format!("--message={message}");
+    run_git(dir, ["stash", "push", "--include-untracked", message.as_str()]).map(drop)
+}
+
+/// Undoes the last commit on the current branch, keeping its changes staged
+/// so they can be edited and committed again. Merge commits are refused,
+/// since undoing one would silently drop the merged branch.
+#[tauri::command]
+pub async fn undo_last_commit(repo: Repo<'_>) -> Result<(), String> {
+    undo_last_commit_in(&repo.require()?)
+}
+
+fn undo_last_commit_in(dir: &Path) -> Result<(), String> {
+    // "<head> <parent>..." : one word for a root commit, three or more for a merge.
+    let line = run_git(dir, ["rev-list", "--parents", "-n", "1", "HEAD"])
+        .map_err(|_| "There is no commit to undo".to_string())?;
+    match line.split_whitespace().count() {
+        // --soft moves the branch back but leaves the index (and files) alone.
+        2 => run_git(dir, ["reset", "--soft", "HEAD~1"]).map(drop),
+        // The first commit has no parent to reset to; deleting the branch ref
+        // makes it unborn again, and the index still holds every file, staged.
+        1 => {
+            let head_ref = run_git(dir, ["symbolic-ref", "-q", "HEAD"])
+                .map_err(|_| "Check out a branch to undo its first commit".to_string())?;
+            run_git(dir, ["update-ref", "-d", head_ref.trim()]).map(drop)
+        }
+        _ => Err("Undoing a merge commit isn't supported".into()),
+    }
 }
 
 #[tauri::command]
@@ -433,19 +482,13 @@ mod tests {
     use tauri::{WebviewWindow, WebviewWindowBuilder};
 
     use super::*;
+    use crate::git::repository::OpenRepository;
 
+    /// Commits "First" (a.txt) and "Rename" (a.txt moved to b.txt) on main,
+    /// plus a branch "other" at the same commit.
     fn temp_repo() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "gitizen-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::util::test_support::new_repo("test");
         let git = |args: &[&str]| run_git(&dir, args).unwrap();
-        git(&["init", "-q", "-b", "main"]);
-        git(&["config", "user.name", "Test"]);
-        git(&["config", "user.email", "test@example.com"]);
-        git(&["config", "core.autocrlf", "false"]);
         std::fs::write(dir.join("a.txt"), "one\n").unwrap();
         git(&["add", "a.txt"]);
         git(&["commit", "-q", "-m", "First"]);
@@ -460,7 +503,7 @@ mod tests {
             .manage(OpenRepository::default())
             .invoke_handler(tauri::generate_handler![
                 status, log, branches, file_diff, commit_files, commit_diff, stage, unstage, commit,
-                checkout, set_staged_lines,
+                checkout, set_staged_lines, undo_last_commit, stash_changes,
             ])
             .build(mock_context(noop_assets()))
             .unwrap();
@@ -580,6 +623,61 @@ mod tests {
         let hidden = file_diff_in(&repo, "b.txt", Some(true)).unwrap();
         assert!(!hidden.diff.contains("@@"));
         assert!(file_diff_in(&repo, "b.txt", None).unwrap().diff.contains("+  one"));
+
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn undoes_and_amends_the_last_commit() {
+        let repo = temp_repo();
+        let window = app_for(&repo);
+        let subject = || run_git(&repo, ["log", "-1", "--format=%s"]).unwrap().trim().to_string();
+        let porcelain = || run_git(&repo, ["status", "--porcelain"]).unwrap();
+
+        // Undo "Rename": its rename comes back staged.
+        call(&window, "undo_last_commit", json!({})).unwrap();
+        assert_eq!(subject(), "First");
+        assert_eq!(porcelain(), "R  a.txt -> b.txt\n");
+
+        // Amend with nothing staged rewords; amend with a staged file adds it.
+        call(&window, "commit", json!({ "message": "Rename again" })).unwrap();
+        call(&window, "commit", json!({ "message": "Reworded", "amend": true })).unwrap();
+        assert_eq!(subject(), "Reworded");
+        std::fs::write(repo.join("extra.txt"), "x\n").unwrap();
+        run_git(&repo, ["add", "extra.txt"]).unwrap();
+        call(&window, "commit", json!({ "message": "Reworded", "amend": true })).unwrap();
+        let files = run_git(&repo, ["show", "--name-only", "--format=", "HEAD"]).unwrap();
+        assert!(files.contains("extra.txt") && files.contains("b.txt"), "{files}");
+        assert_eq!(run_git(&repo, ["rev-list", "--count", "HEAD"]).unwrap().trim(), "2");
+
+        // Stashing leaves a clean tree (untracked files too) for switching.
+        std::fs::write(repo.join("b.txt"), "changed\n").unwrap();
+        std::fs::write(repo.join("loose.txt"), "new\n").unwrap();
+        call(&window, "stash_changes", json!({ "message": "Before switching" })).unwrap();
+        assert_eq!(porcelain(), "");
+        assert!(run_git(&repo, ["stash", "list"]).unwrap().contains("Before switching"));
+        run_git(&repo, ["stash", "drop", "-q"]).unwrap();
+
+        // Undoing the root commit leaves an unborn branch with everything staged.
+        call(&window, "undo_last_commit", json!({})).unwrap();
+        call(&window, "undo_last_commit", json!({})).unwrap();
+        assert!(run_git(&repo, ["rev-parse", "--verify", "-q", "HEAD"]).is_err());
+        assert!(porcelain().contains("A  b.txt"));
+        assert!(call(&window, "undo_last_commit", json!({})).is_err());
+
+        // Merge commits are refused.
+        run_git(&repo, ["commit", "-q", "-m", "Root"]).unwrap();
+        run_git(&repo, ["checkout", "-q", "-b", "side"]).unwrap();
+        std::fs::write(repo.join("side.txt"), "s\n").unwrap();
+        run_git(&repo, ["add", "side.txt"]).unwrap();
+        run_git(&repo, ["commit", "-q", "-m", "Side"]).unwrap();
+        run_git(&repo, ["checkout", "-q", "main"]).unwrap();
+        std::fs::write(repo.join("main.txt"), "m\n").unwrap();
+        run_git(&repo, ["add", "main.txt"]).unwrap();
+        run_git(&repo, ["commit", "-q", "-m", "Main"]).unwrap();
+        run_git(&repo, ["merge", "-q", "--no-edit", "side"]).unwrap();
+        let error = call(&window, "undo_last_commit", json!({})).unwrap_err();
+        assert!(error.as_str().unwrap().contains("merge"));
 
         let _ = std::fs::remove_dir_all(&repo);
     }

@@ -6,19 +6,16 @@
   flex-direction: column;
 }
 
-.repo-sidebar h2 {
-  font-size: 13px;
-  margin: 0;
-  padding: 10px 12px 4px;
-  color: var(--mute);
-  font-weight: 600;
-}
-
 .repo-sidebar h2.changes-header {
   display: flex;
   align-items: center;
   gap: 8px;
   padding-left: 8px;
+  margin: 0;
+  padding: 10px 12px 4px;
+  color: var(--mute);
+  font-weight: 600;
+  font-size: 13px;
 }
 
 .repo-sidebar h2.changes-header small {
@@ -26,6 +23,6 @@
   font-weight: 400;
 }
 
-.file-change-list{
+.file-change-list {
   overflow-y: auto;
 }
