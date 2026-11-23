@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 
 dist
+
+src-tauri/icons/android
+src-tauri/icons/ios
