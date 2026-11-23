@@ -148,6 +148,11 @@ export interface GitOperations {
    * `stageLines`, does nothing while whitespace changes are hidden.
    */
   discardLines: (lines: number[]) => Promise<boolean>;
+  /**
+   * Saves edited text over a working-tree file, then shows that file's
+   * uncommitted diff (switching away from a selected commit).
+   */
+  saveWorkingFile: (path: string, text: string) => Promise<boolean>;
 }
 
 export interface GitOperationsOptions {
@@ -552,6 +557,22 @@ export function useGitOperations({
     [selectedFile, diff, hideWhitespace, runOperation],
   );
 
+  const saveWorkingFile = useCallback(
+    async (path: string, text: string): Promise<boolean> => {
+      const saved = await runOperation(() => gitizen.saveWorkingFile(path, text));
+      if (saved) {
+        // The file is now among the changes (unless the text was the same),
+        // so show it there. The next refresh corrects the entry's details.
+        selectCommit(null);
+        setSelectedFile((current) =>
+          current?.path === path ? current : { path, staged: false, code: "M" },
+        );
+      }
+      return saved;
+    },
+    [runOperation, selectCommit],
+  );
+
   // ---- Derived data loading ------------------------------------------------
 
   // Diff of the selected working-tree file against HEAD, staged and unstaged
@@ -671,5 +692,6 @@ export function useGitOperations({
     stageLines,
     discardFiles,
     discardLines,
+    saveWorkingFile,
   };
 }

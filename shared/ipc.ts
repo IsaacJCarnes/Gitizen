@@ -42,6 +42,9 @@ export const Command = {
   SetStagedLines: "set_staged_lines",
   DiscardFiles: "discard_files",
   DiscardLines: "discard_lines",
+  CanEditFile: "can_edit_file",
+  WorkingFile: "working_file",
+  SaveWorkingFile: "save_working_file",
   AiCommitCommand: "ai_commit_command",
   SetAiCommitCommand: "set_ai_commit_command",
   GenerateCommitMessage: "generate_commit_message",
@@ -146,6 +149,13 @@ export interface GitizenApi {
    * without changing anything if the file changed since.
    */
   discardLines(path: string, diff: string, lines: number[]): Promise<void>;
+  /** True when `path` is a text file in the working directory small enough to edit. */
+  canEditFile(path: string): Promise<boolean>;
+  /** The working-tree file's text with "
+" line endings; rejects for binary, missing or huge files. */
+  workingFile(path: string): Promise<string>;
+  /** Overwrites the working-tree file with `text` (keeping its line endings), without staging it. */
+  saveWorkingFile(path: string, text: string): Promise<void>;
   /**
    * Commits the staged changes. With `amend`, replaces the last commit with
    * its changes plus what is staged now, under `message`.

@@ -1,5 +1,5 @@
 import "./FileDiff.css";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import { useDiffSettings } from "../../hooks/useDiffSettings";
@@ -8,6 +8,7 @@ import { pluralize, shortHash } from "../../utils/format";
 import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
 import DiffView, { type LineStaging } from "../common/DiffView";
 import { useDiscardConfirmation } from "../common/DiscardConfirm";
+import FileEditor from "./FileEditor";
 
 /**
  * Diff of the file picked in the sidebar, with a header naming the file and
@@ -18,6 +19,10 @@ import { useDiscardConfirmation } from "../common/DiscardConfirm";
  * changed line, ticked when that line is staged: tick to stage, untick to
  * unstage. The diff itself stays the same either way. Right-clicking a
  * changed line offers to discard it, or its whole group of changes.
+ *
+ * A text file that is in the working directory can be edited in place:
+ * "Edit" for the working tree's or the last commit's file, "Edit in working
+ * directory" for an older commit's, since it is the current file that changes.
  */
 export default function FileDiff(): React.JSX.Element {
   const { setView } = useAppContext();
@@ -30,6 +35,8 @@ export default function FileDiff(): React.JSX.Element {
     stagedLines,
     stageLines,
     discardLines,
+    status,
+    reportError,
   } = useGitOperationsContext();
   const { settings, updateSettings } = useDiffSettings();
   const [applying, setApplying] = useState(false);
@@ -39,6 +46,35 @@ export default function FileDiff(): React.JSX.Element {
   const path = selectedCommit ? selectedCommitFile?.path : selectedFile?.path;
   const shownDiff = selectedCommit ? commitDiff : diff;
   const source = selectedCommit ? shortHash(selectedCommit.hash) : "Uncommitted";
+
+  // Whether the file can be edited: a text file in the working directory.
+  // Checked again after every refresh, since the file may come or go.
+  const [editable, setEditable] = useState(false);
+  const [editing, setEditing] = useState<{ path: string; text: string } | null>(null);
+  useEffect(() => {
+    if (!path) {
+      setEditable(false);
+      return;
+    }
+    let active = true;
+    gitizen.canEditFile(path).then(
+      (can) => active && setEditable(can),
+      () => active && setEditable(false),
+    );
+    return () => {
+      active = false;
+    };
+  }, [path, status]);
+  // Picking another file (or commit) leaves the editor without saving.
+  useEffect(() => setEditing(null), [path, selectedCommit]);
+  const editingPath = editing?.path === path ? editing : null;
+  // An older commit's file is edited as it is now, in the working directory.
+  const atHead = !selectedCommit || selectedCommit.refs.some((ref) => ref.current);
+
+  const startEditing = (): void => {
+    if (!path) return;
+    gitizen.workingFile(path).then((text) => setEditing({ path, text }), reportError);
+  };
 
   // Lines are staged by rewriting the index from the diff as shown, so this
   // needs the full diff, not one with whitespace changes hidden.
@@ -98,8 +134,20 @@ export default function FileDiff(): React.JSX.Element {
         <span className="path" title={path}>
           {path}
         </span>
-        <small>{source}</small>
-        <span className="diff-settings">
+        <small>{editingPath ? "Working directory" : source}</small>
+        {path && editable && !editingPath && (
+          <button
+            title={
+              atHead
+                ? "Edit this file"
+                : "Edit the file as it is now in the working directory, not as it was in this commit"
+            }
+            onClick={startEditing}
+          >
+            {atHead ? "Edit" : "Edit in working directory"}
+          </button>
+        )}
+        <span className="diff-settings" style={editingPath ? { display: "none" } : undefined}>
           <span className="segmented" role="group" aria-label="Diff layout">
             {(["unified", "split"] as const).map((layout) => (
               <button
@@ -129,7 +177,14 @@ export default function FileDiff(): React.JSX.Element {
           </label>
         </span>
       </header>
-      {path ? (
+      {path && editingPath ? (
+        <FileEditor
+          key={path}
+          path={path}
+          initialText={editingPath.text}
+          onDone={() => setEditing(null)}
+        />
+      ) : path ? (
         <DiffView
           diff={shownDiff}
           layout={settings.layout}
