@@ -11,6 +11,7 @@ mod edit_file;
 mod git;
 mod recent_repos;
 mod remote;
+mod stash;
 mod util;
 
 use git::repository::OpenRepository;
@@ -43,7 +44,11 @@ pub fn run() {
             commands::unstage,
             commands::commit,
             commands::undo_last_commit,
-            commands::stash_changes,
+            stash::stash_changes,
+            stash::branch_stash,
+            stash::pop_stash,
+            stash::drop_stash,
+            stash::stash_diff,
             commands::checkout,
             commands::set_staged_lines,
             discard::discard_files,

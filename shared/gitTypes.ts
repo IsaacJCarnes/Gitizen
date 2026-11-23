@@ -67,9 +67,11 @@ export interface Remote {
 
 /**
  * An operation that stopped part way, usually on a conflict. "squash" is a
- * squash merge, whose changes wait to be committed as one commit.
+ * squash merge, whose changes wait to be committed as one commit. "stash"
+ * is adding changes to the branch's stash and "stashPop" popping it, both
+ * stopped because the stash conflicts; they finish without a commit.
  */
-export type Operation = "merge" | "cherryPick" | "rebase" | "revert" | "squash";
+export type Operation = "merge" | "cherryPick" | "rebase" | "revert" | "squash" | "stash" | "stashPop";
 
 /** A file git couldn't merge by itself. */
 export interface ConflictFile {
@@ -114,6 +116,21 @@ export type ExternalTool = "mergeTool" | "editor";
 
 /** How to settle a conflicted file: our side, their side, or the file as it is now. */
 export type Resolution = "ours" | "theirs" | "asIs";
+
+/** The current branch's stash (Gitizen keeps one per branch). */
+export interface BranchStash {
+  /** The stash commit's hash. */
+  hash: string;
+  /** The commit it was made on, where the history graph attaches it. */
+  base: string;
+  /** Its message, without git's "On <branch>: " prefix. */
+  message: string;
+  /** The files it changes, untracked ones included. */
+  files: CommitFile[];
+}
+
+/** What stashing or popping did: finished, or stopped on conflicts to resolve. */
+export type StashOutcome = "done" | "conflicts";
 
 /** A local branch. */
 export interface GitBranch {

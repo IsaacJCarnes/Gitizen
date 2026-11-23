@@ -236,8 +236,8 @@ export default function CommitContextMenu({
             first. Commit them on {status?.branch ?? "the current commit"}, or stash them.
           </p>
           <p>
-            A stash keeps the changes aside without committing them. Bring them back later with{" "}
-            <code>git stash pop</code> on the branch you want them on.
+            A stash keeps the changes aside without committing them. Bring them back later with
+            Pop, in the Stash section of the sidebar on {status?.branch ?? "this branch"}.
           </p>
         </ActionModal>
       )}

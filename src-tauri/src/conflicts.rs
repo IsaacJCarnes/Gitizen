@@ -27,14 +27,19 @@ pub enum Operation {
     /// `git merge --squash`: the branch's changes, waiting to be committed
     /// as one ordinary commit.
     Squash,
+    /// Adding changes to the branch's stash, which conflicted with it.
+    Stash,
+    /// Popping the branch's stash, which conflicted with the branch.
+    StashPop,
 }
 
 impl Operation {
     /// The git command that runs it, which also takes `--continue` and
     /// `--abort` (except a squash merge, handled separately).
-    fn git_name(self) -> &'static str {
+    pub(crate) fn git_name(self) -> &'static str {
         match self {
             Operation::Merge | Operation::Squash => "merge",
+            Operation::Stash | Operation::StashPop => "stash",
             Operation::CherryPick => "cherry-pick",
             Operation::Rebase => "rebase",
             Operation::Revert => "revert",
@@ -130,6 +135,13 @@ fn git_file(dir: &Path, name: &str) -> Option<PathBuf> {
 
 /// Names the incoming and current sides of a stopped operation.
 fn branch_names(dir: &Path, operation: Operation) -> (Option<String>, Option<String>) {
+    match operation {
+        // The branch's stash merges into the changes being added to it, or
+        // into the branch when popping.
+        Operation::Stash => return (Some("stash".into()), Some("your changes".into())),
+        Operation::StashPop => return (Some("stash".into()), current_branch(dir)),
+        _ => {}
+    }
     // The first line of a file in the git folder (e.g. MERGE_HEAD), trimmed.
     let read = |name: &str| {
         let text = std::fs::read_to_string(git_file(dir, name)?).ok()?;
@@ -145,6 +157,7 @@ fn branch_names(dir: &Path, operation: Operation) -> (Option<String>, Option<Str
         Operation::Revert => (read("REVERT_HEAD"), None),
         // SQUASH_MSG lists the squashed commits, newest (the branch tip) first.
         Operation::Squash => (squashed_tip(dir), None),
+        Operation::Stash | Operation::StashPop => (None, None),
         Operation::Rebase => (
             rebase_file("onto"),
             rebase_file("head-name").map(|name| name.trim_start_matches("refs/heads/").to_string()),
@@ -204,7 +217,7 @@ fn prepared_message(dir: &Path) -> Option<String> {
 }
 
 /// Unmerged paths with their two-letter codes, from `git status`.
-fn conflicted_files(dir: &Path) -> Result<Vec<(String, String)>, String> {
+pub(crate) fn conflicted_files(dir: &Path) -> Result<Vec<(String, String)>, String> {
     let output = run_git(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=no"])?;
     Ok(parse_unmerged(&output))
 }
@@ -239,7 +252,11 @@ fn has_conflict_markers(text: &str) -> bool {
 
 /// Which operation is in progress, from the marker files git keeps in the
 /// git folder while one is stopped.
-fn operation_in(dir: &Path) -> Option<Operation> {
+pub(crate) fn operation_in(dir: &Path) -> Option<Operation> {
+    // Gitizen's own stash operations leave a note, checked first.
+    if let Some(operation) = crate::stash::operation(dir) {
+        return Some(operation);
+    }
     let exists = |name: &str| git_file(dir, name).is_some_and(|path| path.exists());
     // A rebase replays commits as cherry-picks, so it is checked first.
     if exists("rebase-merge") || exists("rebase-apply") {
@@ -423,6 +440,7 @@ pub(crate) fn continue_in(dir: &Path) -> Result<(), String> {
             let message = prepared_message(dir).unwrap_or_else(|| "Squash merge".into());
             run_git(dir, ["commit", "-m", message.as_str()])
         }
+        Operation::Stash | Operation::StashPop => return crate::stash::finish_in(dir),
         operation => run_git(dir, [operation.git_name(), "--continue"]),
     };
     unless_conflicted(dir, result.map(drop))
@@ -440,6 +458,7 @@ pub(crate) fn abort_in(dir: &Path) -> Result<(), String> {
         // A squash merge has no MERGE_HEAD for `merge --abort`; this is what
         // that does, and it clears SQUASH_MSG too.
         Operation::Squash => run_git(dir, ["reset", "--merge"]).map(drop),
+        Operation::Stash | Operation::StashPop => crate::stash::abort_in(dir),
         operation => run_git(dir, [operation.git_name(), "--abort"]).map(drop),
     }
 }

@@ -112,7 +112,7 @@ pub async fn branches(repo: Repo<'_>) -> Result<Vec<GitBranch>, String> {
 /// `git diff` options shared by every diff the UI shows: plain text, git's
 /// own diff (no external tools) and the usual a/ b/ prefixes, so the output
 /// can be parsed and turned back into a patch. `-w` hides whitespace changes.
-fn diff_options(ignore_whitespace: Option<bool>) -> Vec<&'static str> {
+pub(crate) fn diff_options(ignore_whitespace: Option<bool>) -> Vec<&'static str> {
     let mut args = vec!["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"];
     if ignore_whitespace == Some(true) {
         args.push("--ignore-all-space");
@@ -434,20 +434,6 @@ fn commit_in(dir: &Path, message: &str, amend: bool) -> Result<(), String> {
     run_git(dir, args).map(drop)
 }
 
-/// Saves every uncommitted change, untracked files included, to a new stash
-/// and leaves the working tree clean, e.g. before switching branches.
-/// `git stash pop` brings the changes back.
-#[tauri::command]
-pub async fn stash_changes(repo: Repo<'_>, message: String) -> Result<(), String> {
-    stash_in(&repo.require()?, &message)
-}
-
-fn stash_in(dir: &Path, message: &str) -> Result<(), String> {
-    // "-m=<message>" can't be read as an option even if the message starts with "-".
-    let message = format!("--message={message}");
-    run_git(dir, ["stash", "push", "--include-untracked", message.as_str()]).map(drop)
-}
-
 /// Undoes the last commit on the current branch, keeping its changes staged
 /// so they can be edited and committed again. Merge commits are refused,
 /// since undoing one would silently drop the merged branch.
@@ -513,7 +499,7 @@ mod tests {
             .manage(OpenRepository::default())
             .invoke_handler(tauri::generate_handler![
                 status, log, branches, file_diff, commit_files, commit_diff, stage, unstage, commit,
-                checkout, set_staged_lines, undo_last_commit, stash_changes,
+                checkout, set_staged_lines, undo_last_commit, crate::stash::stash_changes,
             ])
             .build(mock_context(noop_assets()))
             .unwrap();
@@ -663,7 +649,8 @@ mod tests {
         // Stashing leaves a clean tree (untracked files too) for switching.
         std::fs::write(repo.join("b.txt"), "changed\n").unwrap();
         std::fs::write(repo.join("loose.txt"), "new\n").unwrap();
-        call(&window, "stash_changes", json!({ "message": "Before switching" })).unwrap();
+        let outcome = call(&window, "stash_changes", json!({ "message": "Before switching" })).unwrap();
+        assert_eq!(outcome, json!("done"));
         assert_eq!(porcelain(), "");
         assert!(run_git(&repo, ["stash", "list"]).unwrap().contains("Before switching"));
         run_git(&repo, ["stash", "drop", "-q"]).unwrap();

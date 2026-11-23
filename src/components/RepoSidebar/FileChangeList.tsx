@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ConflictFile, FileChange } from "../../../shared/gitTypes";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
-import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
+import ContextMenu, { type MenuEntry, type MenuItem } from "../common/ContextMenu";
 import { useDiscardConfirmation } from "../common/DiscardConfirm";
 import FileListItem from "../common/FileListItem";
 import TriStateCheckbox from "../common/TriStateCheckbox";
@@ -74,7 +74,8 @@ function stageState(entry: ChangedPath): CheckState {
  * and conflicted files show a "!" with a Mark resolved button instead of a
  * checkbox; clicking one opens it in the conflict editor.
  *
- * Right-clicking a file opens its menu, e.g. to discard its changes.
+ * Right-clicking a file opens its menu, to discard its changes or add it
+ * to the branch's stash; right-clicking the header stashes every change.
  */
 export default function FileChangeList(): React.JSX.Element {
   const {
@@ -86,10 +87,24 @@ export default function FileChangeList(): React.JSX.Element {
     selectedConflict,
     setSelectedConflict,
     discardFiles,
+    branchStash,
+    stashChanges,
   } = useGitOperationsContext();
   const { view, setView } = useAppContext();
   const { confirmDiscard, discardDialog } = useDiscardConfirmation();
-  const [menu, setMenu] = useState<{ entry: ChangedPath; x: number; y: number } | null>(null);
+  // `entry` null is the header's menu, for every file.
+  const [menu, setMenu] = useState<{
+    entry: ChangedPath | null;
+    x: number;
+    y: number;
+  } | null>(null);
+  const openMenu = (
+    event: React.MouseEvent,
+    entry: ChangedPath | null,
+  ): void => {
+    event.preventDefault();
+    setMenu({ entry, x: event.clientX, y: event.clientY });
+  };
   const conflictByPath = new Map<string, ConflictFile>(
     files.map((file) => [file.path, file]),
   );
@@ -121,38 +136,70 @@ export default function FileChangeList(): React.JSX.Element {
   const toggleAll = () =>
     setFilesStaged(entries.flatMap(pathsOf), allState !== true);
 
-  const menuEntries = (entry: ChangedPath): MenuEntry[] => [
-    {
-      label: "Discard changes…",
-      title: "Put the file back as it was in the last commit",
-      onSelect: () =>
-        confirmDiscard({
-          title: `Discard changes to ${entry.path}?`,
-          what: (
-            <>
-              Every change to <code>{entry.path}</code>, staged or not,
-            </>
-          ),
-          confirmLabel: "Discard changes",
-          run: () => void discardFiles(pathsOf(entry)),
-        }),
-    },
-  ];
+  // A branch keeps one stash, so a second stash adds to the first.
+  const stashBlocked =
+    operation !== null
+      ? "Finish or abort the operation in progress first"
+      : status?.branch === null
+        ? "Check out a branch to stash changes on it"
+        : undefined;
+  const stashEntry = (paths: string[], what: string): MenuItem => ({
+    label: branchStash ? `Add ${what} to stash` : `Stash ${what}`,
+    disabled: Boolean(stashBlocked),
+    title:
+      stashBlocked ??
+      (branchStash
+        ? `Add to the stash on ${status?.branch}, which then holds both`
+        : `Set aside in a stash on ${status?.branch}, to bring back later`),
+    onSelect: () => void stashChanges("", paths),
+  });
+
+  const menuEntries = (entry: ChangedPath | null): MenuEntry[] => {
+    if (!entry) {
+      return [
+        {
+          ...stashEntry([], "all changes"),
+          disabled: Boolean(stashBlocked) || all.length === 0,
+        },
+      ];
+    }
+    return [
+      {
+        label: "Discard changes…",
+        title: "Put the file back as it was in the last commit",
+        onSelect: () =>
+          confirmDiscard({
+            title: `Discard changes to ${entry.path}?`,
+            what: (
+              <>
+                Every change to <code>{entry.path}</code>, staged or not,
+              </>
+            ),
+            confirmLabel: "Discard changes",
+            run: () => void discardFiles(pathsOf(entry)),
+          }),
+      },
+      "separator",
+      stashEntry(pathsOf(entry), "file"),
+    ];
+  };
 
   return (
     <>
       <ConflictBanner />
       {/* The banner takes the header's place while an operation is stopped. */}
       {!operation && (
-        <h2 className="changes-header">
+        <h2
+          className="changes-header"
+          onContextMenu={(event) => openMenu(event, null)}
+        >
           <TriStateCheckbox
             state={allState}
             onChange={toggleAll}
             label={allState === true ? "Unstage all files" : "Stage all files"}
             disabled={entries.length === 0}
           />
-          Changes ({all.length})
-          <small>{fullyStaged} staged</small>
+          Changes ({all.length})<small>{fullyStaged} staged</small>
         </h2>
       )}
       <ul className="file-change-list">
@@ -183,18 +230,23 @@ export default function FileChangeList(): React.JSX.Element {
               key={entry.path}
               path={entry.path}
               code={displayCode(entry)}
-              title={state === "mixed" ? `${entry.path} (partially staged)` : entry.path}
+              title={
+                state === "mixed"
+                  ? `${entry.path} (partially staged)`
+                  : entry.path
+              }
               selected={selectedFile?.path === entry.path}
               onSelect={() => open(entry)}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                setMenu({ entry, x: event.clientX, y: event.clientY });
-              }}
+              onContextMenu={(event) => openMenu(event, entry)}
               leading={
                 <TriStateCheckbox
                   state={state}
                   onChange={() => toggle(entry)}
-                  label={state === true ? `Unstage ${entry.path}` : `Stage ${entry.path}`}
+                  label={
+                    state === true
+                      ? `Unstage ${entry.path}`
+                      : `Stage ${entry.path}`
+                  }
                 />
               }
             />

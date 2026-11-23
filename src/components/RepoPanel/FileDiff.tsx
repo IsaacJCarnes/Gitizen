@@ -37,15 +37,22 @@ export default function FileDiff(): React.JSX.Element {
     discardLines,
     status,
     reportError,
+    branchStash,
+    selectedStashFile,
+    stashDiff,
   } = useGitOperationsContext();
   const { settings, updateSettings } = useDiffSettings();
   const [applying, setApplying] = useState(false);
   const { confirmDiscard, discardDialog } = useDiscardConfirmation();
   const [lineMenu, setLineMenu] = useState<{ x: number; y: number; line: number; group: number[] } | null>(null);
 
-  const path = selectedCommit ? selectedCommitFile?.path : selectedFile?.path;
-  const shownDiff = selectedCommit ? commitDiff : diff;
-  const source = selectedCommit ? shortHash(selectedCommit.hash) : "Uncommitted";
+  // A stash file picked in the sidebar is shown read-only, like a commit's.
+  const stashFile = !selectedCommit && branchStash ? selectedStashFile : null;
+  const path = selectedCommit ? selectedCommitFile?.path : (stashFile?.path ?? selectedFile?.path);
+  const shownDiff = selectedCommit ? commitDiff : stashFile ? stashDiff : diff;
+  const source = selectedCommit ? shortHash(selectedCommit.hash) : stashFile ? "Stash" : "Uncommitted";
+  // The commit (or stash) whose copy of the file is shown, if not the working tree's.
+  const shownHash = selectedCommit?.hash ?? (stashFile ? branchStash?.hash : undefined);
 
   // Whether the file can be edited: a text file in the working directory.
   // Checked again after every refresh, since the file may come or go.
@@ -66,10 +73,12 @@ export default function FileDiff(): React.JSX.Element {
     };
   }, [path, status]);
   // Picking another file (or commit) leaves the editor without saving.
-  useEffect(() => setEditing(null), [path, selectedCommit]);
+  useEffect(() => setEditing(null), [path, selectedCommit, stashFile]);
   const editingPath = editing?.path === path ? editing : null;
   // An older commit's file is edited as it is now, in the working directory.
-  const atHead = !selectedCommit || selectedCommit.refs.some((ref) => ref.current);
+  const atHead = stashFile
+    ? false
+    : !selectedCommit || selectedCommit.refs.some((ref) => ref.current);
 
   const startEditing = (): void => {
     if (!path) return;
@@ -79,7 +88,7 @@ export default function FileDiff(): React.JSX.Element {
   // Lines are staged by rewriting the index from the diff as shown, so this
   // needs the full diff, not one with whitespace changes hidden.
   let lineStaging: LineStaging | undefined;
-  if (!selectedCommit && selectedFile && !settings.hideWhitespace) {
+  if (!shownHash && selectedFile && !settings.hideWhitespace) {
     lineStaging = {
       staged: new Set(stagedLines),
       disabled: applying,
@@ -189,9 +198,9 @@ export default function FileDiff(): React.JSX.Element {
           diff={shownDiff}
           layout={settings.layout}
           lineStaging={lineStaging}
-          loadFile={() => gitizen.fileText(path, selectedCommit?.hash)}
+          loadFile={() => gitizen.fileText(path, shownHash)}
           onLineMenu={
-            selectedCommit
+            shownHash
               ? undefined
               : (event, line, group) => setLineMenu({ x: event.clientX, y: event.clientY, line, group })
           }

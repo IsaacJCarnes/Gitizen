@@ -1,6 +1,9 @@
 import "./Conflicts.css";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
-import { OPERATION_NAME } from "../../utils/conflictText";
+import {
+  FINISHES_WITHOUT_COMMIT,
+  OPERATION_NAME,
+} from "../../utils/conflictText";
 import { pluralize } from "../../utils/format";
 import AbortOperationButton from "./AbortOperationButton";
 
@@ -16,8 +19,11 @@ export default function ConflictBanner(): React.JSX.Element | null {
   } = useGitOperationsContext();
   if (!operation) return null;
   const name = OPERATION_NAME[operation];
-  // A rebase finishes with "Continue rebase", not with a commit.
-  const finish = operation === "rebase" ? "continue" : "commit";
+  // Stash operations finish from the sidebar's button and a rebase with
+  // "Continue rebase", not with a commit.
+  let finish = "commit";
+  if (FINISHES_WITHOUT_COMMIT.has(operation)) finish = "finish";
+  if (operation === "rebase") finish = "continue";
 
   return (
     <div className="conflict-banner">
@@ -35,9 +41,11 @@ export default function ConflictBanner(): React.JSX.Element | null {
         <small>
           {files.length > 0
             ? `Resolve ${pluralize(files.length, "conflicted file")} to ${finish}`
-            : finish === "continue"
-              ? "All conflicts resolved. Continue the rebase below."
-              : "All conflicts resolved. Commit to finish it."}
+            : finish === "commit"
+              ? "All conflicts resolved. Commit to finish it."
+              : finish === "continue"
+                ? "All conflicts resolved. Continue the rebase below."
+                : "All conflicts resolved. Finish it below."}
         </small>
       </span>
       {operation !== "rebase" && <AbortOperationButton />}

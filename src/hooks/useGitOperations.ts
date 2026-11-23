@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  BranchStash,
   CommitFile,
   ConflictState,
   FileChange,
@@ -101,8 +102,36 @@ export interface GitOperations {
    * the tip of the current branch, or of `branch`, which is checked out first.
    */
   undoLastCommit: (commit: GitCommit, branch?: string) => Promise<void>;
-  /** Stashes all uncommitted changes. */
-  stashChanges: (message: string) => Promise<boolean>;
+  /**
+   * Stashes `paths` (all changes when left out) into the current branch's
+   * stash. Resolves to true once stashed; false on failure, or when adding
+   * to the stash stopped on conflicts (see `stashConflict`).
+   */
+  stashChanges: (message: string, paths?: string[]) => Promise<boolean>;
+  /** The current branch's stash, or null. */
+  branchStash: BranchStash | null;
+  /** Applies and drops the branch's stash; false on failure or conflicts. */
+  popStash: () => Promise<boolean>;
+  /** Deletes the branch's stash for good. */
+  dropStash: () => Promise<boolean>;
+  /**
+   * True while the stash is selected in the history (like a commit): the
+   * sidebar then lists its files with Pop and Discard.
+   */
+  stashSelected: boolean;
+  /** Selects the stash, leaving any selected commit. `selectCommit` leaves it. */
+  selectStash: () => void;
+  /** File of the selected stash picked in the sidebar, and its diff. */
+  selectedStashFile: CommitFile | null;
+  stashDiff: string;
+  /** Shows a stash file's diff (or clears it); picking a changed file clears it again. */
+  selectStashFile: (file: CommitFile | null) => void;
+  /**
+   * Set when stashing ("stash") or popping ("pop") just stopped on
+   * conflicts, so the UI can warn before the user resolves them.
+   */
+  stashConflict: "stash" | "pop" | null;
+  dismissStashConflict: () => void;
   checkoutBranch: (branch: string) => Promise<boolean>;
   /** Checks out a commit itself (detached HEAD). */
   checkoutCommit: (hash: string) => Promise<boolean>;
@@ -219,6 +248,11 @@ export function useGitOperations({
   const [remotes, setRemotes] = useState<Remote[]>([]);
   const [syncing, setSyncing] = useState<SyncAction | null>(null);
   const [conflicts, setConflicts] = useState<ConflictState>(NO_CONFLICTS);
+  const [branchStash, setBranchStash] = useState<BranchStash | null>(null);
+  const [selectedStashFile, setSelectedStashFile] = useState<CommitFile | null>(null);
+  const [stashSelected, setStashSelected] = useState(false);
+  const [stashDiff, setStashDiff] = useState("");
+  const [stashConflict, setStashConflict] = useState<"stash" | "pop" | null>(null);
   const [selectedConflict, setSelectedConflict] = useState<string | null>(null);
   // The operation seen by the last refresh, to notice one starting.
   const lastOperation = useRef<ConflictState["operation"]>(null);
@@ -259,6 +293,8 @@ export function useGitOperations({
   // diffed against the newly selected commit.
   const selectCommit = useCallback((commit: GitCommit | null): void => {
     setSelectedCommit(commit);
+    setStashSelected(false);
+    setSelectedStashFile(null);
     setCommitFiles([]);
     setSelectedCommitFile(null);
     setCommitDiff("");
@@ -267,14 +303,16 @@ export function useGitOperations({
   /** Reloads status, history, branches, remotes and conflicts together. */
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const [nextStatus, nextCommits, nextBranches, nextRemotes, nextConflicts] =
+      const [nextStatus, nextCommits, nextBranches, nextRemotes, nextConflicts, nextStash] =
         await Promise.all([
           gitizen.status(),
           gitizen.log(),
           gitizen.branches(),
           gitizen.remotes(),
           gitizen.conflicts(),
+          gitizen.branchStash(),
         ]);
+      setBranchStash(nextStash);
       setStatus(nextStatus);
       setCommits(nextCommits);
       setBranches(nextBranches);
@@ -330,6 +368,7 @@ export function useGitOperations({
     async (directory: string): Promise<void> => {
       setRepo(directory);
       lastOperation.current = null;
+      setStashConflict(null);
       setAmending(false);
       setNeedsForcePush(false);
       pendingForcePush.current = false;
@@ -482,9 +521,29 @@ export function useGitOperations({
   );
 
   const stashChanges = useCallback(
-    (message: string) => runOperation(() => gitizen.stashChanges(message)),
+    async (message: string, paths?: string[]): Promise<boolean> => {
+      let conflicted = false;
+      const ok = await runOperation(async () => {
+        conflicted = (await gitizen.stashChanges(message, paths)) === "conflicts";
+      });
+      if (conflicted) setStashConflict("stash");
+      return ok && !conflicted;
+    },
     [runOperation],
   );
+
+  const popStash = useCallback(async (): Promise<boolean> => {
+    let conflicted = false;
+    const ok = await runOperation(async () => {
+      conflicted = (await gitizen.popStash()) === "conflicts";
+    });
+    if (conflicted) setStashConflict("pop");
+    return ok && !conflicted;
+  }, [runOperation]);
+
+  const dropStash = useCallback(() => runOperation(gitizen.dropStash), [runOperation]);
+
+  const dismissStashConflict = useCallback((): void => setStashConflict(null), []);
 
   const addRemote = useCallback(
     (name: string, url: string) => runOperation(() => gitizen.addRemote(name, url)),
@@ -657,6 +716,46 @@ export function useGitOperations({
     );
   }, [selectedCommit, reportError]);
 
+  const selectStashFile = useCallback((file: CommitFile | null): void => {
+    setSelectedStashFile(file);
+    if (file) setSelectedFile(null);
+  }, []);
+
+  // Picking a changed file takes over from a stash file.
+  useEffect(() => {
+    if (selectedFile) setSelectedStashFile(null);
+  }, [selectedFile]);
+
+  const selectStash = useCallback((): void => {
+    selectCommit(null);
+    setStashSelected(true);
+  }, [selectCommit]);
+
+  // Keep the stash file picked while the stash still has it, and the stash
+  // selected while it exists.
+  useEffect(() => {
+    if (!branchStash) setStashSelected(false);
+    setSelectedStashFile((current) =>
+      current && branchStash?.files.find((file) => file.path === current.path) ? current : null,
+    );
+  }, [branchStash]);
+
+  // Diff of the picked stash file, against the commit the stash was made on.
+  useEffect(() => {
+    if (!branchStash || !selectedStashFile) {
+      setStashDiff("");
+      return;
+    }
+    return loadUnlessCancelled(
+      gitizen.stashDiff(branchStash.hash, selectedStashFile.path, hideWhitespace),
+      setStashDiff,
+      (diffError) => {
+        setStashDiff("");
+        reportError(diffError);
+      },
+    );
+  }, [branchStash, selectedStashFile, hideWhitespace, reportError]);
+
   // Diff of the file chosen within the selected commit.
   useEffect(() => {
     if (!selectedCommit || !selectedCommitFile) {
@@ -718,6 +817,16 @@ export function useGitOperations({
     markPushedCommitRewritten,
     undoLastCommit,
     stashChanges,
+    branchStash,
+    popStash,
+    dropStash,
+    selectedStashFile,
+    stashDiff,
+    selectStashFile,
+    stashSelected,
+    selectStash,
+    stashConflict,
+    dismissStashConflict,
     checkoutBranch,
     checkoutCommit,
     createBranch,

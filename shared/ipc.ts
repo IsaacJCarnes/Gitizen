@@ -17,6 +17,8 @@ import type {
   GitStatus,
   Remote,
   Resolution,
+  BranchStash,
+  StashOutcome,
 } from "./gitTypes";
 
 export const Command = {
@@ -38,6 +40,10 @@ export const Command = {
   Commit: "commit",
   UndoLastCommit: "undo_last_commit",
   StashChanges: "stash_changes",
+  BranchStash: "branch_stash",
+  PopStash: "pop_stash",
+  DropStash: "drop_stash",
+  StashDiff: "stash_diff",
   Checkout: "checkout",
   SetStagedLines: "set_staged_lines",
   DiscardFiles: "discard_files",
@@ -168,8 +174,25 @@ export interface GitizenApi {
   commit(message: string, amend?: boolean): Promise<void>;
   /** Undoes the last commit, keeping its changes staged. Rejects for merge commits. */
   undoLastCommit(): Promise<void>;
-  /** Stashes every uncommitted change (untracked files too), leaving a clean working tree. */
-  stashChanges(message: string): Promise<void>;
+  /**
+   * Stashes `paths` (every change when left out), untracked files too, on
+   * the current branch. A branch keeps one stash: when it has one already,
+   * the changes are added to it, which may stop on conflicts between the two
+   * ("conflicts") for the conflict editor, to finish with
+   * `continueOperation` or undo with `abortOperation`.
+   */
+  stashChanges(message: string, paths?: string[]): Promise<StashOutcome>;
+  /** The current branch's stash, or null if it has none. */
+  branchStash(): Promise<BranchStash | null>;
+  /**
+   * Applies the current branch's stash and drops it (needs nothing staged).
+   * Stops on conflicts with the branch like `stashChanges`.
+   */
+  popStash(): Promise<StashOutcome>;
+  /** Deletes the current branch's stash for good. */
+  dropStash(): Promise<void>;
+  /** Diff of one file in stash `hash` against the commit it was made on (untracked files show as new). */
+  stashDiff(hash: string, path: string, ignoreWhitespace?: boolean): Promise<string>;
   checkout(branch: string): Promise<void>;
   /** The saved AI command line tool for commit messages (e.g. `claude -p`), or "" if none is set up. */
   aiCommitCommand(): Promise<string>;
