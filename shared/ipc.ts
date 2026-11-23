@@ -59,6 +59,11 @@ export const Command = {
   CreateTag: "create_tag",
   CherryPick: "cherry_pick",
   OpenInBrowser: "open_in_browser",
+  RenameBranch: "rename_branch",
+  DeleteBranch: "delete_branch",
+  MergeBranch: "merge_branch",
+  RebaseOntoBranch: "rebase_onto_branch",
+  SquashMergeBranch: "squash_merge_branch",
   Conflicts: "conflicts",
   ResolveConflict: "resolve_conflict",
   ContinueOperation: "continue_operation",
@@ -208,6 +213,23 @@ export interface GitizenApi {
   cherryPick(hash: string, branch: string): Promise<void>;
   /** Opens a https://github.com/ page in the default browser (other URLs are refused). */
   openInBrowser(url: string): Promise<void>;
+  /** Renames a local branch; its upstream setting moves with it. */
+  renameBranch(name: string, newName: string): Promise<void>;
+  /**
+   * Deletes a local branch other than the checked-out one. Without `force`,
+   * rejects if it has commits that aren't merged anywhere else.
+   */
+  deleteBranch(name: string, force: boolean): Promise<void>;
+  /** Merges `name` into the current branch; stopping on conflicts resolves (the conflict editor takes over). */
+  mergeBranch(name: string): Promise<void>;
+  /** Rebases the current branch onto `name` (needs a clean working tree); stopping on conflicts resolves. */
+  rebaseOntoBranch(name: string): Promise<void>;
+  /**
+   * Squashes every change of `name` into one new commit on the current
+   * branch with `message`. On conflicts, resolves with them left to resolve
+   * and the message kept for the commit that finishes it.
+   */
+  squashMergeBranch(name: string, message: string): Promise<void>;
   /** The stopped merge, cherry-pick, rebase or revert (if any) and its unresolved files. */
   conflicts(): Promise<ConflictState>;
   /** Settles one conflicted file (our version, theirs, or as it is now) and stages it. */

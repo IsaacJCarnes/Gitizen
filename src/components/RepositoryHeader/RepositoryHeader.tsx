@@ -1,20 +1,19 @@
 import "./RepositoryHeader.css";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
+import BranchSwitcher from "./BranchSwitcher";
 import RepoSwitcher from "./RepoSwitcher";
 import SyncControls from "./SyncControls";
 
 /**
- * Top bar: repository switcher (recent repositories and "Add new repo"), branch switcher,
+ * Top bar: repository switcher (recent repositories and "Add new repo"),
+ * branch switcher (with a search box and each branch's right-click menu),
  * a button back to unfinished conflicts, publish / fetch / pull / push
  * buttons and a refresh button.
  */
 export default function RepositoryHeader(): React.JSX.Element {
   const {
-    status,
-    branches,
     refresh,
-    checkoutBranch,
     conflicts,
     selectedCommit,
     selectCommit,
@@ -33,23 +32,11 @@ export default function RepositoryHeader(): React.JSX.Element {
       setView("conflict");
     }
   };
-  // A new repository's branch has no commits yet, so it isn't listed in
-  // `branches`; show it anyway so the label isn't blank.
-  const current = status?.branch;
-  const unbornBranch =
-    current && !branches.some((branch) => branch.name === current) ? current : null;
 
   return (
     <header className="repository-header">
       <RepoSwitcher />
-      <select
-        value={status?.branch ?? ""}
-        onChange={(event) => checkoutBranch(event.target.value)}
-      >
-        {status && status.branch === null && <option value="">Detached HEAD</option>}
-        {unbornBranch && <option key={unbornBranch}>{unbornBranch}</option>}
-        {branches.map((branch) => <option key={branch.name}>{branch.name}</option>)}
-      </select>
+      <BranchSwitcher />
       {conflictsHidden && (
         <button className="conflict-button" onClick={showConflicts}>
           {conflicts.files.length > 0

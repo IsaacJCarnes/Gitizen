@@ -112,6 +112,15 @@ export interface GitOperations {
   createTag: (name: string, hash: string, message: string) => Promise<boolean>;
   /** Cherry-picks `hash` onto `branch` (switching to it). */
   cherryPick: (hash: string, branch: string) => Promise<boolean>;
+  renameBranch: (name: string, newName: string) => Promise<boolean>;
+  /** Deletes a local branch; `force` also deletes unmerged commits. */
+  deleteBranch: (name: string, force: boolean) => Promise<boolean>;
+  /** Merges `name` into the current branch (conflicts open the conflict editor). */
+  mergeBranch: (name: string) => Promise<boolean>;
+  /** Rebases the current branch onto `name`. */
+  rebaseOntoBranch: (name: string) => Promise<boolean>;
+  /** Squashes `name`'s changes into one commit on the current branch. */
+  squashMergeBranch: (name: string, message: string) => Promise<boolean>;
   /** The stopped merge, cherry-pick, rebase or revert, and its unresolved files. */
   conflicts: ConflictState;
   /**
@@ -167,6 +176,7 @@ const NO_CONFLICTS: ConflictState = {
   message: null,
   incoming: null,
   current: null,
+  step: null,
 };
 
 /**
@@ -279,7 +289,8 @@ export function useGitOperations({
           selectCommit(null);
           // Start the commit form with git's message for finishing it
           // ("Merge branch 'x'"), unless the user is already writing one.
-          const prepared = nextConflicts.message;
+          // A rebase keeps each commit's own message, so it needs none.
+          const prepared = nextConflicts.operation === "rebase" ? null : nextConflicts.message;
           if (prepared && !summaryRef.current.trim()) {
             const [first, ...rest] = prepared.split("\n");
             setMessage(first, rest.join("\n").trim());
@@ -365,6 +376,15 @@ export function useGitOperations({
   );
 
   const commitChanges = useCallback(async (): Promise<boolean> => {
+    // A rebase step is committed by git itself with the commit's own
+    // message (or dropped, if the resolution left nothing to commit), so it
+    // needs no summary and never runs `git commit` here.
+    if (conflicts.operation === "rebase") {
+      return runOperation(async () => {
+        await gitizen.continueOperation();
+        setMessage();
+      });
+    }
     const summary = commitSummary.trim();
     if (!summary) return false;
     const description = commitDescription.trim();
@@ -372,10 +392,8 @@ export function useGitOperations({
     const message = description ? `${summary}\n\n${description}` : summary;
 
     return runOperation(async () => {
+      // Committing finishes a merge, cherry-pick or revert by itself.
       await gitizen.commit(message, amending);
-      // Committing finishes a merge, cherry-pick or revert by itself; a
-      // rebase then moves on to its next commit.
-      if (conflicts.operation === "rebase") await gitizen.continueOperation();
       if (amending && pendingForcePush.current) setNeedsForcePush(true);
       pendingForcePush.current = false;
       setMessage();
@@ -498,6 +516,32 @@ export function useGitOperations({
 
   const cherryPick = useCallback(
     (hash: string, branch: string) => runOperation(() => gitizen.cherryPick(hash, branch)),
+    [runOperation],
+  );
+
+  const renameBranch = useCallback(
+    (name: string, newName: string) => runOperation(() => gitizen.renameBranch(name, newName)),
+    [runOperation],
+  );
+
+  const deleteBranch = useCallback(
+    (name: string, force: boolean) => runOperation(() => gitizen.deleteBranch(name, force)),
+    [runOperation],
+  );
+
+  const mergeBranch = useCallback(
+    (name: string) => runOperation(() => gitizen.mergeBranch(name)),
+    [runOperation],
+  );
+
+  const rebaseOntoBranch = useCallback(
+    (name: string) => runOperation(() => gitizen.rebaseOntoBranch(name)),
+    [runOperation],
+  );
+
+  const squashMergeBranch = useCallback(
+    (name: string, message: string) =>
+      runOperation(() => gitizen.squashMergeBranch(name, message)),
     [runOperation],
   );
 
@@ -679,6 +723,11 @@ export function useGitOperations({
     createBranch,
     createTag,
     cherryPick,
+    renameBranch,
+    deleteBranch,
+    mergeBranch,
+    rebaseOntoBranch,
+    squashMergeBranch,
     conflicts,
     selectedConflict,
     setSelectedConflict,

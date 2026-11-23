@@ -1,5 +1,5 @@
-//! Merge conflicts: what operation stopped (merge, cherry-pick, rebase or
-//! revert) and which files conflict, plus everything the conflict editor can
+//! Merge conflicts: what operation stopped (merge, squash merge,
+//! cherry-pick, rebase or revert) and which files conflict, plus everything the conflict editor can
 //! do about them: show both sides, save a resolution, ask the AI command for
 //! one, open an external merge tool, take one side, mark a file resolved,
 //! and continue or abort the operation.
@@ -24,13 +24,17 @@ pub enum Operation {
     CherryPick,
     Rebase,
     Revert,
+    /// `git merge --squash`: the branch's changes, waiting to be committed
+    /// as one ordinary commit.
+    Squash,
 }
 
 impl Operation {
-    /// The git command that runs it, which also takes `--continue` and `--abort`.
+    /// The git command that runs it, which also takes `--continue` and
+    /// `--abort` (except a squash merge, handled separately).
     fn git_name(self) -> &'static str {
         match self {
-            Operation::Merge => "merge",
+            Operation::Merge | Operation::Squash => "merge",
             Operation::CherryPick => "cherry-pick",
             Operation::Rebase => "rebase",
             Operation::Revert => "revert",
@@ -67,6 +71,29 @@ pub struct ConflictState {
     /// The branch it is being brought into (for a rebase, the branch being
     /// rebased), or the short hash of a detached HEAD.
     pub current: Option<String>,
+    /// For a rebase, which of its commits it is on, e.g. 2 of 3. None
+    /// otherwise.
+    pub step: Option<RebaseStep>,
+}
+
+/// How far a rebase has got: it is replaying commit `current` of `total`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RebaseStep {
+    pub current: u32,
+    pub total: u32,
+}
+
+/// The rebase's step, from the counters git keeps in its state folder
+/// ("rebase-merge" for today's rebase, "rebase-apply" for the older one).
+fn rebase_step(dir: &Path) -> Option<RebaseStep> {
+    let number = |name: &str| -> Option<u32> {
+        std::fs::read_to_string(git_file(dir, name)?).ok()?.trim().parse().ok()
+    };
+    let (current, total) = match (number("rebase-merge/msgnum"), number("rebase-merge/end")) {
+        (Some(current), Some(total)) => (current, total),
+        _ => (number("rebase-apply/next")?, number("rebase-apply/last")?),
+    };
+    Some(RebaseStep { current, total })
 }
 
 #[tauri::command]
@@ -74,7 +101,7 @@ pub async fn conflicts(repo: Repo<'_>) -> Result<ConflictState, String> {
     conflicts_in(&repo.require()?)
 }
 
-fn conflicts_in(dir: &Path) -> Result<ConflictState, String> {
+pub(crate) fn conflicts_in(dir: &Path) -> Result<ConflictState, String> {
     let files = conflicted_files(dir)?
         .into_iter()
         .map(|(path, code)| {
@@ -90,7 +117,8 @@ fn conflicts_in(dir: &Path) -> Result<ConflictState, String> {
         Some(operation) => branch_names(dir, operation),
         None => (None, None),
     };
-    Ok(ConflictState { operation, files, message, incoming, current })
+    let step = (operation == Some(Operation::Rebase)).then(|| rebase_step(dir)).flatten();
+    Ok(ConflictState { operation, files, message, incoming, current, step })
 }
 
 /// Where `name` (e.g. "MERGE_HEAD") is in the git folder. `--git-path`
@@ -115,6 +143,8 @@ fn branch_names(dir: &Path, operation: Operation) -> (Option<String>, Option<Str
         Operation::Merge => (read("MERGE_HEAD"), None),
         Operation::CherryPick => (read("CHERRY_PICK_HEAD"), None),
         Operation::Revert => (read("REVERT_HEAD"), None),
+        // SQUASH_MSG lists the squashed commits, newest (the branch tip) first.
+        Operation::Squash => (squashed_tip(dir), None),
         Operation::Rebase => (
             rebase_file("onto"),
             rebase_file("head-name").map(|name| name.trim_start_matches("refs/heads/").to_string()),
@@ -149,6 +179,14 @@ fn commit_name(dir: &Path, hash: &str, current: Option<&str>) -> String {
     run_git(dir, ["name-rev", "--name-only", "--no-undefined", "--exclude=refs/tags/*", hash])
         .map(|name| name.trim().trim_start_matches("remotes/").to_string())
         .unwrap_or_else(|_| hash.get(..7).unwrap_or(hash).to_string())
+}
+
+/// The newest commit a squash merge brings in, from the "commit <hash>"
+/// lines git writes to SQUASH_MSG.
+fn squashed_tip(dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(git_file(dir, "SQUASH_MSG")?).ok()?;
+    let hash = text.lines().find_map(|line| line.strip_prefix("commit "))?.trim();
+    assert_hash(hash).ok().map(str::to_string)
 }
 
 /// `MERGE_MSG`, which merge, cherry-pick and revert write for the commit
@@ -212,6 +250,9 @@ fn operation_in(dir: &Path) -> Option<Operation> {
         Some(Operation::CherryPick)
     } else if exists("REVERT_HEAD") {
         Some(Operation::Revert)
+    } else if exists("SQUASH_MSG") {
+        // Left by `merge --squash` until the result is committed (or reset).
+        Some(Operation::Squash)
     } else {
         None
     }
@@ -369,13 +410,19 @@ pub async fn continue_operation(repo: Repo<'_>) -> Result<(), String> {
     continue_in(&repo.require()?)
 }
 
-fn continue_in(dir: &Path) -> Result<(), String> {
+pub(crate) fn continue_in(dir: &Path) -> Result<(), String> {
     if !conflicted_files(dir)?.is_empty() {
         return Err("Resolve every conflicted file first.".into());
     }
     let result = match operation_in(dir).ok_or("Nothing is in progress")? {
         // `merge --continue` would do the same, but needs git 2.12+.
         Operation::Merge => run_git(dir, ["commit", "--no-edit"]),
+        // An ordinary commit. git would take SQUASH_MSG (the list of
+        // squashed commits) over the message Gitizen kept in MERGE_MSG.
+        Operation::Squash => {
+            let message = prepared_message(dir).unwrap_or_else(|| "Squash merge".into());
+            run_git(dir, ["commit", "-m", message.as_str()])
+        }
         operation => run_git(dir, [operation.git_name(), "--continue"]),
     };
     unless_conflicted(dir, result.map(drop))
@@ -388,9 +435,13 @@ pub async fn abort_operation(repo: Repo<'_>) -> Result<(), String> {
     abort_in(&repo.require()?)
 }
 
-fn abort_in(dir: &Path) -> Result<(), String> {
-    let operation = operation_in(dir).ok_or("Nothing is in progress")?;
-    run_git(dir, [operation.git_name(), "--abort"]).map(drop)
+pub(crate) fn abort_in(dir: &Path) -> Result<(), String> {
+    match operation_in(dir).ok_or("Nothing is in progress")? {
+        // A squash merge has no MERGE_HEAD for `merge --abort`; this is what
+        // that does, and it clears SQUASH_MSG too.
+        Operation::Squash => run_git(dir, ["reset", "--merge"]).map(drop),
+        operation => run_git(dir, [operation.git_name(), "--abort"]).map(drop),
+    }
 }
 
 const RESOLVE_PROMPT: &str = "The file below has git conflicts: each conflict is a block \
@@ -656,7 +707,7 @@ mod tests {
         let dir = diverged_repo();
         assert_eq!(
             conflicts_in(&dir).unwrap(),
-            ConflictState { operation: None, files: vec![], message: None, incoming: None, current: None }
+            ConflictState { operation: None, files: vec![], message: None, incoming: None, current: None, step: None }
         );
 
         // The merge stops; `unless_conflicted` treats that as handled.

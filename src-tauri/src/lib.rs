@@ -2,6 +2,7 @@
 //! commands the UI calls through `src/api/gitizen.ts`.
 
 mod ai_commit;
+mod branches;
 mod commands;
 mod commit_actions;
 mod conflicts;
@@ -64,6 +65,11 @@ pub fn run() {
             commit_actions::create_tag,
             commit_actions::cherry_pick,
             commit_actions::open_in_browser,
+            branches::rename_branch,
+            branches::delete_branch,
+            branches::merge_branch,
+            branches::rebase_onto_branch,
+            branches::squash_merge_branch,
             conflicts::conflicts,
             conflicts::resolve_conflict,
             conflicts::continue_operation,

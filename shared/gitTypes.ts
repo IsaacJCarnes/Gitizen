@@ -65,8 +65,11 @@ export interface Remote {
   url: string;
 }
 
-/** An operation that stopped part way, usually on a conflict. */
-export type Operation = "merge" | "cherryPick" | "rebase" | "revert";
+/**
+ * An operation that stopped part way, usually on a conflict. "squash" is a
+ * squash merge, whose changes wait to be committed as one commit.
+ */
+export type Operation = "merge" | "cherryPick" | "rebase" | "revert" | "squash";
 
 /** A file git couldn't merge by itself. */
 export interface ConflictFile {
@@ -88,6 +91,8 @@ export interface ConflictState {
   incoming: string | null;
   /** The branch it is being brought into (the branch being rebased, for a rebase), or a short hash. */
   current: string | null;
+  /** For a rebase, which of its commits it is replaying (e.g. 2 of 3); null otherwise. */
+  step: { current: number; total: number } | null;
 }
 
 /** What the conflict editor shows for one file. */
@@ -114,6 +119,10 @@ export type Resolution = "ours" | "theirs" | "asIs";
 export interface GitBranch {
   name: string;
   current: boolean;
+  /** Commits on this branch that the checked-out commit (HEAD) doesn't have. */
+  ahead: number;
+  /** Commits HEAD has that this branch doesn't. */
+  behind: number;
 }
 
 /** A file changed by a commit, relative to its first parent. */

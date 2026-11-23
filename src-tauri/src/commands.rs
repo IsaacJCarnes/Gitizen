@@ -22,6 +22,7 @@ use crate::git::repository::{
 };
 use crate::git::runner::{run_git, run_git_bytes, run_git_with_input};
 use crate::git::types::{CommitFile, FileDiff, GitBranch, GitCommit, GitStatus};
+use crate::branches::ahead_behind;
 use crate::util::file_in_repo;
 
 /// Shows a folder picker and opens the chosen repository. Returns its path,
@@ -91,19 +92,19 @@ pub async fn log(repo: Repo<'_>) -> Result<Vec<GitCommit>, String> {
     Ok(parse_log(&output))
 }
 
+/// Local branches, each with how far it is ahead of and behind HEAD.
 #[tauri::command]
 pub async fn branches(repo: Repo<'_>) -> Result<Vec<GitBranch>, String> {
-    let output = run_git(
-        &repo.require()?,
-        ["for-each-ref", "--format=%(HEAD)%(refname:short)", "refs/heads"],
-    )?;
+    let dir = repo.require()?;
+    let output = run_git(&dir, ["for-each-ref", "--format=%(HEAD)%(refname:short)", "refs/heads"])?;
     Ok(output
         .lines()
         .filter(|line| !line.is_empty())
         .map(|line| {
             // %(HEAD) is "*" for the checked-out branch and " " otherwise.
             let (marker, name) = line.split_at(1);
-            GitBranch { name: name.to_string(), current: marker == "*" }
+            let (ahead, behind) = ahead_behind(&dir, name);
+            GitBranch { name: name.to_string(), current: marker == "*", ahead, behind }
         })
         .collect())
 }
@@ -786,7 +787,10 @@ mod tests {
         let branches = call(&window, "branches", json!({})).unwrap();
         assert_eq!(
             branches,
-            json!([{ "name": "main", "current": true }, { "name": "other", "current": false }])
+            json!([
+                { "name": "main", "current": true, "ahead": 0, "behind": 0 },
+                { "name": "other", "current": false, "ahead": 0, "behind": 1 },
+            ])
         );
         call(&window, "checkout", json!({ "branch": "other" })).unwrap();
         assert_eq!(call(&window, "status", json!({})).unwrap()["branch"], "other");

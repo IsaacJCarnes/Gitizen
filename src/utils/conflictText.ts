@@ -11,6 +11,7 @@ export const OPERATION_NAME: Record<Operation, string> = {
   cherryPick: "cherry-pick",
   rebase: "rebase",
   revert: "revert",
+  squash: "squash merge",
 };
 
 /** Lines both sides agree on. */
