@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type PropsWithChildren } fro
 import { AppContext, type RepoView } from "./AppContext";
 import { GitOperationsContext } from "./GitOperationsContext";
 import { useGitOperations } from "../hooks/useGitOperations";
+import { useGitHubAccount } from "../hooks/useGitHubAccount";
 import { gitizen } from "../api/gitizen";
 
 /** Provides both the UI state (AppContext) and the git state (GitOperationsContext). */
@@ -26,11 +27,12 @@ export function AppProvider({ children }: PropsWithChildren): React.JSX.Element 
     gitizen.forgetRepo(path).then(setRecentRepos).catch(console.error);
   }, []);
 
-  const appData = useMemo(
-    () => ({ view, setView, recentRepos, forgetRepo, skipDiscardWarning, setSkipDiscardWarning }),
-    [view, recentRepos, forgetRepo, skipDiscardWarning],
-  );
   const operations = useGitOperations({ onRepositoryOpened: rememberRepo });
+  const github = useGitHubAccount(operations.reportError);
+  const appData = useMemo(
+    () => ({ view, setView, recentRepos, forgetRepo, skipDiscardWarning, setSkipDiscardWarning, github }),
+    [view, recentRepos, forgetRepo, skipDiscardWarning, github],
+  );
 
   return (
     <AppContext.Provider value={appData}>

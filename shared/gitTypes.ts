@@ -145,6 +145,28 @@ export type ChangesOnSwitch = "leave" | "bring";
 /** What stashing or popping did: finished, or stopped on conflicts to resolve. */
 export type StashOutcome = "done" | "conflicts";
 
+/** The GitHub account Gitizen is signed in to. */
+export interface GitHubAccount {
+  login: string;
+  /** The profile's display name, or null when it has none. */
+  name: string | null;
+  avatarUrl: string;
+}
+
+/** One of the signed-in account's GitHub repositories, as listed for cloning. */
+export interface GitHubRepository {
+  /** "owner/name". */
+  fullName: string;
+  name: string;
+  owner: string;
+  private: boolean;
+  description: string | null;
+  /** The https URL to clone. */
+  cloneUrl: string;
+  /** When it last changed, in ISO 8601. */
+  updatedAt: string;
+}
+
 /** A local branch. */
 export interface GitBranch {
   name: string;

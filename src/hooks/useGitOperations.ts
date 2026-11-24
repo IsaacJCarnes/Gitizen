@@ -87,6 +87,8 @@ export interface GitOperations {
   openRepositoryAt: (path: string) => Promise<void>;
   /** Runs `git init` in `path` (a folder that isn't a repository yet) and opens it. */
   initRepository: (path: string) => Promise<void>;
+  /** Clones `url` into folder `name` inside `parent` and opens the clone. */
+  cloneRepository: (url: string, parent: string, name: string) => Promise<boolean>;
   refresh: () => Promise<void>;
   /** Stages (`staged` true) or unstages every given path in one git call. */
   setFilesStaged: (paths: string[], staged: boolean) => Promise<boolean>;
@@ -404,6 +406,18 @@ export function useGitOperations({
   const initRepository = useCallback(
     (path: string) => openWith(gitizen.initRepo(path)),
     [openWith],
+  );
+  const cloneRepository = useCallback(
+    async (url: string, parent: string, name: string): Promise<boolean> => {
+      try {
+        await showRepository(await gitizen.cloneRepository(url, parent, name));
+        return true;
+      } catch (cloneError) {
+        reportError(cloneError);
+        return false;
+      }
+    },
+    [showRepository, reportError],
   );
 
   const setFilesStaged = useCallback(
@@ -769,6 +783,7 @@ export function useGitOperations({
     openRepository,
     openRepositoryAt,
     initRepository,
+    cloneRepository,
     refresh,
     setFilesStaged,
     commitChanges,

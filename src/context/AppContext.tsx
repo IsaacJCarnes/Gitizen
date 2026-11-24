@@ -1,4 +1,5 @@
 import { useContext, createContext } from "react";
+import type { GitHubAccountState } from "../hooks/useGitHubAccount";
 
 /**
  * What the main panel shows: "history" is the commit graph, "diff" is the
@@ -21,6 +22,8 @@ export interface AppData {
    */
   skipDiscardWarning: boolean;
   setSkipDiscardWarning: (skip: boolean) => void;
+  /** The GitHub sign-in, which publishing and cloning from GitHub need. */
+  github: GitHubAccountState;
 }
 
 export const AppContext = createContext<AppData | undefined>(undefined);

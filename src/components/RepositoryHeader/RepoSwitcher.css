@@ -82,3 +82,9 @@
   border-radius: 0 0 var(--radius) var(--radius);
   color: var(--accent);
 }
+
+/* The second of the bottom actions sits right under the first. */
+.repo-switcher-menu .repo-switcher-clone {
+  margin-top: 0;
+  border-top: none;
+}

@@ -11,11 +11,17 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 - Every repository that opens successfully is saved to a recent list (most recent first, up to 15), kept in `recent-repositories.json` in the app's config folder so it survives restarts.
 - The repository name in the header opens a dropdown of recent repositories: click one to switch to it, or hover and click × to remove it from the list. **Add new repo…** at the bottom opens the folder picker.
 - The start screen lists recent repositories under **Open repository** so you can reopen one with a click.
+- **Clone repository** (on the start screen, and **Clone repository…** in the repository dropdown) clones into a new folder and opens it. Pick the repository from your GitHub repositories (yours, collaborations and your organizations', most recently updated first, with a filter box; needs the GitHub sign-in), or paste any URL. Choose the folder to clone into (**Browse…**, remembered for next time) and the new folder's name, which follows the repository's name until you type your own. A folder that already exists must be empty. Private repositories sign in through git's credential helper like any other git command.
 - Refresh button reloads status, history, branches, remotes, the branch's stash and any stopped operation.
+
+### GitHub account
+- **Sign in to GitHub** in the header (and on the start screen) signs in through git's credential helper: Git Credential Manager, which comes with Git for Windows, opens GitHub's sign-in in the browser. Without it, paste a personal access token instead (a classic token needs the `repo` scope). Either way the sign-in is checked with GitHub and saved in the credential helper, so git's own pushes and pulls to github.com use it too, and Gitizen picks it up again at the next start.
+- Signed in, the button shows your avatar and login; its menu opens your profile or signs out. Signing out removes the sign-in from the credential helper as well, so git asks again next time.
+- The token never reaches the UI: the backend asks the credential helper for it and calls GitHub's REST API itself.
 
 ### Remotes and syncing
 - The header's sync buttons work like GitHub Desktop's:
-  - **Publish repository** while the repository has no remote. It opens a modal that either creates the repository on GitHub with the GitHub CLI (`gh`, signed in with `gh auth login`; name, optional description, private or public), which adds it as `origin` and pushes the current branch, or adds an existing repository's URL as a remote.
+  - **Publish repository** while the repository has no remote. It opens a modal that either creates the repository on the signed-in GitHub account (name, optional description, private or public; see GitHub account), which adds it as `origin` and pushes the current branch, or adds an existing repository's URL as a remote.
   - **Publish branch** (beside **Fetch**) for a branch that isn't on the remote yet: pushes it to `origin` (or the only remote) and makes it track the remote branch.
   - Otherwise **Fetch**, **Pull ↓** and **Push ↑**, with how many commits Pull and Push would move. A non-zero count highlights the button.
 - Fetch downloads from every remote and prunes remote branches deleted there. Pull merges the upstream into the branch unless `pull.rebase` is set; stopping on conflicts opens the conflict editor. Push pushes to the tracked branch and takes annotated tags on the pushed commits along.
@@ -137,7 +143,9 @@ src-tauri/               Rust backend (Tauri 2)
     commands.rs          Core git commands: open, status, log, branches, diffs, staging, commit, undo, checkout
     branches.rs          Switch (leaving or bringing changes), rename, delete, merge, rebase onto and squash merge local branches
     commit_actions.rs    Commit menu actions: checkout commit, create branch or tag, cherry-pick, open on GitHub
-    remote.rs            Remotes, publishing with the GitHub CLI, fetch, pull and push
+    remote.rs            Remotes, publishing to GitHub, fetch, pull and push
+    clone.rs             Cloning from a URL, listing the account's GitHub repositories, picking a folder
+    github.rs            GitHub sign-in through git's credential helper (or a token), and GitHub's REST API
     conflicts.rs         Stopped operations and conflicted files: conflict editor data, resolve, continue, abort, AI resolve, merge tool
     stash.rs             One stash per branch: stash, add to it, pop, drop, and their conflicts
     discard.rs           Discarding files and single lines
@@ -176,6 +184,8 @@ src/                     UI (React)
     EmptyRepositoryView/ Start screen before a repository is open
     ErrorModal/          Pops up failed operations; offers git init for non-repositories
     RepositoryHeader/    Top bar: repo switcher, branch switcher, sync controls and publish modal, refresh
+    GitHub/              The GitHub account button and sign-in modal
+    Clone/               The clone modal (from GitHub or a URL)
     RepoSidebar/         Left sidebar: working-tree files, commit form, commit files
     RepoPanel/           Main panel: commit history graph, commit menu and its dialogs, file diff and editor
 ```
@@ -190,11 +200,11 @@ src/                     UI (React)
 - Operations that can stop on conflicts (merge, pull, cherry-pick, rebase, continue, stash) treat stopping with unmerged files as success, and the conflict editor takes over.
 - Tauri maps camelCase argument names from the UI to snake_case Rust parameters (`oldPath` becomes `old_path`).
 - Parsing logic is kept in pure functions (`src-tauri/src/git/parsers.rs`, `src/utils/`) so it can be unit tested without Tauri or React.
-- Git is run through the git CLI, so it must be installed and on PATH. Publishing to GitHub also needs the GitHub CLI (`gh`).
+- Git is run through the git CLI, so it must be installed and on PATH. GitHub's API is called from Rust with `ureq`.
 
 ## Requirements
 - Node.js, Git, and the Rust toolchain (rustup) with the Microsoft C++ Build Tools on Windows. See https://v2.tauri.app/start/prerequisites/.
-- Optional: the GitHub CLI (`gh`) for **Publish repository**, and any command line AI tool that reads stdin (e.g. `claude -p`) for AI commit messages and conflict resolving.
+- Optional: any command line AI tool that reads stdin (e.g. `claude -p`) for AI commit messages and conflict resolving.
 
 ## Scripts
 - `npm run app:dev`: start Vite and the Tauri app in development mode

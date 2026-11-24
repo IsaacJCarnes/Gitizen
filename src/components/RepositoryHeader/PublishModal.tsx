@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import { baseName } from "../../utils/format";
 import FormModal from "../common/FormModal";
+import SignInModal from "../GitHub/SignInModal";
 
 type Mode = "github" | "existing";
 
@@ -10,12 +12,14 @@ interface PublishModalProps {
 }
 
 /**
- * Puts a repository that has no remote online: either creates it on GitHub
- * (through the GitHub CLI, which pushes the current branch too), or adds an
+ * Puts a repository that has no remote online: either creates it on the
+ * signed-in GitHub account (and pushes the current branch there), or adds an
  * existing repository's URL as a remote so the branch can be pushed there.
  */
 export default function PublishModal({ onDismiss }: PublishModalProps): React.JSX.Element {
   const { repo, addRemote, publishRepository } = useGitOperationsContext();
+  const { account } = useAppContext().github;
+  const [signingIn, setSigningIn] = useState(false);
   const [mode, setMode] = useState<Mode>("github");
   const [name, setName] = useState(baseName(repo ?? "") ?? "");
   const [description, setDescription] = useState("");
@@ -24,12 +28,14 @@ export default function PublishModal({ onDismiss }: PublishModalProps): React.JS
   const [url, setUrl] = useState("");
   const github = mode === "github";
 
+  if (signingIn) return <SignInModal onDismiss={() => setSigningIn(false)} />;
+
   return (
     <FormModal
       title="Publish repository"
       submitLabel={github ? "Publish" : "Add remote"}
       workingLabel="Working…"
-      ready={github ? name.trim() !== "" : remoteName.trim() !== "" && url.trim() !== ""}
+      ready={github ? account !== null && name.trim() !== "" : remoteName.trim() !== "" && url.trim() !== ""}
       onSubmit={() =>
         github ? publishRepository(name, description, isPrivate) : addRemote(remoteName, url)
       }
@@ -72,10 +78,19 @@ export default function PublishModal({ onDismiss }: PublishModalProps): React.JS
             />
             Keep this repository private
           </label>
-          <p className="hint">
-            Uses the GitHub CLI (<code>gh</code>), signed in with <code>gh auth login</code>. The
-            new repository becomes <code>origin</code> and the current branch is pushed to it.
-          </p>
+          {account ? (
+            <p className="hint">
+              Creates the repository on <b>{account.login}</b>. It becomes <code>origin</code> and
+              the current branch is pushed to it.
+            </p>
+          ) : (
+            <p className="hint">
+              Sign in to GitHub to create the repository there.{" "}
+              <button type="button" onClick={() => setSigningIn(true)}>
+                Sign in to GitHub
+              </button>
+            </p>
+          )}
         </>
       ) : (
         <>

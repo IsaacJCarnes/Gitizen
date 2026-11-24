@@ -3,12 +3,14 @@
 
 mod ai_commit;
 mod branches;
+mod clone;
 mod commands;
 mod commit_actions;
 mod conflicts;
 mod discard;
 mod edit_file;
 mod git;
+mod github;
 mod recent_repos;
 mod remote;
 mod settings;
@@ -16,6 +18,7 @@ mod stash;
 mod util;
 
 use git::repository::OpenRepository;
+use github::GitHubSession;
 use settings::AppSettings;
 use recent_repos::RecentRepositories;
 
@@ -27,6 +30,7 @@ pub fn run() {
         .manage(OpenRepository::default())
         .manage(RecentRepositories::default())
         .manage(AppSettings::default())
+        .manage(GitHubSession::default())
         .invoke_handler(tauri::generate_handler![
             commands::open_repository,
             commands::init_repository,
@@ -60,6 +64,13 @@ pub fn run() {
             settings::saved_command,
             settings::save_command,
             ai_commit::generate_commit_message,
+            github::github_account,
+            github::github_sign_in,
+            github::github_sign_in_with_token,
+            github::github_sign_out,
+            clone::github_repositories,
+            clone::choose_folder,
+            clone::clone_repository,
             remote::remotes,
             remote::add_remote,
             remote::publish_repository,

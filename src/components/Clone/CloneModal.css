@@ -1,0 +1,75 @@
+/* The clone modal is wider, to fit repository names and the folder path. */
+.action-modal:has(.clone-form) {
+  width: min(560px, calc(100vw - 48px));
+}
+
+.clone-form > .button-group {
+  justify-self: start;
+}
+
+.clone-form > .button-group button {
+  padding: 2px 12px;
+}
+
+.clone-picker {
+  display: grid;
+  gap: 6px;
+}
+
+.clone-list {
+  height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.clone-list li {
+  display: grid;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.clone-list li:hover {
+  background: var(--hover);
+}
+
+.clone-list li.on {
+  background: var(--selected);
+}
+
+.clone-list li.placeholder {
+  padding: 12px 10px;
+  cursor: default;
+}
+
+.clone-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clone-name small {
+  margin-left: 4px;
+  font-weight: 400;
+  color: var(--mute);
+}
+
+.clone-description {
+  color: var(--mute);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The folder field and its Browse button on one line. */
+.clone-folder {
+  display: flex;
+  gap: 6px;
+}
+
+.clone-folder input {
+  flex: 1;
+  min-width: 0;
+}

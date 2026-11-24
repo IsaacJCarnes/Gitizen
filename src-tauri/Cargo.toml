@@ -18,6 +18,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+ureq = { version = "2", features = ["json"] }
 
 [dev-dependencies]
 # Mock runtime for calling commands through the real IPC layer in tests.

@@ -13,6 +13,8 @@ import type {
   ConflictVersions,
   ExternalTool,
   FileDiff,
+  GitHubAccount,
+  GitHubRepository,
   GitBranch,
   GitCommit,
   GitStatus,
@@ -56,6 +58,13 @@ export const Command = {
   SavedCommand: "saved_command",
   SaveCommand: "save_command",
   GenerateCommitMessage: "generate_commit_message",
+  GitHubAccount: "github_account",
+  GitHubSignIn: "github_sign_in",
+  GitHubSignInWithToken: "github_sign_in_with_token",
+  GitHubSignOut: "github_sign_out",
+  GitHubRepositories: "github_repositories",
+  ChooseFolder: "choose_folder",
+  CloneRepository: "clone_repository",
   Remotes: "remotes",
   AddRemote: "add_remote",
   PublishRepository: "publish_repository",
@@ -206,14 +215,38 @@ export interface GitizenApi {
    * what it prints into summary and description. Stages and commits nothing.
    */
   generateCommitMessage(): Promise<GeneratedCommitMessage>;
+  /**
+   * The signed-in GitHub account, or null. A sign-in git's credential helper
+   * saved earlier (Git Credential Manager on Windows) counts, so this signs
+   * in by itself when one exists.
+   */
+  gitHubAccount(): Promise<GitHubAccount | null>;
+  /**
+   * Signs in to GitHub through git's credential helper, which shows its own
+   * sign-in window (Git Credential Manager: in the browser). The sign-in is
+   * kept by the helper, for git's own pushes too.
+   */
+  gitHubSignIn(): Promise<GitHubAccount>;
+  /** Signs in with a personal access token (checked with GitHub, then saved like any sign-in). */
+  gitHubSignInWithToken(token: string): Promise<GitHubAccount>;
+  /** Signs out, removing the GitHub sign-in from git's credential helper too. */
+  gitHubSignOut(): Promise<void>;
+  /** The signed-in account's repositories (its own, collaborations and organizations'), most recently updated first. */
+  gitHubRepositories(): Promise<GitHubRepository[]>;
+  /** Shows a folder picker. Resolves to the chosen folder, or null if cancelled. */
+  chooseFolder(): Promise<string | null>;
+  /**
+   * Clones `url` into a new (or empty) folder `name` inside `parent`, and
+   * opens it like `openRepoAt`. Resolves to the clone's path.
+   */
+  cloneRepository(url: string, parent: string, name: string): Promise<string>;
   /** Every configured remote with its URL. */
   remotes(): Promise<Remote[]>;
   /** Adds a remote (normally `origin`) pointing at an existing repository URL. */
   addRemote(name: string, url: string): Promise<void>;
   /**
-   * Creates a GitHub repository with the GitHub CLI (`gh`), adds it as
-   * `origin` and pushes the current branch. Rejects with gh's message (or
-   * install instructions when gh is missing).
+   * Creates a repository on the signed-in GitHub account, adds it as
+   * `origin` and pushes the current branch. Rejects when signed out.
    */
   publishRepository(name: string, description: string, isPrivate: boolean): Promise<void>;
   /** Fetches every remote and prunes deleted remote branches. */

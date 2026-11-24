@@ -1,0 +1,23 @@
+/* The GitHub account button: avatar and login, or "Sign in to GitHub". */
+.account-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.account-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+}
+
+/* The token field and its button on one line. */
+.modal-form .token-row {
+  display: flex;
+  gap: 6px;
+}
+
+.modal-form .token-row input {
+  flex: 1;
+  min-width: 0;
+}

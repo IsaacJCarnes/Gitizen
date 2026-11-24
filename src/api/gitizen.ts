@@ -47,6 +47,13 @@ export const gitizen: GitizenApi = {
   savedCommand: (which) => invoke(Command.SavedCommand, { which }),
   saveCommand: (which, command) => invoke(Command.SaveCommand, { which, command }),
   generateCommitMessage: () => invoke(Command.GenerateCommitMessage),
+  gitHubAccount: () => invoke(Command.GitHubAccount),
+  gitHubSignIn: () => invoke(Command.GitHubSignIn),
+  gitHubSignInWithToken: (token) => invoke(Command.GitHubSignInWithToken, { token }),
+  gitHubSignOut: () => invoke(Command.GitHubSignOut),
+  gitHubRepositories: () => invoke(Command.GitHubRepositories),
+  chooseFolder: () => invoke(Command.ChooseFolder),
+  cloneRepository: (url, parent, name) => invoke(Command.CloneRepository, { url, parent, name }),
   remotes: () => invoke(Command.Remotes),
   addRemote: (name, url) => invoke(Command.AddRemote, { name, url }),
   // The Rust parameter is named `private`, which is reserved in TypeScript.

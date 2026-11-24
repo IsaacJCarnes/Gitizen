@@ -59,3 +59,15 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* The GitHub account, in the window's top right corner. */
+.empty-repository-account {
+  position: fixed;
+  top: 10px;
+  right: 12px;
+}
+
+.empty-repository-actions {
+  display: flex;
+  gap: 8px;
+}

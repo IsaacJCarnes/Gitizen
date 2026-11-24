@@ -36,3 +36,18 @@ export function githubCommitPage(
     .find((candidate) => candidate !== undefined);
   return page && `${page}/commit/${hash}`;
 }
+
+/**
+ * The folder name `git clone` gives a clone of `url`: its last path part
+ * without ".git", e.g. "repo" for "git@github.com:o/repo.git".
+ */
+export function cloneFolderName(url: string): string {
+  const last = url.trim().replace(/[\\/]+$/, "").split(/[\\/:]/).pop() ?? "";
+  return last.replace(/\.git$/i, "");
+}
+
+/** The folder a path is in: "D:\\code\\app" -> "D:\\code". Empty for a path with no folder. */
+export function parentFolder(path: string): string {
+  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return cut > 0 ? path.slice(0, cut) : "";
+}

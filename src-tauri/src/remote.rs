@@ -1,5 +1,6 @@
 //! Remotes and syncing: listing and adding remotes, publishing the
-//! repository to GitHub, and fetch, pull and push for the current branch.
+//! repository to the signed-in GitHub account, and fetch, pull and push for
+//! the current branch.
 //!
 //! Network commands can take a while, so they run on a blocking thread
 //! (like the AI command) and the window keeps answering meanwhile. git never
@@ -7,13 +8,13 @@
 //! credential helper, which on Windows is Git Credential Manager's own window.
 
 use std::path::Path;
-use std::process::{Command, Stdio};
 
 use serde::Serialize;
 
 use crate::conflicts::unless_conflicted;
 use crate::git::repository::{current_branch, has_commits, require_current_branch, Repo};
-use crate::git::runner::{hide_console_window, into_result, run_git};
+use crate::git::runner::run_git;
+use crate::github::{create_repository, GitHub};
 use crate::util::blocking;
 
 /// A configured remote, e.g. `origin` and its fetch URL.
@@ -67,63 +68,42 @@ fn add_remote_in(dir: &Path, name: &str, url: &str) -> Result<(), String> {
     run_git(dir, ["remote", "add", name, url]).map(drop)
 }
 
-/// Creates a new repository on GitHub with the GitHub CLI (`gh`), adds it as
-/// `origin` and pushes the current branch to it. `gh` must be installed and
-/// signed in (`gh auth login`); its own message is passed on otherwise.
+/// Creates a new repository on the signed-in GitHub account, adds it as
+/// `origin` and pushes the current branch to it (an empty repository is
+/// only created, since there is nothing to push yet).
 #[tauri::command]
 pub async fn publish_repository(
     repo: Repo<'_>,
+    github: GitHub<'_>,
     name: String,
     description: String,
     private: bool,
 ) -> Result<(), String> {
     let dir = repo.require()?;
-    blocking(move || publish_in(&dir, name.trim(), description.trim(), private)).await
+    let github = github.inner().clone();
+    blocking(move || {
+        publish_in(&dir, name.trim(), |name| {
+            create_repository(&github.token()?, name, description.trim(), private)
+        })
+    })
+    .await
 }
 
-fn publish_in(dir: &Path, name: &str, description: &str, private: bool) -> Result<(), String> {
+/// Publishes with `create`, which makes the remote repository called
+/// `name` and returns its URL.
+fn publish_in(dir: &Path, name: &str, create: impl FnOnce(&str) -> Result<String, String>) -> Result<(), String> {
     if name.is_empty() || name.starts_with('-') {
         return Err("Enter a name for the GitHub repository".into());
     }
     if remotes_in(dir).iter().any(|remote| remote.name == "origin") {
         return Err("This repository already has an origin remote".into());
     }
-    let mut args = vec![
-        "repo",
-        "create",
-        name,
-        if private { "--private" } else { "--public" },
-        "--source=.",
-        "--remote=origin",
-    ];
-    // `--push` needs at least one commit; an empty repository is only created.
-    if has_commits(dir) {
-        args.push("--push");
+    let url = create(name)?;
+    add_remote_in(dir, "origin", &url)?;
+    if has_commits(dir) && current_branch(dir).is_some() {
+        push_in(dir, false)?;
     }
-    // `--description=<text>` keeps a description starting with "-" a value.
-    let description_arg = format!("--description={description}");
-    if !description.is_empty() {
-        args.push(&description_arg);
-    }
-    run_gh(dir, &args)
-}
-
-/// Runs the GitHub CLI without letting it prompt, returning its message on
-/// failure.
-fn run_gh(dir: &Path, args: &[&str]) -> Result<(), String> {
-    let output = hide_console_window(&mut Command::new("gh"))
-        .current_dir(dir)
-        .args(args)
-        .env("GH_PROMPT_DISABLED", "1")
-        .stdin(Stdio::null())
-        .output()
-        // Failing to start at all means gh isn't installed (or not on PATH).
-        .map_err(|_| {
-            "Publishing to GitHub needs the GitHub CLI. Install it from https://cli.github.com, run \
-             `gh auth login` once, then try again. Or add an existing remote URL instead."
-                .to_string()
-        })?;
-    into_result(output).map(drop)
+    Ok(())
 }
 
 /// Downloads new commits from every remote (removing remote branches that
@@ -285,7 +265,24 @@ mod tests {
         git(&alice, &["checkout", "-q", "--detach"]);
         assert!(push_in(&alice, false).unwrap_err().contains("detached"));
 
-        for dir in [server, alice, bob] {
+        // Publishing adds what the host created as origin and pushes to it.
+        let carol = new_repo("remote-carol");
+        commit_file(&carol, "c.txt", "c\n");
+        let hosted = unique_temp_dir("remote-hosted").unwrap();
+        git(&hosted, &["init", "-q", "--bare", "-b", "main"]);
+        let hosted_url = hosted.to_string_lossy().into_owned();
+        assert!(publish_in(&carol, "", |_| unreachable!()).is_err());
+        publish_in(&carol, "carol", |name| {
+            assert_eq!(name, "carol");
+            Ok(hosted_url.clone())
+        })
+        .unwrap();
+        assert_eq!(remotes_in(&carol)[0], Remote { name: "origin".into(), url: hosted_url.clone() });
+        assert_eq!(git(&hosted, &["log", "--format=%s", "main"]), "c.txt\n");
+        let error = publish_in(&carol, "again", |_| unreachable!()).unwrap_err();
+        assert!(error.contains("already has an origin"), "{error}");
+
+        for dir in [server, alice, bob, carol, hosted] {
             let _ = std::fs::remove_dir_all(dir);
         }
     }

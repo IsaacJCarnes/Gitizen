@@ -3,16 +3,19 @@ import { useEffect, useRef, useState } from "react";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import { baseName } from "../../utils/format";
+import CloneModal from "../Clone/CloneModal";
 
 /**
  * The repository name button in the header. Clicking it opens a dropdown of
  * recently opened repositories to switch to, each with a button to remove it
- * from the list, plus "Add new repo…" which shows the folder picker.
+ * from the list, plus "Add new repo…" which shows the folder picker and
+ * "Clone repository…".
  */
 export default function RepoSwitcher(): React.JSX.Element {
   const { repo, openRepository, openRepositoryAt } = useGitOperationsContext();
   const { recentRepos, forgetRepo } = useAppContext();
   const [open, setOpen] = useState(false);
+  const [cloning, setCloning] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Close on a click outside the dropdown or on Escape.
@@ -83,10 +86,21 @@ export default function RepoSwitcher(): React.JSX.Element {
             </ul>
           )}
           <button className="repo-switcher-add" role="menuitem" onClick={addNew}>
-            + Add new repo…
+            Add local repo...
+          </button>
+          <button
+            className="repo-switcher-add repo-switcher-clone"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              setCloning(true);
+            }}
+          >
+            Clone repo...
           </button>
         </div>
       )}
+      {cloning && <CloneModal onDismiss={() => setCloning(false)} />}
     </div>
   );
 }

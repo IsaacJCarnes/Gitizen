@@ -1,6 +1,7 @@
 import "./RepositoryHeader.css";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
+import AccountButton from "../GitHub/AccountButton";
 import BranchSwitcher from "./BranchSwitcher";
 import RepoSwitcher from "./RepoSwitcher";
 import SyncControls from "./SyncControls";
@@ -9,7 +10,7 @@ import SyncControls from "./SyncControls";
  * Top bar: repository switcher (recent repositories and "Add new repo"),
  * branch switcher (with a search box and each branch's right-click menu),
  * a button back to unfinished conflicts, publish / fetch / pull / push
- * buttons and a refresh button.
+ * buttons, a refresh button and the GitHub account.
  */
 export default function RepositoryHeader(): React.JSX.Element {
   const {
@@ -46,6 +47,7 @@ export default function RepositoryHeader(): React.JSX.Element {
       )}
       <SyncControls />
       <button onClick={refresh}>Refresh</button>
+      <AccountButton />
     </header>
   );
 }

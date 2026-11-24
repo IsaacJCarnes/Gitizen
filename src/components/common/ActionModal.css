@@ -6,6 +6,8 @@
   background: var(--panel);
   color: var(--ink);
   box-shadow: var(--shadow-modal);
+  /* Modals opened from centred screens (like the start screen) still read left to right. */
+  text-align: left;
 }
 
 .action-modal::backdrop {
