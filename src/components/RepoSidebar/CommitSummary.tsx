@@ -8,7 +8,11 @@ import { shortHash } from "../../utils/format";
  * The arrow beside the subject collapses it to just the subject; that stays
  * as chosen while other commits are picked.
  */
-export default function CommitSummary({ commit }: { commit: GitCommit }): React.JSX.Element {
+export default function CommitSummary({
+  commit,
+}: {
+  commit: GitCommit;
+}): React.JSX.Element {
   const [expanded, setExpanded] = useState(true);
 
   return (
@@ -17,7 +21,9 @@ export default function CommitSummary({ commit }: { commit: GitCommit }): React.
         <button
           className="commit-summary-toggle"
           aria-expanded={expanded}
-          aria-label={expanded ? "Collapse commit details" : "Expand commit details"}
+          aria-label={
+            expanded ? "Collapse commit details" : "Expand commit details"
+          }
           title={expanded ? "Collapse" : "Expand"}
           onClick={() => setExpanded((open) => !open)}
         >
@@ -25,15 +31,11 @@ export default function CommitSummary({ commit }: { commit: GitCommit }): React.
         </button>
         <b>{commit.message}</b>
       </div>
-      {expanded && (
-        <>
-          {commit.body && <p>{commit.body}</p>}
-          <small>
-            {shortHash(commit.hash)} by {commit.author} on{" "}
-            {new Date(commit.date).toLocaleString()}
-          </small>
-        </>
-      )}
+      {expanded && <>{commit.body && <p>{commit.body}</p>}</>}
+      <small>
+        {shortHash(commit.hash)} by {commit.author} on{" "}
+        {new Date(commit.date).toLocaleString()}
+      </small>
     </div>
   );
 }
