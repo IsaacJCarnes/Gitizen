@@ -87,6 +87,41 @@ pub fn current_branch(dir: &Path) -> Option<String> {
         .map(|name| name.trim().to_string())
 }
 
+/// The checked-out branch, for operations that need one; `doing` finishes
+/// the error, e.g. "HEAD is detached. Check out a branch before merging."
+pub fn require_current_branch(dir: &Path, doing: &str) -> Result<String, String> {
+    current_branch(dir).ok_or_else(|| format!("HEAD is detached. Check out a branch before {doing}."))
+}
+
+/// Fails unless tracked files are unchanged (untracked files don't count),
+/// for operations that switch branches or replay commits.
+pub fn require_clean(dir: &Path, doing: &str) -> Result<(), String> {
+    let changes = run_git(dir, ["status", "--porcelain", "--untracked-files=no"])?;
+    if changes.trim().is_empty() {
+        Ok(())
+    } else {
+        Err(format!("Commit or stash your changes before {doing}."))
+    }
+}
+
+/// True once HEAD points at a commit (false in a new, empty repository).
+pub fn has_commits(dir: &Path) -> bool {
+    run_git(dir, ["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok()
+}
+
+/// Where `name` (e.g. "MERGE_HEAD") is in the git folder. `--git-path`
+/// resolves inside worktrees and custom git dirs too; the printed path is
+/// relative to `dir` (or absolute), so it is joined on.
+pub fn git_path(dir: &Path, name: &str) -> Result<PathBuf, String> {
+    let path = run_git(dir, ["rev-parse", "--git-path", name])?;
+    Ok(dir.join(path.trim()))
+}
+
+/// The text of file `name` in the git folder, or None if it can't be read.
+pub fn read_git_file(dir: &Path, name: &str) -> Option<String> {
+    std::fs::read_to_string(git_path(dir, name).ok()?).ok()
+}
+
 /// True when `directory` is inside a git work tree.
 pub fn is_work_tree(directory: &Path) -> bool {
     run_git(directory, ["rev-parse", "--is-inside-work-tree"])
@@ -125,6 +160,15 @@ pub fn assert_hash(hash: &str) -> Result<&str, String> {
 pub fn assert_branch_name(name: &str) -> Result<&str, String> {
     let valid = !name.is_empty() && !name.starts_with('-');
     valid.then_some(name).ok_or_else(|| "Invalid branch name".into())
+}
+
+/// A name a new branch can take: `assert_branch_name`, plus git's own rules
+/// (`check-ref-format --branch` rejects e.g. "a..b" or "x.lock").
+pub fn assert_new_branch_name<'a>(dir: &Path, name: &'a str) -> Result<&'a str, String> {
+    let name = assert_branch_name(name)?;
+    run_git(dir, ["check-ref-format", "--branch", name])
+        .map(|_| name)
+        .map_err(|_| format!("\"{name}\" isn't a valid branch name"))
 }
 
 /// Returns the first parent of `hash`, or the empty tree for a root commit.

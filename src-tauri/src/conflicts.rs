@@ -1,5 +1,5 @@
-//! Merge conflicts: what operation stopped (merge, cherry-pick, rebase or
-//! revert) and which files conflict, plus everything the conflict editor can
+//! Merge conflicts: what operation stopped (merge, squash merge,
+//! cherry-pick, rebase or revert) and which files conflict, plus everything the conflict editor can
 //! do about them: show both sides, save a resolution, ask the AI command for
 //! one, open an external merge tool, take one side, mark a file resolved,
 //! and continue or abort the operation.
@@ -10,10 +10,11 @@ use std::process::{Command, Stdio};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
-use crate::ai_commit::{run_shell_command, shell, AppSettings, MAX_DIFF_BYTES, TIMEOUT};
-use crate::git::repository::{assert_hash, current_branch, Repo};
+use crate::ai_commit::{run_shell_command, shell, MAX_DIFF_BYTES, TIMEOUT};
+use crate::git::repository::{assert_hash, current_branch, git_path, read_git_file, Repo};
 use crate::git::runner::{git_command, run_git, run_git_bytes};
-use crate::util::{blocking, unique_temp_dir};
+use crate::settings::{AppSettings, SavedCommand};
+use crate::util::{blocking, unique_temp_dir, write_keeping_line_endings};
 
 /// An operation that is in progress because it stopped part way, usually
 /// on a conflict.
@@ -24,13 +25,22 @@ pub enum Operation {
     CherryPick,
     Rebase,
     Revert,
+    /// `git merge --squash`: the branch's changes, waiting to be committed
+    /// as one ordinary commit.
+    Squash,
+    /// Adding changes to the branch's stash, which conflicted with it.
+    Stash,
+    /// Popping the branch's stash, which conflicted with the branch.
+    StashPop,
 }
 
 impl Operation {
-    /// The git command that runs it, which also takes `--continue` and `--abort`.
-    fn git_name(self) -> &'static str {
+    /// The git command that runs it, which also takes `--continue` and
+    /// `--abort` (except a squash merge, handled separately).
+    pub(crate) fn git_name(self) -> &'static str {
         match self {
-            Operation::Merge => "merge",
+            Operation::Merge | Operation::Squash => "merge",
+            Operation::Stash | Operation::StashPop => "stash",
             Operation::CherryPick => "cherry-pick",
             Operation::Rebase => "rebase",
             Operation::Revert => "revert",
@@ -67,6 +77,29 @@ pub struct ConflictState {
     /// The branch it is being brought into (for a rebase, the branch being
     /// rebased), or the short hash of a detached HEAD.
     pub current: Option<String>,
+    /// For a rebase, which of its commits it is on, e.g. 2 of 3. None
+    /// otherwise.
+    pub step: Option<RebaseStep>,
+}
+
+/// How far a rebase has got: it is replaying commit `current` of `total`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct RebaseStep {
+    pub current: u32,
+    pub total: u32,
+}
+
+/// The rebase's step, from the counters git keeps in its state folder
+/// ("rebase-merge" for today's rebase, "rebase-apply" for the older one).
+fn rebase_step(dir: &Path) -> Option<RebaseStep> {
+    let number = |name: &str| -> Option<u32> {
+        read_git_file(dir, name)?.trim().parse().ok()
+    };
+    let (current, total) = match (number("rebase-merge/msgnum"), number("rebase-merge/end")) {
+        (Some(current), Some(total)) => (current, total),
+        _ => (number("rebase-apply/next")?, number("rebase-apply/last")?),
+    };
+    Some(RebaseStep { current, total })
 }
 
 #[tauri::command]
@@ -74,7 +107,7 @@ pub async fn conflicts(repo: Repo<'_>) -> Result<ConflictState, String> {
     conflicts_in(&repo.require()?)
 }
 
-fn conflicts_in(dir: &Path) -> Result<ConflictState, String> {
+pub(crate) fn conflicts_in(dir: &Path) -> Result<ConflictState, String> {
     let files = conflicted_files(dir)?
         .into_iter()
         .map(|(path, code)| {
@@ -90,21 +123,22 @@ fn conflicts_in(dir: &Path) -> Result<ConflictState, String> {
         Some(operation) => branch_names(dir, operation),
         None => (None, None),
     };
-    Ok(ConflictState { operation, files, message, incoming, current })
-}
-
-/// Where `name` (e.g. "MERGE_HEAD") is in the git folder. `--git-path`
-/// resolves inside worktrees and custom git dirs too; the printed path is
-/// relative to `dir` (or absolute), so it is joined on.
-fn git_file(dir: &Path, name: &str) -> Option<PathBuf> {
-    run_git(dir, ["rev-parse", "--git-path", name]).ok().map(|path| dir.join(path.trim()))
+    let step = (operation == Some(Operation::Rebase)).then(|| rebase_step(dir)).flatten();
+    Ok(ConflictState { operation, files, message, incoming, current, step })
 }
 
 /// Names the incoming and current sides of a stopped operation.
 fn branch_names(dir: &Path, operation: Operation) -> (Option<String>, Option<String>) {
+    match operation {
+        // The branch's stash merges into the changes being added to it, or
+        // into the branch when popping.
+        Operation::Stash => return (Some("stash".into()), Some("your changes".into())),
+        Operation::StashPop => return (Some("stash".into()), current_branch(dir)),
+        _ => {}
+    }
     // The first line of a file in the git folder (e.g. MERGE_HEAD), trimmed.
     let read = |name: &str| {
-        let text = std::fs::read_to_string(git_file(dir, name)?).ok()?;
+        let text = read_git_file(dir, name)?;
         let first = text.lines().next()?.trim().to_string();
         (!first.is_empty()).then_some(first)
     };
@@ -115,6 +149,9 @@ fn branch_names(dir: &Path, operation: Operation) -> (Option<String>, Option<Str
         Operation::Merge => (read("MERGE_HEAD"), None),
         Operation::CherryPick => (read("CHERRY_PICK_HEAD"), None),
         Operation::Revert => (read("REVERT_HEAD"), None),
+        // SQUASH_MSG lists the squashed commits, newest (the branch tip) first.
+        Operation::Squash => (squashed_tip(dir), None),
+        Operation::Stash | Operation::StashPop => (None, None),
         Operation::Rebase => (
             rebase_file("onto"),
             rebase_file("head-name").map(|name| name.trim_start_matches("refs/heads/").to_string()),
@@ -151,10 +188,18 @@ fn commit_name(dir: &Path, hash: &str, current: Option<&str>) -> String {
         .unwrap_or_else(|_| hash.get(..7).unwrap_or(hash).to_string())
 }
 
+/// The newest commit a squash merge brings in, from the "commit <hash>"
+/// lines git writes to SQUASH_MSG.
+fn squashed_tip(dir: &Path) -> Option<String> {
+    let text = read_git_file(dir, "SQUASH_MSG")?;
+    let hash = text.lines().find_map(|line| line.strip_prefix("commit "))?.trim();
+    assert_hash(hash).ok().map(str::to_string)
+}
+
 /// `MERGE_MSG`, which merge, cherry-pick and revert write for the commit
 /// that finishes them, minus git's "#" comment lines.
 fn prepared_message(dir: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(git_file(dir, "MERGE_MSG")?).ok()?;
+    let text = read_git_file(dir, "MERGE_MSG")?;
     let message = text
         .lines()
         .filter(|line| !line.starts_with('#'))
@@ -166,7 +211,7 @@ fn prepared_message(dir: &Path) -> Option<String> {
 }
 
 /// Unmerged paths with their two-letter codes, from `git status`.
-fn conflicted_files(dir: &Path) -> Result<Vec<(String, String)>, String> {
+pub(crate) fn conflicted_files(dir: &Path) -> Result<Vec<(String, String)>, String> {
     let output = run_git(dir, ["status", "--porcelain=v1", "-z", "--untracked-files=no"])?;
     Ok(parse_unmerged(&output))
 }
@@ -201,8 +246,12 @@ fn has_conflict_markers(text: &str) -> bool {
 
 /// Which operation is in progress, from the marker files git keeps in the
 /// git folder while one is stopped.
-fn operation_in(dir: &Path) -> Option<Operation> {
-    let exists = |name: &str| git_file(dir, name).is_some_and(|path| path.exists());
+pub(crate) fn operation_in(dir: &Path) -> Option<Operation> {
+    // Gitizen's own stash operations leave a note, checked first.
+    if let Some(operation) = crate::stash::operation(dir) {
+        return Some(operation);
+    }
+    let exists = |name: &str| git_path(dir, name).is_ok_and(|path| path.exists());
     // A rebase replays commits as cherry-picks, so it is checked first.
     if exists("rebase-merge") || exists("rebase-apply") {
         Some(Operation::Rebase)
@@ -212,6 +261,9 @@ fn operation_in(dir: &Path) -> Option<Operation> {
         Some(Operation::CherryPick)
     } else if exists("REVERT_HEAD") {
         Some(Operation::Revert)
+    } else if exists("SQUASH_MSG") {
+        // Left by `merge --squash` until the result is committed (or reset).
+        Some(Operation::Squash)
     } else {
         None
     }
@@ -317,12 +369,8 @@ pub async fn save_conflict_resolution(repo: Repo<'_>, path: String, text: String
 }
 
 fn save_in(dir: &Path, path: &str, text: &str) -> Result<(), String> {
-    let file = require_conflicted(dir, path)?;
     // The editor works in "\n"; a file checked out with CRLF keeps CRLF.
-    let crlf = std::fs::read(&file).is_ok_and(|bytes| bytes.windows(2).any(|pair| pair == b"\r\n"));
-    let normalized = text.replace("\r\n", "\n");
-    let contents = if crlf { normalized.replace('\n', "\r\n") } else { normalized };
-    std::fs::write(&file, contents).map_err(|error| error.to_string())
+    write_keeping_line_endings(&require_conflicted(dir, path)?, text)
 }
 
 /// How to settle one conflicted file.
@@ -373,13 +421,20 @@ pub async fn continue_operation(repo: Repo<'_>) -> Result<(), String> {
     continue_in(&repo.require()?)
 }
 
-fn continue_in(dir: &Path) -> Result<(), String> {
+pub(crate) fn continue_in(dir: &Path) -> Result<(), String> {
     if !conflicted_files(dir)?.is_empty() {
         return Err("Resolve every conflicted file first.".into());
     }
     let result = match operation_in(dir).ok_or("Nothing is in progress")? {
         // `merge --continue` would do the same, but needs git 2.12+.
         Operation::Merge => run_git(dir, ["commit", "--no-edit"]),
+        // An ordinary commit. git would take SQUASH_MSG (the list of
+        // squashed commits) over the message Gitizen kept in MERGE_MSG.
+        Operation::Squash => {
+            let message = prepared_message(dir).unwrap_or_else(|| "Squash merge".into());
+            run_git(dir, ["commit", "-m", message.as_str()])
+        }
+        Operation::Stash | Operation::StashPop => return crate::stash::finish_in(dir),
         operation => run_git(dir, [operation.git_name(), "--continue"]),
     };
     unless_conflicted(dir, result.map(drop))
@@ -392,9 +447,14 @@ pub async fn abort_operation(repo: Repo<'_>) -> Result<(), String> {
     abort_in(&repo.require()?)
 }
 
-fn abort_in(dir: &Path) -> Result<(), String> {
-    let operation = operation_in(dir).ok_or("Nothing is in progress")?;
-    run_git(dir, [operation.git_name(), "--abort"]).map(drop)
+pub(crate) fn abort_in(dir: &Path) -> Result<(), String> {
+    match operation_in(dir).ok_or("Nothing is in progress")? {
+        // A squash merge has no MERGE_HEAD for `merge --abort`; this is what
+        // that does, and it clears SQUASH_MSG too.
+        Operation::Squash => run_git(dir, ["reset", "--merge"]).map(drop),
+        Operation::Stash | Operation::StashPop => crate::stash::abort_in(dir),
+        operation => run_git(dir, [operation.git_name(), "--abort"]).map(drop),
+    }
 }
 
 const RESOLVE_PROMPT: &str = "The file below has git conflicts: each conflict is a block \
@@ -402,24 +462,6 @@ from a line starting with <<<<<<< to a line starting with >>>>>>>, with the curr
 branch's version first, then =======, then the incoming version. Resolve every conflict, \
 keeping the intent of both sides where they don't contradict. Reply with only the complete \
 resolved file: no commentary, no code fences, and no conflict markers.";
-
-/// The saved AI resolve command, or "" when none is set up. It is separate
-/// from the commit message command, so each can use its own tool or model.
-#[tauri::command]
-pub async fn ai_resolve_command(app: AppHandle, state: State<'_, AppSettings>) -> Result<String, String> {
-    Ok(state.read(&app)?.ai_resolve_command)
-}
-
-/// Saves the AI resolve command (trimmed; "" clears it) and returns what was saved.
-#[tauri::command]
-pub async fn set_ai_resolve_command(
-    app: AppHandle,
-    state: State<'_, AppSettings>,
-    command: String,
-) -> Result<String, String> {
-    let saved = state.update(&app, |settings| settings.ai_resolve_command = command.trim().to_string())?;
-    Ok(saved.ai_resolve_command)
-}
 
 /// Asks the saved AI resolve command to resolve one conflicted file and returns its
 /// answer. Nothing is written: the conflict editor shows it in the output
@@ -432,7 +474,7 @@ pub async fn ai_resolve_conflict(
     path: String,
 ) -> Result<String, String> {
     let dir = repo.require()?;
-    let command = state.ai_command(&app, |settings| settings.ai_resolve_command)?;
+    let command = state.ai_command(&app, SavedCommand::AiResolve)?;
     // The AI can take minutes; other git calls keep answering meanwhile.
     blocking(move || ai_resolve_in(&dir, &path, &command)).await
 }
@@ -490,24 +532,6 @@ fn clean_resolution(output: &str, final_newline: bool) -> Result<String, String>
     Ok(text)
 }
 
-/// The external tool command for conflicted files, or "" when none is set.
-#[tauri::command]
-pub async fn editor_command(app: AppHandle, state: State<'_, AppSettings>) -> Result<String, String> {
-    Ok(state.read(&app)?.editor_command)
-}
-
-/// Saves the external tool command (trimmed; "" falls back to git's merge
-/// tool, or the system text editor).
-#[tauri::command]
-pub async fn set_editor_command(
-    app: AppHandle,
-    state: State<'_, AppSettings>,
-    command: String,
-) -> Result<String, String> {
-    let saved = state.update(&app, |settings| settings.editor_command = command.trim().to_string())?;
-    Ok(saved.editor_command)
-}
-
 /// Which external tool `open_in_merge_tool` used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -531,7 +555,7 @@ pub async fn open_in_merge_tool(
 ) -> Result<ExternalTool, String> {
     let dir = repo.require()?;
     let file = require_conflicted(&dir, &path)?;
-    let command = state.read(&app)?.editor_command;
+    let command = state.read(&app)?.command(SavedCommand::Editor);
     let merge_tool = run_git(&dir, ["config", "--get", "merge.tool"]).unwrap_or_default();
     if command.is_empty() && !merge_tool.trim().is_empty() {
         // The tool runs until its window is closed, so it is waited for on a
@@ -660,7 +684,7 @@ mod tests {
         let dir = diverged_repo();
         assert_eq!(
             conflicts_in(&dir).unwrap(),
-            ConflictState { operation: None, files: vec![], message: None, incoming: None, current: None }
+            ConflictState { operation: None, files: vec![], message: None, incoming: None, current: None, step: None }
         );
 
         // The merge stops; `unless_conflicted` treats that as handled.

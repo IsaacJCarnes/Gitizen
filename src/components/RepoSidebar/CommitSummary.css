@@ -13,3 +13,24 @@
 .commit-summary small {
   color: var(--mute);
 }
+
+/* The subject, with the collapse arrow to its left. */
+.commit-summary-title {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.commit-summary-toggle {
+  flex: none;
+  width: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--mute);
+  line-height: 1;
+}
+
+.commit-summary-toggle:hover {
+  color: var(--ink);
+}

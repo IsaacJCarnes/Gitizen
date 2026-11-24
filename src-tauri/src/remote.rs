@@ -12,7 +12,7 @@ use std::process::{Command, Stdio};
 use serde::Serialize;
 
 use crate::conflicts::unless_conflicted;
-use crate::git::repository::{current_branch, Repo};
+use crate::git::repository::{current_branch, has_commits, require_current_branch, Repo};
 use crate::git::runner::{hide_console_window, into_result, run_git};
 use crate::util::blocking;
 
@@ -97,7 +97,7 @@ fn publish_in(dir: &Path, name: &str, description: &str, private: bool) -> Resul
         "--remote=origin",
     ];
     // `--push` needs at least one commit; an empty repository is only created.
-    if run_git(dir, ["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok() {
+    if has_commits(dir) {
         args.push("--push");
     }
     // `--description=<text>` keeps a description starting with "-" a value.
@@ -145,7 +145,7 @@ pub async fn pull(repo: Repo<'_>) -> Result<(), String> {
 }
 
 fn pull_in(dir: &Path) -> Result<(), String> {
-    checked_out_branch(dir)?;
+    require_current_branch(dir, "pulling")?;
     if upstream_of(dir).is_none() {
         return Err("This branch isn't on the remote yet. Push it first.".into());
     }
@@ -170,7 +170,7 @@ pub async fn push(repo: Repo<'_>, force: Option<bool>) -> Result<(), String> {
 }
 
 fn push_in(dir: &Path, force: bool) -> Result<(), String> {
-    let branch = checked_out_branch(dir)?;
+    let branch = require_current_branch(dir, "pushing")?;
     let local = format!("refs/heads/{branch}");
     if let Some((remote, merge)) = upstream_of(dir) {
         // Explicit "<local>:<upstream>" pushes to the tracked branch even
@@ -189,11 +189,6 @@ fn push_in(dir: &Path, force: bool) -> Result<(), String> {
     // -u records the new remote branch as the upstream for later pulls and pushes.
     let refspec = format!("{local}:{local}");
     run_git(dir, ["push", "--follow-tags", "-u", remote.as_str(), refspec.as_str()]).map(drop)
-}
-
-/// The checked-out branch, or an error when HEAD is detached.
-fn checked_out_branch(dir: &Path) -> Result<String, String> {
-    current_branch(dir).ok_or_else(|| "Check out a branch first. HEAD is detached.".to_string())
 }
 
 /// The current branch's upstream as (remote, "refs/heads/<branch>"), read

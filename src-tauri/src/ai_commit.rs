@@ -3,8 +3,7 @@
 //! the command's stdin and reads the message from its stdout; the first line
 //! becomes the summary and the rest the description.
 //!
-//! The command is saved in `settings.json` in the app's config folder, beside
-//! the recent repositories list, so it survives restarts. It runs through the
+//! The command is saved in Gitizen's settings (see `settings.rs`). It runs through the
 //! system shell (`cmd` on Windows, `sh` elsewhere) so it is written exactly
 //! as it would be in a terminal, and npm shims like `claude.cmd` are found.
 
@@ -13,12 +12,13 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::git::repository::Repo;
 use crate::git::runner::{hide_console_window, run_git};
-use crate::util::{blocking, ConfigFile};
+use crate::settings::{AppSettings, SavedCommand};
+use crate::util::blocking;
 
 /// How long the command may run before Gitizen gives up on it.
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(180);
@@ -33,73 +33,11 @@ The first line is a summary in the imperative mood, at most 72 characters. \
 If the change needs explaining, add a blank line and then a short description \
 of what changed and why, wrapped at 72 characters.";
 
-/// Settings saved in `settings.json` (see `AppSettings`). Missing fields take
-/// their defaults, so older or hand-edited files still load.
-#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub(crate) struct Settings {
-    /// Shell command that reads a prompt on stdin and prints a commit
-    /// message. Empty when not set up yet.
-    pub(crate) ai_commit_command: String,
-    /// Shell command that reads a conflicted file (with a prompt) on stdin
-    /// and prints it resolved. Empty when not set up yet.
-    pub(crate) ai_resolve_command: String,
-    /// Shell command that opens a conflicted file for editing, with `{file}`
-    /// standing for its path. Empty means the system's plain text editor.
-    pub(crate) editor_command: String,
-}
-
-/// The settings file, kept in Tauri's managed state.
-pub(crate) type AppSettings = ConfigFile<Settings>;
-
-impl Default for AppSettings {
-    fn default() -> Self {
-        ConfigFile::new("settings.json")
-    }
-}
-
-impl AppSettings {
-    /// One of the saved AI commands (`field` picks which), or an error
-    /// asking to set it up.
-    pub(crate) fn ai_command(
-        &self,
-        app: &AppHandle,
-        field: impl FnOnce(Settings) -> String,
-    ) -> Result<String, String> {
-        let command = field(self.read(app)?);
-        if command.is_empty() {
-            return Err("No AI command is set up yet".to_string());
-        }
-        Ok(command)
-    }
-}
-
 /// A commit message split the way the commit form shows it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CommitMessage {
     pub summary: String,
     pub description: String,
-}
-
-/// The saved AI commit message command, or an empty string if none is set up.
-#[tauri::command]
-pub async fn ai_commit_command(
-    app: AppHandle,
-    state: State<'_, AppSettings>,
-) -> Result<String, String> {
-    Ok(state.read(&app)?.ai_commit_command)
-}
-
-/// Saves the AI commit message command (trimmed; empty clears it) and
-/// returns what was saved.
-#[tauri::command]
-pub async fn set_ai_commit_command(
-    app: AppHandle,
-    state: State<'_, AppSettings>,
-    command: String,
-) -> Result<String, String> {
-    let saved = state.update(&app, |settings| settings.ai_commit_command = command.trim().to_string())?;
-    Ok(saved.ai_commit_command)
 }
 
 /// Runs the saved AI command on the staged changes of the open repository
@@ -111,7 +49,7 @@ pub async fn generate_commit_message(
     repo: Repo<'_>,
 ) -> Result<CommitMessage, String> {
     let dir = repo.require()?;
-    let command = state.ai_command(&app, |settings| settings.ai_commit_command)?;
+    let command = state.ai_command(&app, SavedCommand::AiCommit)?;
     // The command can take a while; other git calls keep answering meanwhile.
     blocking(move || generate_in(&dir, &command)).await
 }
@@ -281,18 +219,6 @@ mod tests {
         assert!(prompt.starts_with(PROMPT));
         assert!(prompt.contains("cut off"));
         assert!(prompt.len() < MAX_DIFF_BYTES + PROMPT.len() + 200);
-    }
-
-    #[test]
-    fn settings_load_with_defaults() {
-        let settings: Settings = serde_json::from_str("{}").unwrap();
-        assert_eq!(settings, Settings::default());
-        let settings: Settings = serde_json::from_str(r#"{"aiCommitCommand":"claude -p"}"#).unwrap();
-        assert_eq!(settings.ai_commit_command, "claude -p");
-        // The resolve command is saved on its own, and is empty until set.
-        assert_eq!(settings.ai_resolve_command, "");
-        let settings: Settings = serde_json::from_str(r#"{"aiResolveCommand":"codex exec"}"#).unwrap();
-        assert_eq!((settings.ai_commit_command.as_str(), settings.ai_resolve_command.as_str()), ("", "codex exec"));
     }
 
     /// Runs a fake "AI" through the real shell against a temp repository.

@@ -34,6 +34,12 @@ interface DiffViewProps {
   loadFile?: () => Promise<string>;
   /** Shown when the diff is empty. */
   emptyMessage?: string;
+  /**
+   * Right-click on an added or removed line, with the line (see
+   * `DiffLine.index`) and every changed line of its group (the run of
+   * changes it belongs to). Leave out for no menu.
+   */
+  onLineMenu?: (event: React.MouseEvent, line: number, group: number[]) => void;
 }
 
 /** Lines revealed per click of an expand button. */
@@ -195,6 +201,7 @@ export default function DiffView({
   lineStaging,
   loadFile,
   emptyMessage = "No changes to show.",
+  onLineMenu,
 }: DiffViewProps): React.JSX.Element {
   const lines = useMemo(() => parseDiff(diff), [diff]);
   const notes = lines.filter((line) => line.kind === "meta" && !FILE_HEADER.test(line.text));
@@ -271,6 +278,12 @@ export default function DiffView({
       }
     });
 
+    // Each changed line's group, for the line menu.
+    const groupOf = new Map<number, number[]>();
+    for (const group of groups) {
+      for (const change of group.changes) groupOf.set(change, group.changes);
+    }
+
     const cell = (line: DiffLine | undefined, side: "left" | "right" | "", row: number, number?: number): React.JSX.Element => {
       // Grid columns: Unified is [gutter] lines; Split is left [gutter] right.
       let gridColumn = gutter ? 2 : 1;
@@ -281,6 +294,14 @@ export default function DiffView({
           key={`${side}${row}`}
           className={`diff-line ${side} ${line?.kind ?? "empty"}`}
           style={{ gridRow: row + 1, gridColumn }}
+          onContextMenu={
+            onLineMenu && line && isChange(line)
+              ? (event) => {
+                  event.preventDefault();
+                  onLineMenu(event, line.index, groupOf.get(line.index) ?? [line.index]);
+                }
+              : undefined
+          }
         >
           {side !== "left" && <LineCheck line={line} staging={lineStaging} />}
           {split ? (

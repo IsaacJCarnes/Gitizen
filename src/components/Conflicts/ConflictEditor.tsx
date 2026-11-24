@@ -1,10 +1,10 @@
 import "./ConflictEditor.css";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { ConflictVersions } from "../../../shared/gitTypes";
+import type { ConflictVersions, SavedCommandKind } from "../../../shared/gitTypes";
 import { gitizen } from "../../api/gitizen";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
-import { useAiResolveCommand, useEditorCommand } from "../../hooks/useSavedCommand";
+import { useSavedCommand } from "../../hooks/useSavedCommand";
 import {
   buildOutput,
   hasConflictMarkers,
@@ -15,8 +15,8 @@ import {
   type Side,
 } from "../../utils/conflictText";
 import { pluralize } from "../../utils/format";
-import AiResolveCommandModal from "./AiResolveCommandModal";
-import EditorCommandModal from "./EditorCommandModal";
+import { loadUnlessCancelled } from "../../utils/load";
+import CommandModal from "../common/CommandModal";
 
 /** Unchanged stretches longer than this are folded to their ends. */
 const FOLD_OVER = 8;
@@ -54,8 +54,8 @@ export default function ConflictEditor({
     resolveConflict,
     reportError,
   } = useGitOperationsContext();
-  const ai = useAiResolveCommand();
-  const editor = useEditorCommand();
+  const ai = useSavedCommand("aiResolve");
+  const editor = useSavedCommand("editor");
   const [versions, setVersions] = useState<ConflictVersions | null>(null);
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [output, setOutput] = useState("");
@@ -63,7 +63,8 @@ export default function ConflictEditor({
   // AI's answer, or a saved file loaded back).
   const [handEdited, setHandEdited] = useState(false);
   const [busy, setBusy] = useState<"ai" | "save" | "tool" | null>(null);
-  const [modal, setModal] = useState<"ai" | "tool" | null>(null);
+  // The command being set up in its modal.
+  const [modal, setModal] = useState<SavedCommandKind | null>(null);
   // The working file's text the output was last synced with, to tell our
   // own saves apart from changes made outside (an external tool).
   // undefined until the first load.
@@ -83,9 +84,7 @@ export default function ConflictEditor({
   // it: on first load, or after it was edited outside Gitizen.
   useEffect(() => {
     if (!file) return;
-    let active = true;
-    gitizen.conflictVersions(path).then((next) => {
-      if (!active) return;
+    return loadUnlessCancelled(gitizen.conflictVersions(path), (next) => {
       setVersions(next);
       if (
         syncedWorking.current !== undefined &&
@@ -103,9 +102,6 @@ export default function ConflictEditor({
       );
       setHandEdited(saved);
     }, reportError);
-    return () => {
-      active = false;
-    };
   }, [path, file, conflicts, reportError]);
 
   const pickLines = (next: ReadonlySet<string>): void => {
@@ -166,10 +162,10 @@ export default function ConflictEditor({
                 ? "Ask AI to resolve the conflict"
                 : "Set up an AI command to resolve conflicts"
             }
-            onClick={() => (ai.command ? void resolveWithAi() : setModal("ai"))}
+            onClick={() => (ai.command ? void resolveWithAi() : setModal("aiResolve"))}
             settingsLabel="Resolve with AI settings"
             settingsDisabled={busy !== null}
-            onSettings={() => setModal("ai")}
+            onSettings={() => setModal("aiResolve")}
           >
             {busy === "ai" ? (
               <>
@@ -189,7 +185,7 @@ export default function ConflictEditor({
             onClick={() => void openTool()}
             settingsLabel="External merge tool settings"
             settingsDisabled={busy !== null || editor.command === null}
-            onSettings={() => setModal("tool")}
+            onSettings={() => setModal("editor")}
           >
             {busy === "tool" ? "Waiting for merge tool…" : "Open in merge tool"}
           </ToolWithSettings>
@@ -211,22 +207,13 @@ export default function ConflictEditor({
     <div className="conflict-editor">
       {header}
       {body}
-      {modal === "ai" && (
-        <AiResolveCommandModal
-          initialCommand={ai.command ?? ""}
+      {modal && (
+        <CommandModal
+          which={modal}
+          initialCommand={(modal === "editor" ? editor : ai).command ?? ""}
           onSave={(command) => {
             setModal(null);
-            void ai.save(command);
-          }}
-          onDismiss={() => setModal(null)}
-        />
-      )}
-      {modal === "tool" && (
-        <EditorCommandModal
-          initialCommand={editor.command ?? ""}
-          onSave={(command) => {
-            setModal(null);
-            void editor.save(command);
+            void (modal === "editor" ? editor : ai).save(command);
           }}
           onDismiss={() => setModal(null)}
         />

@@ -11,7 +11,13 @@ export const OPERATION_NAME: Record<Operation, string> = {
   cherryPick: "cherry-pick",
   rebase: "rebase",
   revert: "revert",
+  squash: "squash merge",
+  stash: "stash",
+  stashPop: "stash pop",
 };
+
+/** Operations that finish without a commit, from the sidebar's finish button instead. */
+export const FINISHES_WITHOUT_COMMIT: ReadonlySet<Operation> = new Set(["stash", "stashPop"]);
 
 /** Lines both sides agree on. */
 export interface CommonSegment {

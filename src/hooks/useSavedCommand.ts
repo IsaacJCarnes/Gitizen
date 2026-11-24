@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { SavedCommandKind } from "../../shared/gitTypes";
 import { gitizen } from "../api/gitizen";
 import { useGitOperationsContext } from "../context/GitOperationsContext";
 
@@ -9,23 +10,23 @@ export interface SavedCommand {
   save: (command: string) => Promise<string | null>;
 }
 
-/** A command line kept in the backend's settings file, loaded on mount. */
-function useSavedCommand(
-  load: () => Promise<string>,
-  store: (command: string) => Promise<string>,
-): SavedCommand {
+/**
+ * A command line kept in the backend's settings file (the AI commit or
+ * resolve command, or the external merge tool), loaded on mount.
+ */
+export function useSavedCommand(which: SavedCommandKind): SavedCommand {
   const { reportError } = useGitOperationsContext();
   const [command, setCommand] = useState<string | null>(null);
 
   useEffect(() => {
     // A failed load counts as "not set up", so the setup button still works.
-    load().then(setCommand, () => setCommand(""));
-  }, [load]);
+    gitizen.savedCommand(which).then(setCommand, () => setCommand(""));
+  }, [which]);
 
   const save = useCallback(
     async (next: string): Promise<string | null> => {
       try {
-        const saved = await store(next);
+        const saved = await gitizen.saveCommand(which, next);
         setCommand(saved);
         return saved;
       } catch (error) {
@@ -33,20 +34,8 @@ function useSavedCommand(
         return null;
       }
     },
-    [store, reportError],
+    [which, reportError],
   );
 
   return { command, save };
 }
-
-/** The AI command that writes commit messages. */
-export const useAiCommitCommand = (): SavedCommand =>
-  useSavedCommand(gitizen.aiCommitCommand, gitizen.setAiCommitCommand);
-
-/** The AI command that resolves conflicted files. */
-export const useAiResolveCommand = (): SavedCommand =>
-  useSavedCommand(gitizen.aiResolveCommand, gitizen.setAiResolveCommand);
-
-/** The external tool that opens conflicted files. */
-export const useEditorCommand = (): SavedCommand =>
-  useSavedCommand(gitizen.editorCommand, gitizen.setEditorCommand);

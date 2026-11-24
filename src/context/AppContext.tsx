@@ -15,6 +15,12 @@ export interface AppData {
   recentRepos: string[];
   /** Removes a repository from `recentRepos` (the folder itself is untouched). */
   forgetRepo: (path: string) => void;
+  /**
+   * True once the user ticked "don't warn me again" when discarding. Kept
+   * in memory only, so the warning comes back the next time Gitizen starts.
+   */
+  skipDiscardWarning: boolean;
+  setSkipDiscardWarning: (skip: boolean) => void;
 }
 
 export const AppContext = createContext<AppData | undefined>(undefined);

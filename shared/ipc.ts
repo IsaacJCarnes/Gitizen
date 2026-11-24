@@ -17,6 +17,9 @@ import type {
   GitStatus,
   Remote,
   Resolution,
+  SavedCommandKind,
+  BranchStash,
+  StashOutcome,
 } from "./gitTypes";
 
 export const Command = {
@@ -38,10 +41,19 @@ export const Command = {
   Commit: "commit",
   UndoLastCommit: "undo_last_commit",
   StashChanges: "stash_changes",
+  BranchStash: "branch_stash",
+  PopStash: "pop_stash",
+  DropStash: "drop_stash",
+  StashDiff: "stash_diff",
   Checkout: "checkout",
   SetStagedLines: "set_staged_lines",
-  AiCommitCommand: "ai_commit_command",
-  SetAiCommitCommand: "set_ai_commit_command",
+  DiscardFiles: "discard_files",
+  DiscardLines: "discard_lines",
+  CanEditFile: "can_edit_file",
+  WorkingFile: "working_file",
+  SaveWorkingFile: "save_working_file",
+  SavedCommand: "saved_command",
+  SaveCommand: "save_command",
   GenerateCommitMessage: "generate_commit_message",
   Remotes: "remotes",
   AddRemote: "add_remote",
@@ -54,17 +66,18 @@ export const Command = {
   CreateTag: "create_tag",
   CherryPick: "cherry_pick",
   OpenInBrowser: "open_in_browser",
+  RenameBranch: "rename_branch",
+  DeleteBranch: "delete_branch",
+  MergeBranch: "merge_branch",
+  RebaseOntoBranch: "rebase_onto_branch",
+  SquashMergeBranch: "squash_merge_branch",
   Conflicts: "conflicts",
   ResolveConflict: "resolve_conflict",
   ContinueOperation: "continue_operation",
   AbortOperation: "abort_operation",
-  AiResolveCommand: "ai_resolve_command",
-  SetAiResolveCommand: "set_ai_resolve_command",
   AiResolveConflict: "ai_resolve_conflict",
   ConflictVersions: "conflict_versions",
   SaveConflictResolution: "save_conflict_resolution",
-  EditorCommand: "editor_command",
-  SetEditorCommand: "set_editor_command",
   OpenInMergeTool: "open_in_merge_tool",
 } as const;
 
@@ -134,19 +147,58 @@ export interface GitizenApi {
    */
   setStagedLines(path: string, diff: string, lines: number[], staged: boolean): Promise<void>;
   /**
+   * Puts files back as they are in HEAD (staged and unstaged changes alike),
+   * deleting files HEAD doesn't have. Pass both paths of a rename.
+   */
+  discardFiles(paths: string[]): Promise<void>;
+  /**
+   * Throws away single changed lines of one file, in the working tree and
+   * the index. `diff` and `lines` are as for `setStagedLines`; rejects
+   * without changing anything if the file changed since.
+   */
+  discardLines(path: string, diff: string, lines: number[]): Promise<void>;
+  /** True when `path` is a text file in the working directory small enough to edit. */
+  canEditFile(path: string): Promise<boolean>;
+  /** The working-tree file's text with "
+" line endings; rejects for binary, missing or huge files. */
+  workingFile(path: string): Promise<string>;
+  /** Overwrites the working-tree file with `text` (keeping its line endings), without staging it. */
+  saveWorkingFile(path: string, text: string): Promise<void>;
+  /**
    * Commits the staged changes. With `amend`, replaces the last commit with
    * its changes plus what is staged now, under `message`.
    */
   commit(message: string, amend?: boolean): Promise<void>;
   /** Undoes the last commit, keeping its changes staged. Rejects for merge commits. */
   undoLastCommit(): Promise<void>;
-  /** Stashes every uncommitted change (untracked files too), leaving a clean working tree. */
-  stashChanges(message: string): Promise<void>;
+  /**
+   * Stashes `paths` (every change when left out), untracked files too, on
+   * the current branch. A branch keeps one stash: when it has one already,
+   * the changes are added to it, which may stop on conflicts between the two
+   * ("conflicts") for the conflict editor, to finish with
+   * `continueOperation` or undo with `abortOperation`.
+   */
+  stashChanges(message: string, paths?: string[]): Promise<StashOutcome>;
+  /** The current branch's stash, or null if it has none. */
+  branchStash(): Promise<BranchStash | null>;
+  /**
+   * Applies the current branch's stash and drops it (needs nothing staged).
+   * Stops on conflicts with the branch like `stashChanges`.
+   */
+  popStash(): Promise<StashOutcome>;
+  /** Deletes the current branch's stash for good. */
+  dropStash(): Promise<void>;
+  /** Diff of one file in stash `hash` against the commit it was made on (untracked files show as new). */
+  stashDiff(hash: string, path: string, ignoreWhitespace?: boolean): Promise<string>;
   checkout(branch: string): Promise<void>;
-  /** The saved AI command line tool for commit messages (e.g. `claude -p`), or "" if none is set up. */
-  aiCommitCommand(): Promise<string>;
-  /** Saves the AI command (trimmed; "" clears it). Resolves to what was saved. */
-  setAiCommitCommand(command: string): Promise<string>;
+  /**
+   * A command line saved in Gitizen's settings (the AI commit message or
+   * resolve command, e.g. `claude -p`, or the external merge tool, e.g.
+   * `code {file}`), or "" if none is set up.
+   */
+  savedCommand(which: SavedCommandKind): Promise<string>;
+  /** Saves a command line (trimmed; "" clears it). Resolves to what was saved. */
+  saveCommand(which: SavedCommandKind, command: string): Promise<string>;
   /**
    * Pipes a prompt plus the staged diff to the saved AI command and splits
    * what it prints into summary and description. Stages and commits nothing.
@@ -185,6 +237,23 @@ export interface GitizenApi {
   cherryPick(hash: string, branch: string): Promise<void>;
   /** Opens a https://github.com/ page in the default browser (other URLs are refused). */
   openInBrowser(url: string): Promise<void>;
+  /** Renames a local branch; its upstream setting moves with it. */
+  renameBranch(name: string, newName: string): Promise<void>;
+  /**
+   * Deletes a local branch other than the checked-out one. Without `force`,
+   * rejects if it has commits that aren't merged anywhere else.
+   */
+  deleteBranch(name: string, force: boolean): Promise<void>;
+  /** Merges `name` into the current branch; stopping on conflicts resolves (the conflict editor takes over). */
+  mergeBranch(name: string): Promise<void>;
+  /** Rebases the current branch onto `name` (needs a clean working tree); stopping on conflicts resolves. */
+  rebaseOntoBranch(name: string): Promise<void>;
+  /**
+   * Squashes every change of `name` into one new commit on the current
+   * branch with `message`. On conflicts, resolves with them left to resolve
+   * and the message kept for the commit that finishes it.
+   */
+  squashMergeBranch(name: string, message: string): Promise<void>;
   /** The stopped merge, cherry-pick, rebase or revert (if any) and its unresolved files. */
   conflicts(): Promise<ConflictState>;
   /** Settles one conflicted file (our version, theirs, or as it is now) and stages it. */
@@ -199,18 +268,10 @@ export interface GitizenApi {
    * still has conflict markers.
    */
   aiResolveConflict(path: string): Promise<string>;
-  /** The saved AI command for resolving conflicts (separate from the commit one), or "" if none is set up. */
-  aiResolveCommand(): Promise<string>;
-  /** Saves the AI resolve command (trimmed; "" clears it). Resolves to what was saved. */
-  setAiResolveCommand(command: string): Promise<string>;
   /** Both sides of a conflicted file merged with conflict markers, plus the file as it is now. */
   conflictVersions(path: string): Promise<ConflictVersions>;
   /** Writes `text` to a conflicted file (keeping its line endings), without staging it. */
   saveConflictResolution(path: string, text: string): Promise<void>;
-  /** The external tool command for conflicted files, e.g. `code {file}`; "" when none is set. */
-  editorCommand(): Promise<string>;
-  /** Saves the external tool command (trimmed; "" clears it). Resolves to what was saved. */
-  setEditorCommand(command: string): Promise<string>;
   /**
    * Opens a conflicted file in the saved command, else git's `merge.tool`
    * (waiting until it closes), else the system text editor.

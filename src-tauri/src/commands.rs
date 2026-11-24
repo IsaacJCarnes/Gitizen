@@ -17,11 +17,13 @@ use crate::git::patch::{
     changed_line_numbers, index_content, stages_any_addition, staged_line_indices, STALE,
 };
 use crate::git::repository::{
-    assert_branch_name, assert_hash, first_parent_of, init_repository as git_init, OpenError,
-    Repo, EMPTY_TREE,
+    assert_branch_name, assert_hash, first_parent_of, has_commits, init_repository as git_init,
+    OpenError, Repo, EMPTY_TREE,
 };
 use crate::git::runner::{run_git, run_git_bytes, run_git_with_input};
 use crate::git::types::{CommitFile, FileDiff, GitBranch, GitCommit, GitStatus};
+use crate::branches::ahead_behind;
+use crate::util::file_in_repo;
 
 /// Shows a folder picker and opens the chosen repository. Returns its path,
 /// or None if the picker was cancelled. A folder that isn't a repository
@@ -90,19 +92,19 @@ pub async fn log(repo: Repo<'_>) -> Result<Vec<GitCommit>, String> {
     Ok(parse_log(&output))
 }
 
+/// Local branches, each with how far it is ahead of and behind HEAD.
 #[tauri::command]
 pub async fn branches(repo: Repo<'_>) -> Result<Vec<GitBranch>, String> {
-    let output = run_git(
-        &repo.require()?,
-        ["for-each-ref", "--format=%(HEAD)%(refname:short)", "refs/heads"],
-    )?;
+    let dir = repo.require()?;
+    let output = run_git(&dir, ["for-each-ref", "--format=%(HEAD)%(refname:short)", "refs/heads"])?;
     Ok(output
         .lines()
         .filter(|line| !line.is_empty())
         .map(|line| {
             // %(HEAD) is "*" for the checked-out branch and " " otherwise.
             let (marker, name) = line.split_at(1);
-            GitBranch { name: name.to_string(), current: marker == "*" }
+            let (ahead, behind) = ahead_behind(&dir, name);
+            GitBranch { name: name.to_string(), current: marker == "*", ahead, behind }
         })
         .collect())
 }
@@ -110,7 +112,7 @@ pub async fn branches(repo: Repo<'_>) -> Result<Vec<GitBranch>, String> {
 /// `git diff` options shared by every diff the UI shows: plain text, git's
 /// own diff (no external tools) and the usual a/ b/ prefixes, so the output
 /// can be parsed and turned back into a patch. `-w` hides whitespace changes.
-fn diff_options(ignore_whitespace: Option<bool>) -> Vec<&'static str> {
+pub(crate) fn diff_options(ignore_whitespace: Option<bool>) -> Vec<&'static str> {
     let mut args = vec!["diff", "--no-color", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"];
     if ignore_whitespace == Some(true) {
         args.push("--ignore-all-space");
@@ -131,7 +133,7 @@ pub async fn file_diff(
     file_diff_in(&repo.require()?, &path, ignore_whitespace)
 }
 
-fn file_diff_in(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Result<FileDiff, String> {
+pub(crate) fn file_diff_in(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Result<FileDiff, String> {
     let diff = combined_diff(dir, path, ignore_whitespace)?;
     let staged_lines = staged_lines_of(dir, path, &diff)?;
     Ok(FileDiff { diff, staged_lines })
@@ -139,7 +141,7 @@ fn file_diff_in(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Resu
 
 /// True if git reports `path` as untracked. git refuses paths outside the
 /// repository here, so a file read after this can't leave the repository.
-fn is_untracked(dir: &Path, path: &str) -> Result<bool, String> {
+pub(crate) fn is_untracked(dir: &Path, path: &str) -> Result<bool, String> {
     let entry = run_git(
         dir,
         ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", path],
@@ -149,7 +151,7 @@ fn is_untracked(dir: &Path, path: &str) -> Result<bool, String> {
 
 /// HEAD, or git's empty tree before the first commit.
 fn head_or_empty_tree(dir: &Path) -> &'static str {
-    if run_git(dir, ["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok() {
+    if has_commits(dir) {
         "HEAD"
     } else {
         EMPTY_TREE
@@ -157,7 +159,7 @@ fn head_or_empty_tree(dir: &Path) -> &'static str {
 }
 
 /// The diff `file_diff` shows: HEAD to working tree for one file.
-fn combined_diff(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Result<String, String> {
+pub(crate) fn combined_diff(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Result<String, String> {
     if is_untracked(dir, path)? {
         // Store the file as git would (line endings normalised), so the diff
         // matches what `git diff HEAD` prints once the file is staged.
@@ -171,7 +173,7 @@ fn combined_diff(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Res
 
 /// Indices of the changed lines of `diff` (from `combined_diff`, whitespace
 /// shown or hidden) that are in the index.
-fn staged_lines_of(dir: &Path, path: &str, diff: &str) -> Result<Vec<usize>, String> {
+pub(crate) fn staged_lines_of(dir: &Path, path: &str, diff: &str) -> Result<Vec<usize>, String> {
     if is_untracked(dir, path)? {
         return Ok(Vec::new());
     }
@@ -253,17 +255,9 @@ fn file_text_in(dir: &Path, path: &str, hash: Option<&str>) -> Result<String, St
             run_git_bytes(dir, ["show", spec.as_str()]).unwrap_or_default()
         }
         None => {
-            let file = dir.join(path);
-            if !file.is_file() {
-                return Ok(String::new());
-            }
             // Only files inside the repository can be read.
-            let inside = file
-                .canonicalize()
-                .and_then(|file| Ok(file.starts_with(dir.canonicalize()?)))
-                .unwrap_or(false);
-            if !inside {
-                return Err(format!("{path} is outside the repository"));
+            if !file_in_repo(dir, path)?.is_file() {
+                return Ok(String::new());
             }
             worktree_blob(dir, path)?.1
         }
@@ -371,15 +365,31 @@ fn set_staged_lines_in(
         }
     }
 
+    write_index_lines(dir, path, &current, &selected)
+}
+
+/// The file's text in HEAD, or None when HEAD doesn't have it.
+pub(crate) fn head_text(dir: &Path, path: &str) -> Option<String> {
     // "./" makes git read the path relative to `dir`, like every other path here.
     let head_spec = format!("HEAD:./{path}");
-    let head = run_git(dir, ["show", head_spec.as_str()]).ok();
-    let content = index_content(head.as_deref().unwrap_or(""), &current, &selected)?;
+    run_git(dir, ["show", head_spec.as_str()]).ok()
+}
+
+/// Rewrites the index entry of `path` to HEAD plus exactly the `selected`
+/// changed lines of `current`, its up-to-date combined diff.
+pub(crate) fn write_index_lines(
+    dir: &Path,
+    path: &str,
+    current: &str,
+    selected: &HashSet<usize>,
+) -> Result<(), String> {
+    let head = head_text(dir, path);
+    let content = index_content(head.as_deref().unwrap_or(""), current, selected)?;
     let deleted = !dir.join(path).exists();
     // A new file with nothing staged, or a deletion with every line staged,
     // leaves no entry in the index at all.
     let remove = match &head {
-        None => !stages_any_addition(&current, &selected),
+        None => !stages_any_addition(current, selected),
         Some(_) => deleted && content.is_empty(),
     };
     if remove {
@@ -422,20 +432,6 @@ fn commit_in(dir: &Path, message: &str, amend: bool) -> Result<(), String> {
         args.push("--amend");
     }
     run_git(dir, args).map(drop)
-}
-
-/// Saves every uncommitted change, untracked files included, to a new stash
-/// and leaves the working tree clean, e.g. before switching branches.
-/// `git stash pop` brings the changes back.
-#[tauri::command]
-pub async fn stash_changes(repo: Repo<'_>, message: String) -> Result<(), String> {
-    stash_in(&repo.require()?, &message)
-}
-
-fn stash_in(dir: &Path, message: &str) -> Result<(), String> {
-    // "-m=<message>" can't be read as an option even if the message starts with "-".
-    let message = format!("--message={message}");
-    run_git(dir, ["stash", "push", "--include-untracked", message.as_str()]).map(drop)
 }
 
 /// Undoes the last commit on the current branch, keeping its changes staged
@@ -503,7 +499,7 @@ mod tests {
             .manage(OpenRepository::default())
             .invoke_handler(tauri::generate_handler![
                 status, log, branches, file_diff, commit_files, commit_diff, stage, unstage, commit,
-                checkout, set_staged_lines, undo_last_commit, stash_changes,
+                checkout, set_staged_lines, undo_last_commit, crate::stash::stash_changes,
             ])
             .build(mock_context(noop_assets()))
             .unwrap();
@@ -653,7 +649,8 @@ mod tests {
         // Stashing leaves a clean tree (untracked files too) for switching.
         std::fs::write(repo.join("b.txt"), "changed\n").unwrap();
         std::fs::write(repo.join("loose.txt"), "new\n").unwrap();
-        call(&window, "stash_changes", json!({ "message": "Before switching" })).unwrap();
+        let outcome = call(&window, "stash_changes", json!({ "message": "Before switching" })).unwrap();
+        assert_eq!(outcome, json!("done"));
         assert_eq!(porcelain(), "");
         assert!(run_git(&repo, ["stash", "list"]).unwrap().contains("Before switching"));
         run_git(&repo, ["stash", "drop", "-q"]).unwrap();
@@ -777,7 +774,10 @@ mod tests {
         let branches = call(&window, "branches", json!({})).unwrap();
         assert_eq!(
             branches,
-            json!([{ "name": "main", "current": true }, { "name": "other", "current": false }])
+            json!([
+                { "name": "main", "current": true, "ahead": 0, "behind": 0 },
+                { "name": "other", "current": false, "ahead": 0, "behind": 1 },
+            ])
         );
         call(&window, "checkout", json!({ "branch": "other" })).unwrap();
         assert_eq!(call(&window, "status", json!({})).unwrap()["branch"], "other");

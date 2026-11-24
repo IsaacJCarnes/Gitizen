@@ -27,3 +27,56 @@
   border-top: 1px solid var(--line);
   margin: 4px 2px;
 }
+
+/* An item, plus its submenu when it has one. */
+.context-menu-item {
+  position: relative;
+  display: grid;
+}
+
+.context-menu-item > button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.context-menu-arrow {
+  margin-left: auto;
+  color: var(--mute);
+}
+
+/* A submenu sits beside its item, lined up with the item's top. */
+.context-submenu {
+  position: absolute;
+  top: -5px;
+}
+
+.context-submenu.right {
+  left: calc(100% + 4px);
+}
+
+.context-submenu.right::before,
+.context-submenu.left::before {
+  /* Bridges the gap so moving the pointer across doesn't close it. */
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+}
+
+.context-submenu.right::before {
+  left: -8px;
+}
+
+.context-submenu.left {
+  right: calc(100% + 4px);
+}
+
+.context-submenu.left::before {
+  right: -8px;
+}
+
+.context-menu button {
+  white-space: nowrap;
+}

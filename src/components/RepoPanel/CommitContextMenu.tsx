@@ -4,7 +4,9 @@ import { gitizen } from "../../api/gitizen";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import { githubCommitPage } from "../../utils/github";
 import ActionModal from "../common/ActionModal";
+import ConfirmModal from "../common/ConfirmModal";
 import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
+import { useBranchMenu } from "../Branches/useBranchMenu";
 import { CherryPickDialog, CreateBranchDialog, CreateTagDialog } from "./CommitActionDialogs";
 
 /** Rewriting the last commit of a branch. */
@@ -38,6 +40,10 @@ interface CommitContextMenuProps {
  * another branch by switching to it first (asking to commit or stash local
  * changes before that). Rewriting a commit that is already on a remote asks
  * first, since it then has to be force-pushed.
+ *
+ * A commit that is the head of local branches also gets each branch's own
+ * controls (rename, delete, merge and so on): inline for one branch, or a
+ * submenu per branch name when several point at the commit.
  */
 export default function CommitContextMenu({
   commit,
@@ -59,6 +65,7 @@ export default function CommitContextMenu({
   } = useGitOperationsContext();
   const [menuOpen, setMenuOpen] = useState(true);
   const [dialog, setDialog] = useState<Dialog | null>(null);
+  const { branchEntries, branchDialog, dialogOpen: branchDialogOpen } = useBranchMenu();
 
   const isHead = commit.refs.some((ref) => ref.current);
   const isMerge = commit.parents.length > 1;
@@ -121,6 +128,11 @@ export default function CommitContextMenu({
       onSelect: () => setDialog({ kind: "cherryPick" }),
     },
   ];
+  const heads = commit.refs.filter((ref) => ref.type === "branch").map((ref) => ref.name);
+  if (heads.length === 1) entries.push("separator", ...branchEntries(heads[0]));
+  else if (heads.length > 1) {
+    entries.push("separator", ...heads.map((name) => ({ label: name, submenu: branchEntries(name) })));
+  }
   if (isHead || otherBranch) {
     const on = otherBranch ? ` on ${otherBranch}` : "";
     entries.push(
@@ -159,16 +171,10 @@ export default function CommitContextMenu({
   // Choosing an item closes the menu and may open a dialog in the same
   // (batched) update, so only report closed once neither is showing.
   useEffect(() => {
-    if (!menuOpen && !dialog) onClose();
-  }, [menuOpen, dialog, onClose]);
+    if (!menuOpen && !dialog && !branchDialogOpen) onClose();
+  }, [menuOpen, dialog, branchDialogOpen, onClose]);
 
   const closeDialog = (): void => setDialog(null);
-  const pushedWarning = (
-    <p>
-      This commit is already on the remote. Changing it rewrites history, so Push becomes a
-      force push afterwards, and anyone who pulled the commit will have to reconcile.
-    </p>
-  );
 
   return (
     <>
@@ -176,19 +182,17 @@ export default function CommitContextMenu({
         <ContextMenu x={x} y={y} entries={entries} onClose={() => setMenuOpen(false)} />
       )}
       {dialog?.kind === "confirmPushed" && (
-        <ActionModal
+        <ConfirmModal
           title={dialog.rewrite === "undo" ? "Undo a pushed commit?" : "Amend a pushed commit?"}
+          confirmLabel={dialog.rewrite === "undo" ? "Undo commit" : "Amend commit"}
+          onConfirm={() => runWhenClean(dialog.rewrite, true)}
           onDismiss={closeDialog}
-          actions={[
-            {
-              label: dialog.rewrite === "undo" ? "Undo commit" : "Amend commit",
-              primary: true,
-              onClick: () => runWhenClean(dialog.rewrite, true),
-            },
-          ]}
         >
-          {pushedWarning}
-        </ActionModal>
+          <p>
+            This commit is already on the remote. Changing it rewrites history, so Push becomes a
+            force push afterwards, and anyone who pulled the commit will have to reconcile.
+          </p>
+        </ConfirmModal>
       )}
       {dialog?.kind === "needsClean" && otherBranch && (
         <ActionModal
@@ -225,14 +229,15 @@ export default function CommitContextMenu({
             first. Commit them on {status?.branch ?? "the current commit"}, or stash them.
           </p>
           <p>
-            A stash keeps the changes aside without committing them. Bring them back later with{" "}
-            <code>git stash pop</code> on the branch you want them on.
+            A stash keeps the changes aside without committing them. Bring them back later with
+            Pop, in the Stash section of the sidebar on {status?.branch ?? "this branch"}.
           </p>
         </ActionModal>
       )}
       {dialog?.kind === "createBranch" && <CreateBranchDialog commit={commit} onDismiss={closeDialog} />}
       {dialog?.kind === "createTag" && <CreateTagDialog commit={commit} onDismiss={closeDialog} />}
       {dialog?.kind === "cherryPick" && <CherryPickDialog commit={commit} onDismiss={closeDialog} />}
+      {branchDialog}
     </>
   );
 }

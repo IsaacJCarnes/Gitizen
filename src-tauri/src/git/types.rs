@@ -83,6 +83,10 @@ pub struct GitCommit {
 pub struct GitBranch {
     pub name: String,
     pub current: bool,
+    /// Commits on this branch that the checked-out commit (HEAD) doesn't have.
+    pub ahead: u32,
+    /// Commits HEAD has that this branch doesn't.
+    pub behind: u32,
 }
 
 /// A file changed by a commit, relative to its first parent.

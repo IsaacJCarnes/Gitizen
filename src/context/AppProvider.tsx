@@ -8,6 +8,8 @@ import { gitizen } from "../api/gitizen";
 export function AppProvider({ children }: PropsWithChildren): React.JSX.Element {
   const [view, setView] = useState<RepoView>("history");
   const [recentRepos, setRecentRepos] = useState<string[]>([]);
+  // Deliberately not saved anywhere: it lasts until the app is closed.
+  const [skipDiscardWarning, setSkipDiscardWarning] = useState(false);
 
   // The saved list lives in the backend (a JSON file in the app's config
   // folder). Failing to read or write it only affects the switcher, so
@@ -25,8 +27,8 @@ export function AppProvider({ children }: PropsWithChildren): React.JSX.Element 
   }, []);
 
   const appData = useMemo(
-    () => ({ view, setView, recentRepos, forgetRepo }),
-    [view, recentRepos, forgetRepo],
+    () => ({ view, setView, recentRepos, forgetRepo, skipDiscardWarning, setSkipDiscardWarning }),
+    [view, recentRepos, forgetRepo, skipDiscardWarning],
   );
   const operations = useGitOperations({ onRepositoryOpened: rememberRepo });
 

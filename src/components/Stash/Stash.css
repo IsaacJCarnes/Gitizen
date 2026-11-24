@@ -1,0 +1,10 @@
+/* Pop and Discard, where the commit form is while the stash is selected. */
+.stash-actions {
+  grid-template-columns: 1fr auto;
+}
+
+.stash-finish p {
+  margin: 0;
+  color: var(--mute);
+  font-size: 13px;
+}

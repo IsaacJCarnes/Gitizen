@@ -65,8 +65,13 @@ export interface Remote {
   url: string;
 }
 
-/** An operation that stopped part way, usually on a conflict. */
-export type Operation = "merge" | "cherryPick" | "rebase" | "revert";
+/**
+ * An operation that stopped part way, usually on a conflict. "squash" is a
+ * squash merge, whose changes wait to be committed as one commit. "stash"
+ * is adding changes to the branch's stash and "stashPop" popping it, both
+ * stopped because the stash conflicts; they finish without a commit.
+ */
+export type Operation = "merge" | "cherryPick" | "rebase" | "revert" | "squash" | "stash" | "stashPop";
 
 /** A file git couldn't merge by itself. */
 export interface ConflictFile {
@@ -88,6 +93,8 @@ export interface ConflictState {
   incoming: string | null;
   /** The branch it is being brought into (the branch being rebased, for a rebase), or a short hash. */
   current: string | null;
+  /** For a rebase, which of its commits it is replaying (e.g. 2 of 3); null otherwise. */
+  step: { current: number; total: number } | null;
 }
 
 /** What the conflict editor shows for one file. */
@@ -110,10 +117,36 @@ export type ExternalTool = "mergeTool" | "editor";
 /** How to settle a conflicted file: our side, their side, or the file as it is now. */
 export type Resolution = "ours" | "theirs" | "asIs";
 
+/**
+ * A command line saved in Gitizen's settings (mirrors `SavedCommand` in
+ * src-tauri/src/settings.rs): the AI commands for commit messages and for
+ * resolving conflicts, and the external tool that opens conflicted files.
+ */
+export type SavedCommandKind = "aiCommit" | "aiResolve" | "editor";
+
+/** The current branch's stash (Gitizen keeps one per branch). */
+export interface BranchStash {
+  /** The stash commit's hash. */
+  hash: string;
+  /** The commit it was made on, where the history graph attaches it. */
+  base: string;
+  /** Its message, without git's "On <branch>: " prefix. */
+  message: string;
+  /** The files it changes, untracked ones included. */
+  files: CommitFile[];
+}
+
+/** What stashing or popping did: finished, or stopped on conflicts to resolve. */
+export type StashOutcome = "done" | "conflicts";
+
 /** A local branch. */
 export interface GitBranch {
   name: string;
   current: boolean;
+  /** Commits on this branch that the checked-out commit (HEAD) doesn't have. */
+  ahead: number;
+  /** Commits HEAD has that this branch doesn't. */
+  behind: number;
 }
 
 /** A file changed by a commit, relative to its first parent. */

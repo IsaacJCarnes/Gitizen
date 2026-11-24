@@ -1,10 +1,15 @@
 import type { ConflictFile, FileChange } from "../../../shared/gitTypes";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
+import { useContextMenu } from "../../hooks/useContextMenu";
+import { renamePaths } from "../../utils/format";
+import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
+import { useDiscardConfirmation } from "../common/DiscardConfirm";
 import FileListItem from "../common/FileListItem";
 import TriStateCheckbox from "../common/TriStateCheckbox";
 import ConflictBanner from "../Conflicts/ConflictBanner";
 import MarkResolvedButton from "../Conflicts/MarkResolvedButton";
+import { stashItem } from "../Stash/stashMenu";
 import { combineStates, type CheckState } from "../../utils/checkState";
 
 /**
@@ -35,14 +40,6 @@ function groupByPath(files: FileChange[]): ChangedPath[] {
   return [...byPath.values()].sort((a, b) => (a.path < b.path ? -1 : 1));
 }
 
-/**
- * The paths git must be given to stage or unstage the entry. A rename lives
- * in the index as a deletion of the old path plus an addition of the new
- * one, so both halves have to move together.
- */
-function pathsOf(entry: ChangedPath): string[] {
-  return entry.oldPath ? [entry.path, entry.oldPath] : [entry.path];
-}
 
 /**
  * One status code per file that doesn't change when the file is staged or
@@ -70,8 +67,12 @@ function stageState(entry: ChangedPath): CheckState {
  * While a merge (or similar) is stopped, a banner above the list says so,
  * and conflicted files show a "!" with a Mark resolved button instead of a
  * checkbox; clicking one opens it in the conflict editor.
+ *
+ * Right-clicking a file opens its menu, to discard its changes or add it
+ * to the branch's stash; right-clicking the header stashes every change.
  */
 export default function FileChangeList(): React.JSX.Element {
+  const git = useGitOperationsContext();
   const {
     status,
     selectedFile,
@@ -80,8 +81,12 @@ export default function FileChangeList(): React.JSX.Element {
     conflicts: { operation, files },
     selectedConflict,
     setSelectedConflict,
-  } = useGitOperationsContext();
+    discardFiles,
+  } = git;
   const { view, setView } = useAppContext();
+  const { confirmDiscard, discardDialog } = useDiscardConfirmation();
+  // A null target is the header's menu, for every file.
+  const { menu, openMenu, closeMenu } = useContextMenu<ChangedPath | null>();
   const conflictByPath = new Map<string, ConflictFile>(
     files.map((file) => [file.path, file]),
   );
@@ -107,26 +112,56 @@ export default function FileChangeList(): React.JSX.Element {
   };
 
   // A mixed checkbox stages the rest, like a select-all, rather than unstaging.
+  // A rename moves in the index as a deletion plus an addition, so both
+  // paths are staged or unstaged together.
   const toggle = (entry: ChangedPath) =>
-    setFilesStaged(pathsOf(entry), stageState(entry) !== true);
+    setFilesStaged(renamePaths(entry), stageState(entry) !== true);
 
   const toggleAll = () =>
-    setFilesStaged(entries.flatMap(pathsOf), allState !== true);
+    setFilesStaged(entries.flatMap(renamePaths), allState !== true);
+
+  const menuEntries = (entry: ChangedPath | null): MenuEntry[] => {
+    if (!entry) {
+      const item = stashItem(git, [], "all changes");
+      return [{ ...item, disabled: item.disabled || all.length === 0 }];
+    }
+    return [
+      {
+        label: "Discard changes…",
+        title: "Put the file back as it was in the last commit",
+        onSelect: () =>
+          confirmDiscard({
+            title: `Discard changes to ${entry.path}?`,
+            what: (
+              <>
+                Every change to <code>{entry.path}</code>, staged or not,
+              </>
+            ),
+            confirmLabel: "Discard changes",
+            run: () => void discardFiles(renamePaths(entry)),
+          }),
+      },
+      "separator",
+      stashItem(git, renamePaths(entry), "file"),
+    ];
+  };
 
   return (
     <>
       <ConflictBanner />
       {/* The banner takes the header's place while an operation is stopped. */}
       {!operation && (
-        <h2 className="changes-header">
+        <h2
+          className="changes-header"
+          onContextMenu={(event) => openMenu(event, null)}
+        >
           <TriStateCheckbox
             state={allState}
             onChange={toggleAll}
             label={allState === true ? "Unstage all files" : "Stage all files"}
             disabled={entries.length === 0}
           />
-          Changes ({all.length})
-          <small>{fullyStaged} staged</small>
+          Changes ({all.length})<small>{fullyStaged} staged</small>
         </h2>
       )}
       <ul className="file-change-list">
@@ -157,20 +192,38 @@ export default function FileChangeList(): React.JSX.Element {
               key={entry.path}
               path={entry.path}
               code={displayCode(entry)}
-              title={state === "mixed" ? `${entry.path} (partially staged)` : entry.path}
+              title={
+                state === "mixed"
+                  ? `${entry.path} (partially staged)`
+                  : entry.path
+              }
               selected={selectedFile?.path === entry.path}
               onSelect={() => open(entry)}
+              onContextMenu={(event) => openMenu(event, entry)}
               leading={
                 <TriStateCheckbox
                   state={state}
                   onChange={() => toggle(entry)}
-                  label={state === true ? `Unstage ${entry.path}` : `Stage ${entry.path}`}
+                  label={
+                    state === true
+                      ? `Unstage ${entry.path}`
+                      : `Stage ${entry.path}`
+                  }
                 />
               }
             />
           );
         })}
       </ul>
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          entries={menuEntries(menu.target)}
+          onClose={closeMenu}
+        />
+      )}
+      {discardDialog}
     </>
   );
 }

@@ -15,6 +15,8 @@ interface FileListItemProps {
   trailing?: ReactNode;
   /** Extra class for the row, e.g. "conflicted". */
   className?: string;
+  /** Right-click on the row, e.g. to open its menu. */
+  onContextMenu?: (event: React.MouseEvent) => void;
 }
 
 /**
@@ -30,10 +32,11 @@ export default function FileListItem({
   leading,
   trailing,
   className,
+  onContextMenu,
 }: FileListItemProps): React.JSX.Element {
   const classes = [selected ? "on" : "", className ?? ""].filter(Boolean).join(" ");
   return (
-    <li className={classes}>
+    <li className={classes} onContextMenu={onContextMenu}>
       {leading}
       <button className="name" title={title} onClick={onSelect}>
         <span className={`code c-${code}`}>{code}</span>

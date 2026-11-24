@@ -138,6 +138,14 @@ pub fn staged_line_indices(
         .collect()
 }
 
+/// Indices of every added and removed line of `diff`.
+pub fn changed_line_indices(diff: &str) -> HashSet<usize> {
+    body_lines(diff)
+        .filter(|(_, line)| !matches!(line, BodyLine::Context { .. }))
+        .map(|(index, _)| index)
+        .collect()
+}
+
 /// True if any added line of `combined` is in `staged`.
 pub fn stages_any_addition(combined: &str, staged: &HashSet<usize>) -> bool {
     body_lines(combined)
@@ -279,5 +287,12 @@ mod tests {
         assert_eq!(added_in_worktree, set(&[4]));
         let staged = staged_line_indices(COMBINED, &removed_in_index, &added_in_worktree);
         assert_eq!(staged, vec![at(COMBINED, "-two"), at(COMBINED, "+TWO")]);
+    }
+
+    #[test]
+    fn lists_every_changed_line() {
+        let all = set(&[at(COMBINED, "-two"), at(COMBINED, "+TWO"), at(COMBINED, "+four")]);
+        assert_eq!(changed_line_indices(COMBINED), all);
+        assert!(changed_line_indices("").is_empty());
     }
 }

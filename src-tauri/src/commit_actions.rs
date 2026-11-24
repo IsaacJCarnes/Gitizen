@@ -6,7 +6,9 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::conflicts::unless_conflicted;
-use crate::git::repository::{assert_branch_name, assert_hash, current_branch, Repo};
+use crate::git::repository::{
+    assert_branch_name, assert_hash, assert_new_branch_name, current_branch, require_clean, Repo,
+};
 use crate::git::runner::run_git;
 
 /// Checks out the commit itself (a detached HEAD), not a branch.
@@ -29,10 +31,7 @@ pub async fn create_branch(
 
 fn create_branch_in(dir: &Path, name: &str, hash: &str, checkout: bool) -> Result<(), String> {
     let hash = assert_hash(hash)?;
-    // check-ref-format --branch rejects names git can't use, e.g. "a..b" or "x.lock".
-    let name = assert_branch_name(name)?;
-    run_git(dir, ["check-ref-format", "--branch", name])
-        .map_err(|_| format!("\"{name}\" isn't a valid branch name"))?;
+    let name = assert_new_branch_name(dir, name)?;
     if checkout {
         run_git(dir, ["checkout", "-b", name, hash]).map(drop)
     } else {
@@ -78,12 +77,7 @@ fn cherry_pick_in(dir: &Path, hash: &str, branch: &str) -> Result<(), String> {
     let hash = assert_hash(hash)?;
     let branch = assert_branch_name(branch)?;
     if current_branch(dir).as_deref() != Some(branch) {
-        let changes = run_git(dir, ["status", "--porcelain", "--untracked-files=no"])?;
-        if !changes.trim().is_empty() {
-            return Err(format!(
-                "Commit or stash your changes before cherry-picking onto {branch}."
-            ));
-        }
+        require_clean(dir, &format!("cherry-picking onto {branch}"))?;
         run_git(dir, ["checkout", branch])?;
     }
     unless_conflicted(dir, run_git(dir, ["cherry-pick", hash]).map(drop))

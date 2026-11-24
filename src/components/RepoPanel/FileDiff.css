@@ -74,3 +74,42 @@
   border-color: var(--accent);
   color: var(--panel);
 }
+
+/* Editing a file in place: the text fills the panel below the header. */
+.file-diff:has(.file-editor) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+}
+
+.file-editor-bar small {
+  flex: 1;
+  color: var(--mute);
+}
+
+.file-editor textarea {
+  flex: 1;
+  min-height: 240px;
+  margin: 0 16px 12px;
+  resize: none;
+  white-space: pre;
+  font:
+    12.5px/1.5 ui-monospace,
+    Menlo,
+    Consolas,
+    monospace;
+}
