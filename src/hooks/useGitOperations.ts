@@ -13,6 +13,8 @@ import type {
   Resolution,
   StashOutcome,
 } from "../../shared/gitTypes";
+import { listen } from "@tauri-apps/api/event";
+import { REPOSITORY_CHANGED } from "../../shared/ipc";
 import { gitizen } from "../api/gitizen";
 import { toAppError, type AppError } from "../utils/errors";
 import { joinMessage, splitMessage } from "../utils/format";
@@ -28,6 +30,9 @@ export type StashConflictKind = "stash" | "pop" | "bring";
 
 /** A network operation the header's sync buttons can run. */
 export type SyncAction = "fetch" | "pull" | "push";
+
+/** How often the open repository is fetched in the background. */
+export const BACKGROUND_FETCH_MS = 5 * 60 * 1000;
 
 /**
  * Everything the UI reads about the open repository, plus the actions it can
@@ -46,6 +51,11 @@ export interface GitOperations {
   syncing: SyncAction | null;
   /** Fetches, pulls or pushes the current branch, then refreshes. */
   sync: (action: SyncAction) => Promise<boolean>;
+  /**
+   * When the remotes were last fetched (milliseconds since 1970), by the
+   * Fetch button or the background fetch every few minutes; null if not yet.
+   */
+  lastFetched: number | null;
   /**
    * True after amending or undoing a commit that was already pushed: the
    * branch no longer matches the remote, so Push becomes a force push.
@@ -246,6 +256,13 @@ export function useGitOperations({
   const [branches, setBranches] = useState<GitBranch[]>([]);
   const [remotes, setRemotes] = useState<Remote[]>([]);
   const [syncing, setSyncing] = useState<SyncAction | null>(null);
+  // Read by the background fetch, which mustn't run alongside a sync.
+  const syncingRef = useRef(syncing);
+  syncingRef.current = syncing;
+  const [lastFetched, setLastFetched] = useState<number | null>(null);
+  const lastFetchedRef = useRef(0);
+  // The background fetch while it runs; a sync waits for it first.
+  const backgroundFetch = useRef<Promise<void> | null>(null);
   const [conflicts, setConflicts] = useState<ConflictState>(NO_CONFLICTS);
   const [branchStash, setBranchStash] = useState<BranchStash | null>(null);
   const [selectedStashFile, setSelectedStashFile] = useState<CommitFile | null>(null);
@@ -345,6 +362,34 @@ export function useGitOperations({
     }
   }, [reportError, selectCommit, setMessage]);
 
+  // Refreshes whenever the watched repository changes on disk, and on
+  // coming back to the window. A change during a refresh refreshes once
+  // more afterwards, so the last change is never missed.
+  const refreshing = useRef(false);
+  const refreshAgain = useRef(false);
+  useEffect(() => {
+    if (!repo) return;
+    const refreshSoon = async (): Promise<void> => {
+      if (refreshing.current) {
+        refreshAgain.current = true;
+        return;
+      }
+      refreshing.current = true;
+      do {
+        refreshAgain.current = false;
+        await refresh();
+      } while (refreshAgain.current);
+      refreshing.current = false;
+    };
+    const onChange = (): void => void refreshSoon();
+    const unlisten = listen(REPOSITORY_CHANGED, onChange);
+    window.addEventListener("focus", onChange);
+    return () => {
+      void unlisten.then((stop) => stop()).catch(() => {});
+      window.removeEventListener("focus", onChange);
+    };
+  }, [repo, refresh]);
+
   /**
    * Runs a git command, then refreshes. Resolves to false (with the error
    * shown) if it failed, so callers can tell without a try/catch of their own.
@@ -372,6 +417,9 @@ export function useGitOperations({
     async (directory: string): Promise<void> => {
       setRepo(directory);
       lastOperation.current = null;
+      // A newly opened repository is fetched in the background right away.
+      lastFetchedRef.current = 0;
+      setLastFetched(null);
       setStashConflict(null);
       setAmending(false);
       setNeedsForcePush(false);
@@ -380,6 +428,8 @@ export function useGitOperations({
       setFileDiff(NO_DIFF);
       selectCommit(null);
       onRepositoryOpened?.(directory);
+      // From now on, changes made anywhere (an editor, a terminal) refresh by themselves.
+      gitizen.watchRepository().catch(console.error);
       await refresh();
     },
     [refresh, selectCommit, onRepositoryOpened],
@@ -502,11 +552,22 @@ export function useGitOperations({
     }
   }, [reportError, setMessage]);
 
+  /** Notes a successful fetch. */
+  const fetched = useCallback((): void => {
+    lastFetchedRef.current = Date.now();
+    setLastFetched(lastFetchedRef.current);
+  }, []);
+
   const sync = useCallback(
     async (action: SyncAction): Promise<boolean> => {
       setSyncing(action);
+      // Two git network commands at once could trip over each other's locks.
+      await backgroundFetch.current;
       const run = {
-        fetch: gitizen.fetch,
+        fetch: async () => {
+          await gitizen.fetch();
+          fetched();
+        },
         pull: gitizen.pull,
         push: async () => {
           await gitizen.push(needsForcePush);
@@ -517,8 +578,45 @@ export function useGitOperations({
       setSyncing(null);
       return ok;
     },
-    [runOperation, needsForcePush],
+    [runOperation, needsForcePush, fetched],
   );
+
+  /**
+   * Fetches quietly, then refreshes the ahead/behind counts. Failures (no
+   * network, not signed in) are ignored; the next round tries again.
+   */
+  const fetchInBackground = useCallback((): void => {
+    if (backgroundFetch.current || syncingRef.current) return;
+    // Counts as fetched even on failure, so an offline repository isn't retried every minute.
+    lastFetchedRef.current = Date.now();
+    backgroundFetch.current = gitizen
+      .fetch(true)
+      .then(async () => {
+        fetched();
+        await refresh();
+      })
+      .catch(() => {})
+      .finally(() => {
+        backgroundFetch.current = null;
+      });
+  }, [fetched, refresh]);
+
+  // Fetch in the background when a repository with remotes opens, then
+  // every few minutes, and on coming back to the window once that is due.
+  const hasRemotes = remotes.length > 0;
+  useEffect(() => {
+    if (!repo || !hasRemotes) return;
+    const fetchIfDue = (): void => {
+      if (Date.now() - lastFetchedRef.current >= BACKGROUND_FETCH_MS) fetchInBackground();
+    };
+    fetchIfDue();
+    const timer = window.setInterval(fetchIfDue, 30_000);
+    window.addEventListener("focus", fetchIfDue);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", fetchIfDue);
+    };
+  }, [repo, hasRemotes, fetchInBackground]);
 
   /**
    * Runs a stash call. Stopping on conflicts counts as not done, and
@@ -761,6 +859,7 @@ export function useGitOperations({
     remotes,
     syncing,
     sync,
+    lastFetched,
     needsForcePush,
     publishRepository,
     selectedFile,

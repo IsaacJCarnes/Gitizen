@@ -14,6 +14,14 @@ export const pluralize = (count: number, noun: string): string =>
 export const renamePaths = ({ path, oldPath }: { path: string; oldPath?: string }): string[] =>
   oldPath ? [path, oldPath] : [path];
 
+/** How long ago `time` (milliseconds since 1970) was, e.g. "just now" or "5 minutes ago". */
+export function timeAgo(time: number, now = Date.now()): string {
+  const minutes = Math.floor((now - time) / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${pluralize(minutes, "minute")} ago`;
+  return `${pluralize(Math.floor(minutes / 60), "hour")} ago`;
+}
+
 /** Last segment of a path, e.g. "D:\\Github\\Gitizen" -> "Gitizen". */
 export const baseName = (path: string): string | undefined =>
   path.split(/[\\/]/).pop();

@@ -12,7 +12,7 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 - The repository name in the header opens a dropdown of recent repositories: click one to switch to it, or hover and click × to remove it from the list. **Add new repo…** at the bottom opens the folder picker.
 - The start screen lists recent repositories under **Open repository** so you can reopen one with a click.
 - **Clone repository** (on the start screen, and **Clone repository…** in the repository dropdown) clones into a new folder and opens it. Pick the repository from your GitHub repositories (yours, collaborations and your organizations', most recently updated first, with a filter box; needs the GitHub sign-in), or paste any URL. Choose the folder to clone into (**Browse…**, remembered for next time) and the new folder's name, which follows the repository's name until you type your own. A folder that already exists must be empty. Private repositories sign in through git's credential helper like any other git command.
-- Refresh button reloads status, history, branches, remotes, the branch's stash and any stopped operation.
+- No refresh button: Gitizen watches the repository's files and refreshes by itself (status, history, branches, remotes, the branch's stash, any stopped operation and the open diff) a moment after anything changes, whether in Gitizen, an editor, a terminal or another git tool, even while its window isn't focused. Bursts of changes are gathered into one refresh. Changes to files `.gitignore` ignores (build output, `node_modules`) and git's own object store and lock files are left out. Coming back to the window refreshes too.
 
 ### GitHub account
 - **Sign in to GitHub** in the header (and on the start screen) signs in through git's credential helper: Git Credential Manager, which comes with Git for Windows, opens GitHub's sign-in in the browser. Without it, paste a personal access token instead (a classic token needs the `repo` scope). Either way the sign-in is checked with GitHub and saved in the credential helper, so git's own pushes and pulls to github.com use it too, and Gitizen picks it up again at the next start.
@@ -24,6 +24,7 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
   - **Publish repository** while the repository has no remote. It opens a modal that either creates the repository on the signed-in GitHub account (name, optional description, private or public; see GitHub account), which adds it as `origin` and pushes the current branch, or adds an existing repository's URL as a remote.
   - **Publish branch** (beside **Fetch**) for a branch that isn't on the remote yet: pushes it to `origin` (or the only remote) and makes it track the remote branch.
   - Otherwise **Fetch**, **Pull ↓** and **Push ↑**, with how many commits Pull and Push would move. A non-zero count highlights the button.
+- Gitizen also fetches by itself in the background: when a repository with remotes opens, then every 5 minutes, and when you come back to the window once that much time has passed. The Pull and Push counts and each branch's ahead/behind stay current without clicking Fetch. A background fetch never pops up a sign-in window (it passes `credential.interactive=never` to Git Credential Manager); if it can't sign in or reach the remote it quietly tries again next round. It never runs at the same time as a fetch, pull or push you start. The Fetch button's tooltip says when the last fetch was.
 - Fetch downloads from every remote and prunes remote branches deleted there. Pull merges the upstream into the branch unless `pull.rebase` is set; stopping on conflicts opens the conflict editor. Push pushes to the tracked branch and takes annotated tags on the pushed commits along.
 - Pull and Push need a checked-out branch (not a detached HEAD). The button shows what is running ("Pulling…") and only one sync runs at a time.
 - Network commands run off the main thread, so the window keeps answering. git never prompts in a terminal; credentials come from git's credential helper (Git Credential Manager's window on Windows).
@@ -153,6 +154,7 @@ src-tauri/               Rust backend (Tauri 2)
     ai_commit.rs         AI commit messages, and running a user's shell command with a timeout
     settings.rs          settings.json: the saved AI and merge tool commands
     recent_repos.rs      Saved list of recently opened repositories, and its commands
+    watcher.rs           Watches the open repository's files and tells the window when it changed
     util.rs              Shared helpers: config files, blocking threads, temp folders, safe paths, test repositories
     git/
       runner.rs          Runs the git CLI (no shell, no console window, never prompts)
@@ -183,7 +185,7 @@ src/                     UI (React)
     Stash/               Stash file list, Pop/Discard, finish button, conflict warning, shared stash menu items
     EmptyRepositoryView/ Start screen before a repository is open
     ErrorModal/          Pops up failed operations; offers git init for non-repositories
-    RepositoryHeader/    Top bar: repo switcher, branch switcher, sync controls and publish modal, refresh
+    RepositoryHeader/    Top bar: repo switcher, branch switcher, sync controls and publish modal, GitHub account
     GitHub/              The GitHub account button and sign-in modal
     Clone/               The clone modal (from GitHub or a URL)
     RepoSidebar/         Left sidebar: working-tree files, commit form, commit files

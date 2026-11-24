@@ -32,6 +32,7 @@ export const Command = {
   RecentRepositories: "recent_repositories",
   RememberRepository: "remember_repository",
   ForgetRepository: "forget_repository",
+  WatchRepository: "watch_repository",
   Status: "status",
   Log: "log",
   Branches: "branches",
@@ -92,6 +93,9 @@ export const Command = {
   OpenInMergeTool: "open_in_merge_tool",
 } as const;
 
+/** The event the backend sends when the watched repository changed on disk. */
+export const REPOSITORY_CHANGED = "repository-changed";
+
 export type CommandName = (typeof Command)[keyof typeof Command];
 
 /**
@@ -123,6 +127,12 @@ export interface GitizenApi {
   rememberRepo(path: string): Promise<string[]>;
   /** Removes `path` from the saved list. Resolves to the new list. */
   forgetRepo(path: string): Promise<string[]>;
+  /**
+   * Starts watching the open repository's files (instead of any earlier
+   * one). After each burst of changes that matters (not ignored files, not
+   * git's object store) the window gets the `REPOSITORY_CHANGED` event.
+   */
+  watchRepository(): Promise<void>;
   status(): Promise<GitStatus>;
   /** Up to 500 commits across all branches, remotes and tags, children before parents. */
   log(): Promise<GitCommit[]>;
@@ -249,8 +259,11 @@ export interface GitizenApi {
    * `origin` and pushes the current branch. Rejects when signed out.
    */
   publishRepository(name: string, description: string, isPrivate: boolean): Promise<void>;
-  /** Fetches every remote and prunes deleted remote branches. */
-  fetch(): Promise<void>;
+  /**
+   * Fetches every remote and prunes deleted remote branches. A `background`
+   * fetch never shows a sign-in window (it fails instead).
+   */
+  fetch(background?: boolean): Promise<void>;
   /** Pulls the current branch's upstream into it (a merge unless `pull.rebase` is set). */
   pull(): Promise<void>;
   /**

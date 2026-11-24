@@ -61,7 +61,10 @@ where
         .args(args)
         // Never block waiting on a terminal prompt or an editor.
         .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_EDITOR", "true");
+        .env("GIT_EDITOR", "true")
+        // Reading commands (status, diff) never rewrite the index, so the
+        // file watcher doesn't see Gitizen's own refreshes as changes.
+        .env("GIT_OPTIONAL_LOCKS", "0");
     hide_console_window(&mut command);
     command
 }

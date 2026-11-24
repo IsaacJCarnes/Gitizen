@@ -10,11 +10,11 @@ import SyncControls from "./SyncControls";
  * Top bar: repository switcher (recent repositories and "Add new repo"),
  * branch switcher (with a search box and each branch's right-click menu),
  * a button back to unfinished conflicts, publish / fetch / pull / push
- * buttons, a refresh button and the GitHub account.
+ * buttons and the GitHub account. There is no refresh button: the view
+ * refreshes by itself when the repository changes (see `watchRepository`).
  */
 export default function RepositoryHeader(): React.JSX.Element {
   const {
-    refresh,
     conflicts,
     selectedCommit,
     selectCommit,
@@ -46,7 +46,6 @@ export default function RepositoryHeader(): React.JSX.Element {
         </button>
       )}
       <SyncControls />
-      <button onClick={refresh}>Refresh</button>
       <AccountButton />
     </header>
   );

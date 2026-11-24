@@ -17,6 +17,7 @@ export const gitizen: GitizenApi = {
   recentRepos: () => invoke(Command.RecentRepositories),
   rememberRepo: (path) => invoke(Command.RememberRepository, { path }),
   forgetRepo: (path) => invoke(Command.ForgetRepository, { path }),
+  watchRepository: () => invoke(Command.WatchRepository),
   status: () => invoke(Command.Status),
   log: () => invoke(Command.Log),
   branches: () => invoke(Command.Branches),
@@ -59,7 +60,7 @@ export const gitizen: GitizenApi = {
   // The Rust parameter is named `private`, which is reserved in TypeScript.
   publishRepository: (name, description, isPrivate) =>
     invoke(Command.PublishRepository, { name, description, private: isPrivate }),
-  fetch: () => invoke(Command.Fetch),
+  fetch: (background) => invoke(Command.Fetch, { background }),
   pull: () => invoke(Command.Pull),
   push: (force) => invoke(Command.Push, { force }),
   checkoutCommit: (hash) => invoke(Command.CheckoutCommit, { hash }),

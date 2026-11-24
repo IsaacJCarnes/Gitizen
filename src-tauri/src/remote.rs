@@ -107,11 +107,23 @@ fn publish_in(dir: &Path, name: &str, create: impl FnOnce(&str) -> Result<String
 }
 
 /// Downloads new commits from every remote (removing remote branches that
-/// were deleted there), so the ahead/behind counts are current.
+/// were deleted there), so the ahead/behind counts are current. A
+/// `background` fetch (the automatic one every few minutes) never shows a
+/// sign-in window: without a saved sign-in it just fails.
 #[tauri::command]
-pub async fn fetch(repo: Repo<'_>) -> Result<(), String> {
+pub async fn fetch(repo: Repo<'_>, background: Option<bool>) -> Result<(), String> {
     let dir = repo.require()?;
-    blocking(move || run_git(&dir, ["fetch", "--all", "--prune"]).map(drop)).await
+    blocking(move || fetch_in(&dir, background == Some(true))).await
+}
+
+fn fetch_in(dir: &Path, background: bool) -> Result<(), String> {
+    let mut args = Vec::new();
+    if background {
+        // Git Credential Manager's setting for "never show a window".
+        args.extend(["-c", "credential.interactive=never"]);
+    }
+    args.extend(["fetch", "--all", "--prune"]);
+    run_git(dir, args).map(drop)
 }
 
 /// Pulls the current branch's upstream into it. Without a `pull.rebase`
@@ -249,7 +261,8 @@ mod tests {
 
         // Alice diverges, then pulls Bob's commit in with a merge.
         commit_file(&alice, "c.txt", "three\n");
-        run_git(&alice, ["fetch", "--all", "--prune"]).unwrap();
+        fetch_in(&alice, true).unwrap();
+        assert_eq!(git(&alice, &["rev-list", "--count", "main..origin/main"]).trim(), "1");
         pull_in(&alice).unwrap();
         assert!(alice.join("b.txt").exists());
         let parents = git(&alice, &["rev-list", "--parents", "-n", "1", "HEAD"]);

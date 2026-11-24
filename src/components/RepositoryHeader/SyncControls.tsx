@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
-import type { SyncAction } from "../../hooks/useGitOperations";
+import { BACKGROUND_FETCH_MS, type SyncAction } from "../../hooks/useGitOperations";
+import { timeAgo } from "../../utils/format";
 import PublishModal from "./PublishModal";
 
 const RUNNING_LABEL: Record<SyncAction, string> = {
@@ -16,11 +17,14 @@ const RUNNING_LABEL: Record<SyncAction, string> = {
  * how many commits each would move.
  */
 export default function SyncControls(): React.JSX.Element | null {
-  const { status, remotes, syncing, sync, needsForcePush } = useGitOperationsContext();
+  const { status, remotes, syncing, sync, needsForcePush, lastFetched } = useGitOperationsContext();
   const [publishing, setPublishing] = useState(false);
   if (!status) return null;
 
   const busy = syncing !== null;
+  const fetchedNote = `${lastFetched ? `Last fetched ${timeAgo(lastFetched)}. ` : ""}Fetched by itself every ${
+    BACKGROUND_FETCH_MS / 60_000
+  } minutes.`;
   const detached = status.branch === null;
   const button = (action: SyncAction, label: string, title: string, count?: number) => (
     <button
@@ -51,14 +55,14 @@ export default function SyncControls(): React.JSX.Element | null {
   } else if (!status.upstream) {
     content = (
       <>
-        {button("fetch", "Fetch", "Download new commits from the remote")}
+        {button("fetch", "Fetch", `Download new commits from the remote. ${fetchedNote}`)}
         {button("push", "Publish branch", "Push this branch to the remote and track it")}
       </>
     );
   } else {
     content = (
       <>
-        {button("fetch", "Fetch", `Download new commits from ${status.upstream}`)}
+        {button("fetch", "Fetch", `Download new commits from ${status.upstream}. ${fetchedNote}`)}
         {button("pull", "Pull ↓", `Pull ${status.upstream} into this branch`, status.behind)}
         {button(
           "push",

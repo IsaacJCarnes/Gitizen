@@ -16,6 +16,7 @@ mod remote;
 mod settings;
 mod stash;
 mod util;
+mod watcher;
 
 use git::repository::OpenRepository;
 use github::GitHubSession;
@@ -31,6 +32,7 @@ pub fn run() {
         .manage(RecentRepositories::default())
         .manage(AppSettings::default())
         .manage(GitHubSession::default())
+        .manage(watcher::RepositoryWatcher::default())
         .invoke_handler(tauri::generate_handler![
             commands::open_repository,
             commands::init_repository,
@@ -38,6 +40,7 @@ pub fn run() {
             recent_repos::recent_repositories,
             recent_repos::remember_repository,
             recent_repos::forget_repository,
+            watcher::watch_repository,
             commands::status,
             commands::log,
             commands::branches,
