@@ -30,6 +30,7 @@ export default function FileDiff(): React.JSX.Element {
   const { setView } = useAppContext();
   const {
     selectedCommit,
+    selectionBase,
     selectedCommitFile,
     commitDiff,
     selectedFile,
@@ -53,7 +54,8 @@ export default function FileDiff(): React.JSX.Element {
   const stashFile = !selectedCommit && branchStash ? selectedStashFile : null;
   const path = selectedCommit ? selectedCommitFile?.path : (stashFile?.path ?? selectedFile?.path);
   const shownDiff = selectedCommit ? commitDiff : stashFile ? stashDiff : diff;
-  const source = selectedCommit ? shortHash(selectedCommit.hash) : stashFile ? "Stash" : "Uncommitted";
+  let source = selectedCommit ? shortHash(selectedCommit.hash) : stashFile ? "Stash" : "Uncommitted";
+  if (selectedCommit && selectionBase) source = `${shortHash(selectionBase.hash)} … ${source}`;
   // The commit (or stash) whose copy of the file is shown, if not the working tree's.
   const shownHash = selectedCommit?.hash ?? (stashFile ? branchStash?.hash : undefined);
 

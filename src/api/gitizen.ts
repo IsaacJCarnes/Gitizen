@@ -24,9 +24,9 @@ export const gitizen: GitizenApi = {
   fileDiff: (path, ignoreWhitespace) =>
     invoke(Command.FileDiff, { path, ignoreWhitespace }),
   fileText: (path, hash) => invoke(Command.FileText, { path, hash }),
-  commitFiles: (hash) => invoke(Command.CommitFiles, { hash }),
-  commitDiff: (hash, path, oldPath, ignoreWhitespace) =>
-    invoke(Command.CommitDiff, { hash, path, oldPath, ignoreWhitespace }),
+  commitFiles: (hash, since) => invoke(Command.CommitFiles, { hash, since }),
+  commitDiff: (hash, path, oldPath, ignoreWhitespace, since) =>
+    invoke(Command.CommitDiff, { hash, path, oldPath, ignoreWhitespace, since }),
   stage: (paths) => invoke(Command.Stage, { paths }),
   unstage: (paths) => invoke(Command.Unstage, { paths }),
   setStagedLines: (path, diff, lines, staged) =>

@@ -75,6 +75,7 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 - The branch's stash is a dashed node of its own, attached to the commit it was made on (see Stashing).
 - Selecting a commit shows its subject, body, short hash, author and date in the sidebar, plus the files it changed (renames and copies included). The arrow beside the subject collapses the details to just the subject, and they stay collapsed while other commits are picked.
 - Click a file in a commit to see its diff against the commit's first parent (so merges show what they brought in).
+- Select several commits with **Ctrl+click** (add or remove one) or **Shift+click** (every commit between the last one clicked and this one: when one of them descends from the other, only the commits on the line between them, leaving out commits other branches made meanwhile; otherwise every row between them). The sidebar then says how many are selected and lists them, and the files and diffs show all of their changes together: from before the oldest selected commit through the newest, like one big commit. Commits in between that aren't selected are included too (the sidebar says how many). The diff header shows the range, e.g. `0808080 … 1010101`. Selections drop commits that a refresh no longer finds (after an amend, say).
 
 ### Commit menu
 Right-click any commit in the history for:

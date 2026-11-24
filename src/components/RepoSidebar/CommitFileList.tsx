@@ -3,14 +3,17 @@ import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import type { CommitFile } from "../../../shared/gitTypes";
 import FileListItem from "../common/FileListItem";
 import CommitSummary from "./CommitSummary";
+import SelectionSummary from "./SelectionSummary";
 
 /**
  * Sidebar content when a commit is selected in the history: the commit's
- * summary and the files it changed. Picking a file opens its diff.
+ * summary and the files it changed. Picking a file opens its diff. With
+ * several commits selected, a summary of them and the files they changed
+ * together.
  */
 export default function CommitFileList(): React.JSX.Element | null {
   const { setView } = useAppContext();
-  const { selectedCommit, commitFiles, selectedCommitFile, setSelectedCommitFile } =
+  const { selectedCommit, selectionBase, commitFiles, selectedCommitFile, setSelectedCommitFile } =
     useGitOperationsContext();
 
   if (!selectedCommit) return null;
@@ -22,7 +25,7 @@ export default function CommitFileList(): React.JSX.Element | null {
 
   return (
     <>
-      <CommitSummary commit={selectedCommit} />
+      {selectionBase ? <SelectionSummary /> : <CommitSummary commit={selectedCommit} />}
       <h2>Changed files ({commitFiles.length})</h2>
       <ul className="file-change-list">
         {commitFiles.map((file) => (

@@ -4,6 +4,8 @@
 
 .commit-graph button {
   width: 100%;
+  /* Shift+click selects commits, not the text in between. */
+  user-select: none;
   height: 32px;
   display: flex;
   align-items: center;

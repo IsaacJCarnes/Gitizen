@@ -273,19 +273,31 @@ fn file_text_in(dir: &Path, path: &str, hash: Option<&str>) -> Result<String, St
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// Files changed by a commit, compared to its first parent.
+/// What a commit's changes are compared to: the first parent of `since` (a
+/// selection's oldest commit, so several commits show as one change), or of
+/// `hash` itself when it is left out.
+fn base_of(dir: &Path, hash: &str, since: Option<&str>) -> Result<String, String> {
+    first_parent_of(dir, assert_hash(since.unwrap_or(hash))?)
+}
+
+/// Files changed by a commit, compared to its first parent; with `since`,
+/// by every commit from `since` up to `hash` together.
 #[tauri::command]
-pub async fn commit_files(repo: Repo<'_>, hash: String) -> Result<Vec<CommitFile>, String> {
-    let dir = repo.require()?;
-    let hash = assert_hash(&hash)?;
-    let parent = first_parent_of(&dir, hash)?;
+pub async fn commit_files(repo: Repo<'_>, hash: String, since: Option<String>) -> Result<Vec<CommitFile>, String> {
+    commit_files_in(&repo.require()?, &hash, since.as_deref())
+}
+
+fn commit_files_in(dir: &Path, hash: &str, since: Option<&str>) -> Result<Vec<CommitFile>, String> {
+    let hash = assert_hash(hash)?;
+    let parent = base_of(dir, hash, since)?;
     // -M detects renames, so a moved file is one entry with both paths.
-    let output = run_git(&dir, ["diff", "--name-status", "-z", "-M", parent.as_str(), hash])?;
+    let output = run_git(dir, ["diff", "--name-status", "-z", "-M", parent.as_str(), hash])?;
     Ok(parse_name_status(&output))
 }
 
-/// Diff of one file in a commit, compared to its first parent. Renames pass
-/// both paths so git shows them as a rename.
+/// Diff of one file in a commit, compared to its first parent (or, with
+/// `since`, to the first parent of `since`). Renames pass both paths so git
+/// shows them as a rename.
 #[tauri::command]
 pub async fn commit_diff(
     repo: Repo<'_>,
@@ -293,10 +305,11 @@ pub async fn commit_diff(
     path: String,
     old_path: Option<String>,
     ignore_whitespace: Option<bool>,
+    since: Option<String>,
 ) -> Result<String, String> {
     let dir = repo.require()?;
     let hash = assert_hash(&hash)?;
-    let parent = first_parent_of(&dir, hash)?;
+    let parent = base_of(&dir, hash, since.as_deref())?;
     let mut args = diff_options(ignore_whitespace);
     args.extend(["-M", parent.as_str(), hash, "--"]);
     if let Some(old_path) = &old_path {
@@ -744,6 +757,17 @@ mod tests {
         .unwrap();
         assert!(rename_diff.as_str().unwrap().contains("rename to b.txt"));
         assert!(call(&window, "commit_files", json!({ "hash": "HEAD~1" })).is_err());
+        // Both commits together: a.txt added and renamed is just b.txt added.
+        let both = call(&window, "commit_files", json!({ "hash": head, "since": root })).unwrap();
+        assert_eq!(both, json!([{ "path": "b.txt", "code": "A" }]));
+        let both_diff = call(
+            &window,
+            "commit_diff",
+            json!({ "hash": head, "path": "b.txt", "since": root }),
+        )
+        .unwrap();
+        assert!(both_diff.as_str().unwrap().contains("new file mode"));
+        assert!(call(&window, "commit_files", json!({ "hash": head, "since": "--all" })).is_err());
 
         // Working tree: edit, stage, unstage, commit.
         std::fs::write(repo.join("b.txt"), "one\ntwo\n").unwrap();

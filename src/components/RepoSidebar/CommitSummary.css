@@ -34,3 +34,21 @@
 .commit-summary-toggle:hover {
   color: var(--ink);
 }
+
+/* Several selected commits: one line per commit, scrolling past a handful. */
+.selection-list {
+  max-height: 140px;
+  margin-top: 4px;
+  overflow-y: auto;
+  font-size: 12.5px;
+}
+
+.selection-list li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selection-list code {
+  color: var(--mute);
+}

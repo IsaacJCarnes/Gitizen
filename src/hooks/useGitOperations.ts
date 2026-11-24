@@ -17,6 +17,7 @@ import { listen } from "@tauri-apps/api/event";
 import { REPOSITORY_CHANGED } from "../../shared/ipc";
 import { gitizen } from "../api/gitizen";
 import { toAppError, type AppError } from "../utils/errors";
+import { commitsBetween } from "../utils/commitRange";
 import { joinMessage, splitMessage } from "../utils/format";
 import { loadOrReset, loadUnlessCancelled } from "../utils/load";
 import { useDiffSettings } from "./useDiffSettings";
@@ -30,6 +31,14 @@ export type StashConflictKind = "stash" | "pop" | "bring";
 
 /** A network operation the header's sync buttons can run. */
 export type SyncAction = "fetch" | "pull" | "push";
+
+/**
+ * How clicking a commit changes the selection: "only" selects just it,
+ * "toggle" (Ctrl+click) adds or removes it, "range" (Shift+click) selects
+ * every commit between the last one clicked and it: those on the line
+ * between them when one descends from the other, else every row between.
+ */
+export type SelectHow = "only" | "toggle" | "range";
 
 /** How often the open repository is fetched in the background. */
 export const BACKGROUND_FETCH_MS = 5 * 60 * 1000;
@@ -80,13 +89,24 @@ export interface GitOperations {
   reportError: (caught: unknown) => void;
   /** Closes the error modal. */
   dismissError: () => void;
-  /** Commit chosen in the history; null means "Uncommitted changes". */
+  /**
+   * Commit chosen in the history; null means "Uncommitted changes". With
+   * several selected, the newest of them.
+   */
   selectedCommit: GitCommit | null;
+  /** Every selected commit, newest first (as in the history); empty for "Uncommitted changes". */
+  selectedCommits: GitCommit[];
+  /**
+   * With several commits selected, the oldest: the files and diffs then
+   * show every change from it through `selectedCommit` together. Null otherwise.
+   */
+  selectionBase: GitCommit | null;
   commitFiles: CommitFile[];
   /** File chosen within the selected commit, and its diff. */
   selectedCommitFile: CommitFile | null;
   commitDiff: string;
-  selectCommit: (commit: GitCommit | null) => void;
+  /** Selects `commit` (`how` as for Ctrl/Shift+click), or null for "Uncommitted changes". */
+  selectCommit: (commit: GitCommit | null, how?: SelectHow) => void;
   setSelectedCommitFile: (file: CommitFile | null) => void;
   setSelectedFile: (file: FileChange | null) => void;
   setCommitSummary: (summary: string) => void;
@@ -295,7 +315,16 @@ export function useGitOperations({
   // Set when amending a pushed commit; only takes effect once the amend is
   // actually committed (cancelling it leaves the branch as it was).
   const pendingForcePush = useRef(false);
-  const [selectedCommit, setSelectedCommit] = useState<GitCommit | null>(null);
+  // The selected commits, newest first, and the one clicked last, which a
+  // Shift+click range starts from.
+  const [selection, setSelection] = useState<GitCommit[]>([]);
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+  const selectionAnchor = useRef<string | null>(null);
+  const commitsRef = useRef(commits);
+  commitsRef.current = commits;
+  const selectedCommit = selection[0] ?? null;
+  const selectionBase = selection.length > 1 ? selection[selection.length - 1] : null;
   const [commitFiles, setCommitFiles] = useState<CommitFile[]>([]);
   const [selectedCommitFile, setSelectedCommitFile] = useState<CommitFile | null>(null);
   const [commitDiff, setCommitDiff] = useState("");
@@ -313,8 +342,27 @@ export function useGitOperations({
 
   // Clear the old commit's files and diff together so a stale file is never
   // diffed against the newly selected commit.
-  const selectCommit = useCallback((commit: GitCommit | null): void => {
-    setSelectedCommit(commit);
+  const selectCommit = useCallback((commit: GitCommit | null, how: SelectHow = "only"): void => {
+    const order = commitsRef.current;
+    const position = (hash: string): number => order.findIndex((each) => each.hash === hash);
+    let next: GitCommit[] = [];
+    if (commit && how === "toggle") {
+      const current = selectionRef.current;
+      next = current.some((each) => each.hash === commit.hash)
+        ? current.filter((each) => each.hash !== commit.hash)
+        : [...current, commit];
+      selectionAnchor.current = commit.hash;
+    } else if (commit && how === "range" && selectionAnchor.current) {
+      // Along the branch line when one commit descends from the other.
+      const between = commitsBetween(order, selectionAnchor.current, commit.hash);
+      next = between.length > 0 ? between : [commit];
+    } else if (commit) {
+      next = [commit];
+      selectionAnchor.current = commit.hash;
+    } else {
+      selectionAnchor.current = null;
+    }
+    setSelection(next.sort((a, b) => position(a.hash) - position(b.hash)));
     setStashSelected(false);
     setSelectedStashFile(null);
     setCommitFiles([]);
@@ -780,15 +828,25 @@ export function useGitOperations({
     });
   }, [status]);
 
-  // Files changed by the selected commit.
+  // Commits rewritten or gone after a refresh (amended, squashed, reset)
+  // leave the selection; with none left, the working tree shows again.
+  useEffect(() => {
+    const present = new Set(commits.map((commit) => commit.hash));
+    const kept = selectionRef.current.filter((commit) => present.has(commit.hash));
+    if (kept.length === selectionRef.current.length) return;
+    if (kept.length === 0) selectCommit(null);
+    else setSelection(kept);
+  }, [commits, selectCommit]);
+
+  // Files changed by the selected commit (or commits, together).
   useEffect(() => {
     if (!selectedCommit) return;
     return loadUnlessCancelled(
-      gitizen.commitFiles(selectedCommit.hash),
+      gitizen.commitFiles(selectedCommit.hash, selectionBase?.hash),
       setCommitFiles,
       reportError,
     );
-  }, [selectedCommit, reportError]);
+  }, [selectedCommit, selectionBase, reportError]);
 
   const selectStashFile = useCallback((file: CommitFile | null): void => {
     setSelectedStashFile(file);
@@ -839,12 +897,13 @@ export function useGitOperations({
             selectedCommitFile.path,
             selectedCommitFile.oldPath,
             hideWhitespace,
+            selectionBase?.hash,
           ),
         setCommitDiff,
         "",
         reportError,
       ),
-    [selectedCommit, selectedCommitFile, hideWhitespace, reportError],
+    [selectedCommit, selectionBase, selectedCommitFile, hideWhitespace, reportError],
   );
 
   return {
@@ -871,6 +930,8 @@ export function useGitOperations({
     reportError,
     dismissError,
     selectedCommit,
+    selectedCommits: selection,
+    selectionBase,
     commitFiles,
     selectedCommitFile,
     commitDiff,

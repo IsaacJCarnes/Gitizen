@@ -41,6 +41,8 @@ function findTrunk(commits: GitCommit[]): string | undefined {
  * The commit history as a graph across all branches. When the working tree
  * has changes, an "Uncommitted changes" row sits on top, attached to HEAD.
  * Clicking a row selects it; the sidebar then shows that row's files.
+ * Ctrl+click adds or removes commits and Shift+click selects a range;
+ * several commits show their changes together.
  * Right-clicking a commit opens its menu (undo, amend and so on);
  * right-clicking "Uncommitted changes" offers to stash or discard them all,
  * and right-clicking the stash offers to pop or discard it.
@@ -55,6 +57,7 @@ export default function CommitHistory(): React.JSX.Element {
     commits,
     status,
     selectedCommit,
+    selectedCommits,
     selectCommit,
     branchStash,
     conflicts,
@@ -94,8 +97,14 @@ export default function CommitHistory(): React.JSX.Element {
     ...commits,
   ];
 
-  const select = (commit: GitCommit | null): void => {
-    if (commit?.hash !== selectedCommit?.hash || stashSelected) selectCommit(commit);
+  const selectedHashes = new Set(selectedCommits.map((commit) => commit.hash));
+
+  /** A click: Ctrl (or Cmd) adds or removes a commit, Shift selects a range. */
+  const select = (commit: GitCommit | null, event: React.MouseEvent): void => {
+    if (commit && (event.ctrlKey || event.metaKey)) return selectCommit(commit, "toggle");
+    if (commit && event.shiftKey) return selectCommit(commit, "range");
+    const already = commit ? selectedCommits.length === 1 && selectedCommit?.hash === commit.hash : !selectedCommit;
+    if (!already || stashSelected) selectCommit(commit);
   };
 
   // Popping, dropping or discarding needs nothing else in progress.
@@ -162,9 +171,7 @@ export default function CommitHistory(): React.JSX.Element {
             );
           }
           const commit = entry;
-          const selected = commit
-            ? selectedCommit?.hash === commit.hash
-            : !selectedCommit && !stashSelected;
+          const selected = commit ? selectedHashes.has(commit.hash) : !selectedCommit && !stashSelected;
 
           return (
             <li
@@ -172,7 +179,7 @@ export default function CommitHistory(): React.JSX.Element {
               className={`${commit ? "" : "pending"}${selected ? " on" : ""}`}
             >
               <button
-                onClick={() => select(commit)}
+                onClick={(event) => select(commit, event)}
                 onContextMenu={(event) => openMenu(event, commit)}
               >
                 <span

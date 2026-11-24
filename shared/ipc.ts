@@ -149,14 +149,19 @@ export interface GitizenApi {
    * hides between hunks. Empty if the file doesn't exist there.
    */
   fileText(path: string, hash?: string): Promise<string>;
-  /** Files changed by a commit, compared to its first parent. */
-  commitFiles(hash: string): Promise<CommitFile[]>;
-  /** Diff of one file in a commit, compared to its first parent. */
+  /**
+   * Files changed by a commit, compared to its first parent. With `since`
+   * (an older commit), every change from `since` through `hash` together:
+   * compared to the first parent of `since`.
+   */
+  commitFiles(hash: string, since?: string): Promise<CommitFile[]>;
+  /** Diff of one file in a commit (or from `since` through it), as for `commitFiles`. */
   commitDiff(
     hash: string,
     path: string,
     oldPath?: string,
     ignoreWhitespace?: boolean,
+    since?: string,
   ): Promise<string>;
   stage(paths: string[]): Promise<void>;
   unstage(paths: string[]): Promise<void>;
