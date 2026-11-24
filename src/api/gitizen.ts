@@ -44,8 +44,8 @@ export const gitizen: GitizenApi = {
   stashDiff: (hash, path, ignoreWhitespace) =>
     invoke(Command.StashDiff, { hash, path, ignoreWhitespace }),
   checkout: (branch) => invoke(Command.Checkout, { branch }),
-  aiCommitCommand: () => invoke(Command.AiCommitCommand),
-  setAiCommitCommand: (command) => invoke(Command.SetAiCommitCommand, { command }),
+  savedCommand: (which) => invoke(Command.SavedCommand, { which }),
+  saveCommand: (which, command) => invoke(Command.SaveCommand, { which, command }),
   generateCommitMessage: () => invoke(Command.GenerateCommitMessage),
   remotes: () => invoke(Command.Remotes),
   addRemote: (name, url) => invoke(Command.AddRemote, { name, url }),
@@ -70,11 +70,7 @@ export const gitizen: GitizenApi = {
   continueOperation: () => invoke(Command.ContinueOperation),
   abortOperation: () => invoke(Command.AbortOperation),
   aiResolveConflict: (path) => invoke(Command.AiResolveConflict, { path }),
-  aiResolveCommand: () => invoke(Command.AiResolveCommand),
-  setAiResolveCommand: (command) => invoke(Command.SetAiResolveCommand, { command }),
   conflictVersions: (path) => invoke(Command.ConflictVersions, { path }),
   saveConflictResolution: (path, text) => invoke(Command.SaveConflictResolution, { path, text }),
-  editorCommand: () => invoke(Command.EditorCommand),
-  setEditorCommand: (command) => invoke(Command.SetEditorCommand, { command }),
   openInMergeTool: (path) => invoke(Command.OpenInMergeTool, { path }),
 };

@@ -9,14 +9,16 @@
 //! what was going on, so it can be finished or undone later, even after a
 //! restart.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
 use crate::commands::diff_options;
 use crate::conflicts::{conflicted_files, operation_in, Operation};
 use crate::git::parsers::parse_name_status;
-use crate::git::repository::{assert_hash, current_branch, Repo, EMPTY_TREE};
+use crate::git::repository::{
+    assert_hash, current_branch, git_path, read_git_file, require_current_branch, Repo, EMPTY_TREE,
+};
 use crate::git::runner::run_git;
 use crate::git::types::CommitFile;
 use crate::util::file_in_repo;
@@ -79,23 +81,20 @@ pub(crate) fn operation(dir: &Path) -> Option<Operation> {
     })
 }
 
-fn marker(dir: &Path) -> Result<PathBuf, String> {
-    let path = run_git(dir, ["rev-parse", "--git-path", "gitizen-stash.json"])?;
-    Ok(dir.join(path.trim()))
-}
+/// The note's name in the git folder.
+const MARKER: &str = "gitizen-stash.json";
 
 fn read_in_progress(dir: &Path) -> Option<InProgress> {
-    let text = std::fs::read_to_string(marker(dir).ok()?).ok()?;
-    serde_json::from_str(&text).ok()
+    serde_json::from_str(&read_git_file(dir, MARKER)?).ok()
 }
 
 fn write_in_progress(dir: &Path, state: &InProgress) -> Result<(), String> {
     let text = serde_json::to_string_pretty(state).map_err(|error| error.to_string())?;
-    std::fs::write(marker(dir)?, text).map_err(|error| error.to_string())
+    std::fs::write(git_path(dir, MARKER)?, text).map_err(|error| error.to_string())
 }
 
 fn clear_in_progress(dir: &Path) -> Result<(), String> {
-    let path = marker(dir)?;
+    let path = git_path(dir, MARKER)?;
     if path.exists() {
         std::fs::remove_file(path).map_err(|error| error.to_string())?;
     }
@@ -174,7 +173,7 @@ fn branch_for_stash(dir: &Path) -> Result<String, String> {
     if let Some(operation) = operation_in(dir) {
         return Err(format!("Finish or abort the {} in progress first.", operation.git_name()));
     }
-    current_branch(dir).ok_or_else(|| "Check out a branch to use its stash.".to_string())
+    require_current_branch(dir, "using its stash")
 }
 
 /// The current branch's stash, if it has one.

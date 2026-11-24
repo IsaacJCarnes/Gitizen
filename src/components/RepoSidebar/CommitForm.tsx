@@ -1,11 +1,11 @@
 import "./CommitForm.css";
 import { useState } from "react";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
-import { useAiCommitCommand } from "../../hooks/useSavedCommand";
+import { useSavedCommand } from "../../hooks/useSavedCommand";
 import { OPERATION_NAME } from "../../utils/conflictText";
 import { pluralize } from "../../utils/format";
 import AbortOperationButton from "../Conflicts/AbortOperationButton";
-import AiCommitCommandModal from "./AiCommitCommandModal";
+import CommandModal from "../common/CommandModal";
 
 /**
  * Commit summary (required, one line) and description (optional) with the
@@ -13,6 +13,8 @@ import AiCommitCommandModal from "./AiCommitCommandModal";
  * fills both fields from the staged diff using the user's AI command, and
  * asks for that command first if none is set up.
  *
+ * While a merge, cherry-pick, revert or squash merge is stopped, the
+ * commit button finishes it and an Abort button beside it abandons it.
  * During a rebase the form only shows which step it is on, with "Continue
  * rebase" (git commits each step with that commit's own message) and
  * "Abort Rebase".
@@ -31,7 +33,7 @@ export default function CommitForm(): React.JSX.Element {
     generatingMessage,
     generateCommitMessage,
   } = useGitOperationsContext();
-  const { command: aiCommand, save: saveAiCommand } = useAiCommitCommand();
+  const { command: aiCommand, save: saveAiCommand } = useSavedCommand("aiCommit");
   // Which button opened the AI command modal: "generate" runs it once saved.
   const [settingUp, setSettingUp] = useState<"change" | "generate" | null>(
     null,
@@ -144,21 +146,18 @@ export default function CommitForm(): React.JSX.Element {
           </span>
         )}
       </div>
-      {rebasing ? (
+      {operation ? (
+        // Finishing (or abandoning) the stopped merge, rebase and so on.
         <div className="commit-amend">
           <button
             className="primary"
             disabled={!canCommit}
-            title={
-              conflictCount > 0
-                ? "Resolve every conflicted file first"
-                : undefined
-            }
+            title={conflictCount > 0 ? "Resolve every conflicted file first" : undefined}
             onClick={commitChanges}
           >
-            Continue rebase
+            {rebasing ? "Continue rebase" : `Commit ${OPERATION_NAME[operation]}`}
           </button>
-          <AbortOperationButton label="Abort Rebase" />
+          <AbortOperationButton />
         </div>
       ) : amending ? (
         <div className="commit-amend">
@@ -173,23 +172,13 @@ export default function CommitForm(): React.JSX.Element {
           <button onClick={cancelAmend}>Cancel</button>
         </div>
       ) : (
-        <button
-          className="primary"
-          disabled={!canCommit}
-          title={
-            conflictCount > 0
-              ? "Resolve every conflicted file first"
-              : undefined
-          }
-          onClick={commitChanges}
-        >
-          {operation
-            ? `Commit ${OPERATION_NAME[operation]}`
-            : `Commit ${pluralize(stagedCount, "file")}`}
+        <button className="primary" disabled={!canCommit} onClick={commitChanges}>
+          Commit {pluralize(stagedCount, "file")}
         </button>
       )}
       {settingUp && (
-        <AiCommitCommandModal
+        <CommandModal
+          which="aiCommit"
           initialCommand={aiCommand ?? ""}
           onSave={saveCommand}
           onDismiss={() => setSettingUp(null)}

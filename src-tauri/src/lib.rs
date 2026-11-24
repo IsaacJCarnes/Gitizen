@@ -11,11 +11,12 @@ mod edit_file;
 mod git;
 mod recent_repos;
 mod remote;
+mod settings;
 mod stash;
 mod util;
 
 use git::repository::OpenRepository;
-use ai_commit::AppSettings;
+use settings::AppSettings;
 use recent_repos::RecentRepositories;
 
 /// Starts the app. Called from `main.rs`.
@@ -56,8 +57,8 @@ pub fn run() {
             edit_file::can_edit_file,
             edit_file::working_file,
             edit_file::save_working_file,
-            ai_commit::ai_commit_command,
-            ai_commit::set_ai_commit_command,
+            settings::saved_command,
+            settings::save_command,
             ai_commit::generate_commit_message,
             remote::remotes,
             remote::add_remote,
@@ -82,10 +83,6 @@ pub fn run() {
             conflicts::ai_resolve_conflict,
             conflicts::conflict_versions,
             conflicts::save_conflict_resolution,
-            conflicts::ai_resolve_command,
-            conflicts::set_ai_resolve_command,
-            conflicts::editor_command,
-            conflicts::set_editor_command,
             conflicts::open_in_merge_tool,
         ])
         .run(tauri::generate_context!())

@@ -1,13 +1,15 @@
-import { useState } from "react";
 import type { ConflictFile, FileChange } from "../../../shared/gitTypes";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
-import ContextMenu, { type MenuEntry, type MenuItem } from "../common/ContextMenu";
+import { useContextMenu } from "../../hooks/useContextMenu";
+import { renamePaths } from "../../utils/format";
+import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
 import { useDiscardConfirmation } from "../common/DiscardConfirm";
 import FileListItem from "../common/FileListItem";
 import TriStateCheckbox from "../common/TriStateCheckbox";
 import ConflictBanner from "../Conflicts/ConflictBanner";
 import MarkResolvedButton from "../Conflicts/MarkResolvedButton";
+import { stashItem } from "../Stash/stashMenu";
 import { combineStates, type CheckState } from "../../utils/checkState";
 
 /**
@@ -38,14 +40,6 @@ function groupByPath(files: FileChange[]): ChangedPath[] {
   return [...byPath.values()].sort((a, b) => (a.path < b.path ? -1 : 1));
 }
 
-/**
- * The paths git must be given to stage or unstage the entry. A rename lives
- * in the index as a deletion of the old path plus an addition of the new
- * one, so both halves have to move together.
- */
-function pathsOf(entry: ChangedPath): string[] {
-  return entry.oldPath ? [entry.path, entry.oldPath] : [entry.path];
-}
 
 /**
  * One status code per file that doesn't change when the file is staged or
@@ -78,6 +72,7 @@ function stageState(entry: ChangedPath): CheckState {
  * to the branch's stash; right-clicking the header stashes every change.
  */
 export default function FileChangeList(): React.JSX.Element {
+  const git = useGitOperationsContext();
   const {
     status,
     selectedFile,
@@ -87,24 +82,11 @@ export default function FileChangeList(): React.JSX.Element {
     selectedConflict,
     setSelectedConflict,
     discardFiles,
-    branchStash,
-    stashChanges,
-  } = useGitOperationsContext();
+  } = git;
   const { view, setView } = useAppContext();
   const { confirmDiscard, discardDialog } = useDiscardConfirmation();
-  // `entry` null is the header's menu, for every file.
-  const [menu, setMenu] = useState<{
-    entry: ChangedPath | null;
-    x: number;
-    y: number;
-  } | null>(null);
-  const openMenu = (
-    event: React.MouseEvent,
-    entry: ChangedPath | null,
-  ): void => {
-    event.preventDefault();
-    setMenu({ entry, x: event.clientX, y: event.clientY });
-  };
+  // A null target is the header's menu, for every file.
+  const { menu, openMenu, closeMenu } = useContextMenu<ChangedPath | null>();
   const conflictByPath = new Map<string, ConflictFile>(
     files.map((file) => [file.path, file]),
   );
@@ -130,38 +112,18 @@ export default function FileChangeList(): React.JSX.Element {
   };
 
   // A mixed checkbox stages the rest, like a select-all, rather than unstaging.
+  // A rename moves in the index as a deletion plus an addition, so both
+  // paths are staged or unstaged together.
   const toggle = (entry: ChangedPath) =>
-    setFilesStaged(pathsOf(entry), stageState(entry) !== true);
+    setFilesStaged(renamePaths(entry), stageState(entry) !== true);
 
   const toggleAll = () =>
-    setFilesStaged(entries.flatMap(pathsOf), allState !== true);
-
-  // A branch keeps one stash, so a second stash adds to the first.
-  const stashBlocked =
-    operation !== null
-      ? "Finish or abort the operation in progress first"
-      : status?.branch === null
-        ? "Check out a branch to stash changes on it"
-        : undefined;
-  const stashEntry = (paths: string[], what: string): MenuItem => ({
-    label: branchStash ? `Add ${what} to stash` : `Stash ${what}`,
-    disabled: Boolean(stashBlocked),
-    title:
-      stashBlocked ??
-      (branchStash
-        ? `Add to the stash on ${status?.branch}, which then holds both`
-        : `Set aside in a stash on ${status?.branch}, to bring back later`),
-    onSelect: () => void stashChanges("", paths),
-  });
+    setFilesStaged(entries.flatMap(renamePaths), allState !== true);
 
   const menuEntries = (entry: ChangedPath | null): MenuEntry[] => {
     if (!entry) {
-      return [
-        {
-          ...stashEntry([], "all changes"),
-          disabled: Boolean(stashBlocked) || all.length === 0,
-        },
-      ];
+      const item = stashItem(git, [], "all changes");
+      return [{ ...item, disabled: item.disabled || all.length === 0 }];
     }
     return [
       {
@@ -176,11 +138,11 @@ export default function FileChangeList(): React.JSX.Element {
               </>
             ),
             confirmLabel: "Discard changes",
-            run: () => void discardFiles(pathsOf(entry)),
+            run: () => void discardFiles(renamePaths(entry)),
           }),
       },
       "separator",
-      stashEntry(pathsOf(entry), "file"),
+      stashItem(git, renamePaths(entry), "file"),
     ];
   };
 
@@ -257,8 +219,8 @@ export default function FileChangeList(): React.JSX.Element {
         <ContextMenu
           x={menu.x}
           y={menu.y}
-          entries={menuEntries(menu.entry)}
-          onClose={() => setMenu(null)}
+          entries={menuEntries(menu.target)}
+          onClose={closeMenu}
         />
       )}
       {discardDialog}

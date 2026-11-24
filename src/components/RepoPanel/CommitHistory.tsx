@@ -1,12 +1,14 @@
 import "./CommitHistory.css";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import type { GitCommit } from "../../../shared/gitTypes";
 import { buildCommitGraph, laneColor, type GraphNode } from "../../utils/commitGraph";
-import { pluralize, shortHash } from "../../utils/format";
+import { useContextMenu } from "../../hooks/useContextMenu";
+import { pluralize, renamePaths, shortHash } from "../../utils/format";
 import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
 import { useDiscardConfirmation } from "../common/DiscardConfirm";
+import { discardStashRequest, OPERATION_IN_PROGRESS, POP_TITLE, stashItem } from "../Stash/stashMenu";
 import CommitContextMenu from "./CommitContextMenu";
 import CommitGraphCell, { LANE_WIDTH } from "./CommitGraphCell";
 import RefBadge from "./RefBadge";
@@ -49,26 +51,24 @@ function findTrunk(commits: GitCommit[]): string | undefined {
  * there are both). Clicking it shows its first file's changes.
  */
 export default function CommitHistory(): React.JSX.Element {
+  const git = useGitOperationsContext();
   const {
     commits,
     status,
     selectedCommit,
     selectCommit,
     branchStash,
-    stashChanges,
     conflicts,
     selectStashFile,
     stashSelected,
     selectStash,
     popStash,
-    dropStash,
     discardFiles,
-  } = useGitOperationsContext();
+  } = git;
   const { confirmDiscard, discardDialog } = useDiscardConfirmation();
-  const [stashMenu, setStashMenu] = useState<{ x: number; y: number } | null>(null);
   const { setView } = useAppContext();
-  const [menu, setMenu] = useState<{ commit: GitCommit; x: number; y: number } | null>(null);
-  const [pendingMenu, setPendingMenu] = useState<{ x: number; y: number } | null>(null);
+  // A commit's menu, or the "Uncommitted changes" row's (null) or the stash's.
+  const { menu, openMenu, closeMenu } = useContextMenu<GitCommit | null | typeof STASH>();
   const changeCount = status?.files.length ?? 0;
   const hasPending = changeCount > 0;
   const stashBase = branchStash?.base;
@@ -101,32 +101,35 @@ export default function CommitHistory(): React.JSX.Element {
     if (commit?.hash !== selectedCommit?.hash || stashSelected) selectCommit(commit);
   };
 
-  // Popping or dropping needs nothing else in progress.
-  const stashBusy = conflicts.operation !== null;
+  // Popping, dropping or discarding needs nothing else in progress.
+  const busy = conflicts.operation !== null ? OPERATION_IN_PROGRESS : undefined;
   const stashEntries: MenuEntry[] = [
     {
       label: "Pop stash",
-      disabled: stashBusy,
-      title: stashBusy
-        ? "Finish or abort the operation in progress first"
-        : "Bring the stashed changes back to the working directory and remove the stash",
+      disabled: Boolean(busy),
+      title: busy ?? POP_TITLE,
       onSelect: () => void popStash(),
     },
     {
       label: "Discard stash…",
-      disabled: stashBusy,
-      title: stashBusy ? "Finish or abort the operation in progress first" : "Delete the stash for good",
+      disabled: Boolean(busy),
+      title: busy ?? "Delete the stash for good",
+      onSelect: () => confirmDiscard(discardStashRequest(git)),
+    },
+  ];
+  const pendingEntries: MenuEntry[] = [
+    stashItem(git, [], "all changes"),
+    "separator",
+    {
+      label: "Discard all changes…",
+      disabled: Boolean(busy),
+      title: busy ?? "Put every file back as it was in the last commit",
       onSelect: () =>
         confirmDiscard({
-          title: "Discard the stash?",
-          what: (
-            <>
-              The stash on <code>{status?.branch ?? "this branch"}</code> (
-              {pluralize(branchStash?.files.length ?? 0, "file")})
-            </>
-          ),
-          confirmLabel: "Discard stash",
-          run: () => void dropStash(),
+          title: "Discard all changes?",
+          what: <>Every uncommitted change ({pluralize(changeCount, "file")}), staged or not,</>,
+          confirmLabel: "Discard all changes",
+          run: () => void discardFiles((status?.files ?? []).flatMap(renamePaths)),
         }),
     },
   ];
@@ -157,10 +160,7 @@ export default function CommitHistory(): React.JSX.Element {
                 <button
                   onClick={openStash}
                   title="Show the stash's changes"
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    setStashMenu({ x: event.clientX, y: event.clientY });
-                  }}
+                  onContextMenu={(event) => openMenu(event, STASH)}
                 >
                   <span className="refs" />
                   <CommitGraphCell row={row} width={width} pending />
@@ -186,11 +186,7 @@ export default function CommitHistory(): React.JSX.Element {
             >
               <button
                 onClick={() => select(commit)}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  if (commit) setMenu({ commit, x: event.clientX, y: event.clientY });
-                  else setPendingMenu({ x: event.clientX, y: event.clientY });
-                }}
+                onContextMenu={(event) => openMenu(event, commit)}
               >
                 <span
                   className="refs"
@@ -222,57 +218,14 @@ export default function CommitHistory(): React.JSX.Element {
           );
         })}
       </ol>
-      {menu && <CommitContextMenu {...menu} onClose={() => setMenu(null)} />}
-      {pendingMenu && (
-        <ContextMenu
-          x={pendingMenu.x}
-          y={pendingMenu.y}
-          onClose={() => setPendingMenu(null)}
-          entries={[
-            {
-              // A branch keeps one stash, so this adds to it when there is one.
-              label: branchStash ? "Add all changes to stash" : "Stash all changes",
-              disabled: conflicts.operation !== null || status?.branch === null,
-              title:
-                conflicts.operation !== null
-                  ? "Finish or abort the operation in progress first"
-                  : status?.branch === null
-                    ? "Check out a branch to stash changes on it"
-                    : `Set every change aside in the stash on ${status?.branch}`,
-              onSelect: () => void stashChanges(""),
-            },
-            "separator",
-            {
-              label: "Discard all changes…",
-              disabled: conflicts.operation !== null,
-              title:
-                conflicts.operation !== null
-                  ? "Finish or abort the operation in progress first"
-                  : "Put every file back as it was in the last commit",
-              onSelect: () =>
-                confirmDiscard({
-                  title: "Discard all changes?",
-                  what: <>Every uncommitted change ({pluralize(changeCount, "file")}), staged or not,</>,
-                  confirmLabel: "Discard all changes",
-                  // Both paths of a rename, so the old file comes back too.
-                  run: () =>
-                    void discardFiles(
-                      (status?.files ?? []).flatMap((file) =>
-                        file.oldPath ? [file.path, file.oldPath] : [file.path],
-                      ),
-                    ),
-                }),
-            },
-          ]}
-        />
-      )}
-      {stashMenu && branchStash && (
-        <ContextMenu
-          x={stashMenu.x}
-          y={stashMenu.y}
-          onClose={() => setStashMenu(null)}
-          entries={stashEntries}
-        />
+      {menu?.target ? (
+        menu.target === STASH ? (
+          branchStash && <ContextMenu x={menu.x} y={menu.y} entries={stashEntries} onClose={closeMenu} />
+        ) : (
+          <CommitContextMenu commit={menu.target} x={menu.x} y={menu.y} onClose={closeMenu} />
+        )
+      ) : (
+        menu && <ContextMenu x={menu.x} y={menu.y} entries={pendingEntries} onClose={closeMenu} />
       )}
       {discardDialog}
     </>

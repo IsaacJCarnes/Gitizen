@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   BranchStash,
   CommitFile,
@@ -10,9 +10,12 @@ import type {
   GitStatus,
   Remote,
   Resolution,
+  StashOutcome,
 } from "../../shared/gitTypes";
 import { gitizen } from "../api/gitizen";
 import { toAppError, type AppError } from "../utils/errors";
+import { joinMessage, splitMessage } from "../utils/format";
+import { loadOrReset, loadUnlessCancelled } from "../utils/load";
 import { useDiffSettings } from "./useDiffSettings";
 
 /** A network operation the header's sync buttons can run. */
@@ -209,29 +212,6 @@ const NO_CONFLICTS: ConflictState = {
 };
 
 /**
- * Runs `request` and passes its result to `onResult` (or its error to
- * `onError`) unless the returned cleanup ran first. Use as an effect's body
- * so a slow response for an old selection can't overwrite a newer one.
- */
-function loadUnlessCancelled<T>(
-  request: Promise<T>,
-  onResult: (value: T) => void,
-  onError: (error: unknown) => void,
-): () => void {
-  let active = true;
-  request
-    .then((value) => {
-      if (active) onResult(value);
-    })
-    .catch((error: unknown) => {
-      if (active) onError(error);
-    });
-  return () => {
-    active = false;
-  };
-}
-
-/**
  * Owns all git state for the app: the open repository, its status, history
  * and branches, the current selections and their diffs. Actions refresh the
  * state after they run and surface failures through `error`.
@@ -273,6 +253,9 @@ export function useGitOperations({
   const [generatingMessage, setGeneratingMessage] = useState(false);
   const [amending, setAmending] = useState(false);
   const [needsForcePush, setNeedsForcePush] = useState(false);
+  // Set when amending a pushed commit; only takes effect once the amend is
+  // actually committed (cancelling it leaves the branch as it was).
+  const pendingForcePush = useRef(false);
   const [selectedCommit, setSelectedCommit] = useState<GitCommit | null>(null);
   const [commitFiles, setCommitFiles] = useState<CommitFile[]>([]);
   const [selectedCommitFile, setSelectedCommitFile] = useState<CommitFile | null>(null);
@@ -330,8 +313,7 @@ export function useGitOperations({
           // A rebase keeps each commit's own message, so it needs none.
           const prepared = nextConflicts.operation === "rebase" ? null : nextConflicts.message;
           if (prepared && !summaryRef.current.trim()) {
-            const [first, ...rest] = prepared.split("\n");
-            setMessage(first, rest.join("\n").trim());
+            setMessage(...splitMessage(prepared));
           }
         }
         lastOperation.current = nextConflicts.operation;
@@ -424,11 +406,8 @@ export function useGitOperations({
         setMessage();
       });
     }
-    const summary = commitSummary.trim();
-    if (!summary) return false;
-    const description = commitDescription.trim();
-    // Git convention: subject line, blank line, then the body.
-    const message = description ? `${summary}\n\n${description}` : summary;
+    if (!commitSummary.trim()) return false;
+    const message = joinMessage(commitSummary, commitDescription);
 
     return runOperation(async () => {
       // Committing finishes a merge, cherry-pick or revert by itself.
@@ -453,9 +432,6 @@ export function useGitOperations({
     [runOperation, selectCommit, setMessage],
   );
 
-  // Set when amending a pushed commit; only takes effect once the amend is
-  // actually committed (cancelling it leaves the branch as it was).
-  const pendingForcePush = useRef(false);
   const markPushedCommitRewritten = useCallback((): void => {
     pendingForcePush.current = true;
   }, []);
@@ -492,16 +468,6 @@ export function useGitOperations({
     }
   }, [reportError, setMessage]);
 
-  const checkoutBranch = useCallback(
-    (branch: string) => runOperation(() => gitizen.checkout(branch)),
-    [runOperation],
-  );
-
-  const checkoutCommit = useCallback(
-    (hash: string) => runOperation(() => gitizen.checkoutCommit(hash)),
-    [runOperation],
-  );
-
   const sync = useCallback(
     async (action: SyncAction): Promise<boolean> => {
       setSyncing(action);
@@ -520,35 +486,31 @@ export function useGitOperations({
     [runOperation, needsForcePush],
   );
 
-  const stashChanges = useCallback(
-    async (message: string, paths?: string[]): Promise<boolean> => {
+  /**
+   * Runs a stash call. Stopping on conflicts counts as not done, and
+   * records `kind` so the UI can warn about them.
+   */
+  const runStash = useCallback(
+    async (kind: "stash" | "pop", call: () => Promise<StashOutcome>): Promise<boolean> => {
       let conflicted = false;
       const ok = await runOperation(async () => {
-        conflicted = (await gitizen.stashChanges(message, paths)) === "conflicts";
+        conflicted = (await call()) === "conflicts";
       });
-      if (conflicted) setStashConflict("stash");
+      if (conflicted) setStashConflict(kind);
       return ok && !conflicted;
     },
     [runOperation],
   );
 
-  const popStash = useCallback(async (): Promise<boolean> => {
-    let conflicted = false;
-    const ok = await runOperation(async () => {
-      conflicted = (await gitizen.popStash()) === "conflicts";
-    });
-    if (conflicted) setStashConflict("pop");
-    return ok && !conflicted;
-  }, [runOperation]);
+  const stashChanges = useCallback(
+    (message: string, paths?: string[]) =>
+      runStash("stash", () => gitizen.stashChanges(message, paths)),
+    [runStash],
+  );
 
-  const dropStash = useCallback(() => runOperation(gitizen.dropStash), [runOperation]);
+  const popStash = useCallback(() => runStash("pop", gitizen.popStash), [runStash]);
 
   const dismissStashConflict = useCallback((): void => setStashConflict(null), []);
-
-  const addRemote = useCallback(
-    (name: string, url: string) => runOperation(() => gitizen.addRemote(name, url)),
-    [runOperation],
-  );
 
   const publishRepository = useCallback(
     async (name: string, description: string, isPrivate: boolean): Promise<boolean> => {
@@ -561,103 +523,58 @@ export function useGitOperations({
     [runOperation],
   );
 
-  const createBranch = useCallback(
-    (name: string, hash: string, checkout: boolean) =>
-      runOperation(() => gitizen.createBranch(name, hash, checkout)),
-    [runOperation],
-  );
+  // Actions that are a single backend call (taking the same arguments)
+  // followed by a refresh.
+  const simpleActions = useMemo(() => {
+    const act =
+      <A extends unknown[]>(call: (...args: A) => Promise<unknown>) =>
+      (...args: A): Promise<boolean> =>
+        runOperation(() => call(...args));
+    return {
+      checkoutBranch: act(gitizen.checkout),
+      checkoutCommit: act(gitizen.checkoutCommit),
+      addRemote: act(gitizen.addRemote),
+      createBranch: act(gitizen.createBranch),
+      createTag: act(gitizen.createTag),
+      cherryPick: act(gitizen.cherryPick),
+      renameBranch: act(gitizen.renameBranch),
+      deleteBranch: act(gitizen.deleteBranch),
+      mergeBranch: act(gitizen.mergeBranch),
+      rebaseOntoBranch: act(gitizen.rebaseOntoBranch),
+      squashMergeBranch: act(gitizen.squashMergeBranch),
+      dropStash: act(gitizen.dropStash),
+      discardFiles: act(gitizen.discardFiles),
+      resolveConflict: act(gitizen.resolveConflict),
+      saveConflictResolution: act(gitizen.saveConflictResolution),
+      // A merge tool is waited for and may stage the file itself; an editor
+      // returns at once. Refreshing covers both.
+      openInMergeTool: act(gitizen.openInMergeTool),
+      continueOperation: act(gitizen.continueOperation),
+      abortOperation: act(gitizen.abortOperation),
+    };
+  }, [runOperation]);
 
-  const createTag = useCallback(
-    (name: string, hash: string, message: string) =>
-      runOperation(() => gitizen.createTag(name, hash, message)),
-    [runOperation],
-  );
-
-  const cherryPick = useCallback(
-    (hash: string, branch: string) => runOperation(() => gitizen.cherryPick(hash, branch)),
-    [runOperation],
-  );
-
-  const renameBranch = useCallback(
-    (name: string, newName: string) => runOperation(() => gitizen.renameBranch(name, newName)),
-    [runOperation],
-  );
-
-  const deleteBranch = useCallback(
-    (name: string, force: boolean) => runOperation(() => gitizen.deleteBranch(name, force)),
-    [runOperation],
-  );
-
-  const mergeBranch = useCallback(
-    (name: string) => runOperation(() => gitizen.mergeBranch(name)),
-    [runOperation],
-  );
-
-  const rebaseOntoBranch = useCallback(
-    (name: string) => runOperation(() => gitizen.rebaseOntoBranch(name)),
-    [runOperation],
-  );
-
-  const squashMergeBranch = useCallback(
-    (name: string, message: string) =>
-      runOperation(() => gitizen.squashMergeBranch(name, message)),
-    [runOperation],
-  );
-
-  const resolveConflict = useCallback(
-    (path: string, resolution: Resolution) =>
-      runOperation(() => gitizen.resolveConflict(path, resolution)),
-    [runOperation],
-  );
-
-  const saveConflictResolution = useCallback(
-    (path: string, text: string) => runOperation(() => gitizen.saveConflictResolution(path, text)),
-    [runOperation],
-  );
-
-  // A merge tool is waited for and may stage the file itself; an editor
-  // returns at once. Refreshing covers both.
-  const openInMergeTool = useCallback(
-    (path: string) => runOperation(() => gitizen.openInMergeTool(path)),
-    [runOperation],
-  );
-
-  const continueOperation = useCallback(
-    () => runOperation(gitizen.continueOperation),
-    [runOperation],
-  );
-
-  const abortOperation = useCallback(
-    () => runOperation(gitizen.abortOperation),
-    [runOperation],
-  );
-
-  const stageLines = useCallback(
-    (lines: number[], staged: boolean): Promise<boolean> => {
+  /** Runs `call` on the selected file's path, for an action on some of its diff's lines. */
+  const runOnLines = useCallback(
+    (lines: number[], call: (path: string) => Promise<unknown>): Promise<boolean> => {
       // Lines of a whitespace-hidden diff can't be mapped back onto the file.
       if (!selectedFile || lines.length === 0 || hideWhitespace) {
         return Promise.resolve(false);
       }
-      return runOperation(() =>
-        gitizen.setStagedLines(selectedFile.path, diff, lines, staged),
-      );
+      return runOperation(() => call(selectedFile.path));
     },
-    [selectedFile, diff, hideWhitespace, runOperation],
+    [selectedFile, hideWhitespace, runOperation],
   );
 
-  const discardFiles = useCallback(
-    (paths: string[]) => runOperation(() => gitizen.discardFiles(paths)),
-    [runOperation],
+  const stageLines = useCallback(
+    (lines: number[], staged: boolean) =>
+      runOnLines(lines, (path) => gitizen.setStagedLines(path, diff, lines, staged)),
+    [runOnLines, diff],
   );
 
   const discardLines = useCallback(
-    (lines: number[]): Promise<boolean> => {
-      if (!selectedFile || lines.length === 0 || hideWhitespace) {
-        return Promise.resolve(false);
-      }
-      return runOperation(() => gitizen.discardLines(selectedFile.path, diff, lines));
-    },
-    [selectedFile, diff, hideWhitespace, runOperation],
+    (lines: number[]) => runOnLines(lines, (path) => gitizen.discardLines(path, diff, lines)),
+    [runOnLines, diff],
   );
 
   const saveWorkingFile = useCallback(
@@ -681,20 +598,16 @@ export function useGitOperations({
   // Diff of the selected working-tree file against HEAD, staged and unstaged
   // changes together, so staging doesn't change it (only which lines are
   // ticked). Reloaded after every refresh because editing the file does.
-  useEffect(() => {
-    if (!selectedFile) {
-      setFileDiff(NO_DIFF);
-      return;
-    }
-    return loadUnlessCancelled(
-      gitizen.fileDiff(selectedFile.path, hideWhitespace),
-      setFileDiff,
-      (diffError) => {
-        setFileDiff(NO_DIFF);
-        reportError(diffError);
-      },
-    );
-  }, [selectedFile, status, hideWhitespace, reportError]);
+  useEffect(
+    () =>
+      loadOrReset(
+        selectedFile && gitizen.fileDiff(selectedFile.path, hideWhitespace),
+        setFileDiff,
+        NO_DIFF,
+        reportError,
+      ),
+    [selectedFile, status, hideWhitespace, reportError],
+  );
 
   // Staging or unstaging moves a file between lists; keep it selected
   // in its new list, and drop the selection once the file has no changes.
@@ -741,43 +654,40 @@ export function useGitOperations({
   }, [branchStash]);
 
   // Diff of the picked stash file, against the commit the stash was made on.
-  useEffect(() => {
-    if (!branchStash || !selectedStashFile) {
-      setStashDiff("");
-      return;
-    }
-    return loadUnlessCancelled(
-      gitizen.stashDiff(branchStash.hash, selectedStashFile.path, hideWhitespace),
-      setStashDiff,
-      (diffError) => {
-        setStashDiff("");
-        reportError(diffError);
-      },
-    );
-  }, [branchStash, selectedStashFile, hideWhitespace, reportError]);
+  useEffect(
+    () =>
+      loadOrReset(
+        branchStash &&
+          selectedStashFile &&
+          gitizen.stashDiff(branchStash.hash, selectedStashFile.path, hideWhitespace),
+        setStashDiff,
+        "",
+        reportError,
+      ),
+    [branchStash, selectedStashFile, hideWhitespace, reportError],
+  );
 
   // Diff of the file chosen within the selected commit.
-  useEffect(() => {
-    if (!selectedCommit || !selectedCommitFile) {
-      setCommitDiff("");
-      return;
-    }
-    return loadUnlessCancelled(
-      gitizen.commitDiff(
-        selectedCommit.hash,
-        selectedCommitFile.path,
-        selectedCommitFile.oldPath,
-        hideWhitespace,
+  useEffect(
+    () =>
+      loadOrReset(
+        selectedCommit &&
+          selectedCommitFile &&
+          gitizen.commitDiff(
+            selectedCommit.hash,
+            selectedCommitFile.path,
+            selectedCommitFile.oldPath,
+            hideWhitespace,
+          ),
+        setCommitDiff,
+        "",
+        reportError,
       ),
-      setCommitDiff,
-      (diffError) => {
-        setCommitDiff("");
-        reportError(diffError);
-      },
-    );
-  }, [selectedCommit, selectedCommitFile, hideWhitespace, reportError]);
+    [selectedCommit, selectedCommitFile, hideWhitespace, reportError],
+  );
 
   return {
+    ...simpleActions,
     repo,
     status,
     commits,
@@ -786,7 +696,6 @@ export function useGitOperations({
     syncing,
     sync,
     needsForcePush,
-    addRemote,
     publishRepository,
     selectedFile,
     diff,
@@ -819,7 +728,6 @@ export function useGitOperations({
     stashChanges,
     branchStash,
     popStash,
-    dropStash,
     selectedStashFile,
     stashDiff,
     selectStashFile,
@@ -827,28 +735,12 @@ export function useGitOperations({
     selectStash,
     stashConflict,
     dismissStashConflict,
-    checkoutBranch,
-    checkoutCommit,
-    createBranch,
-    createTag,
-    cherryPick,
-    renameBranch,
-    deleteBranch,
-    mergeBranch,
-    rebaseOntoBranch,
-    squashMergeBranch,
     conflicts,
     selectedConflict,
     setSelectedConflict,
-    resolveConflict,
-    saveConflictResolution,
-    openInMergeTool,
-    continueOperation,
-    abortOperation,
     generatingMessage,
     generateCommitMessage,
     stageLines,
-    discardFiles,
     discardLines,
     saveWorkingFile,
   };

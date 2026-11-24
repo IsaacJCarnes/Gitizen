@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ConflictFile } from "../../../shared/gitTypes";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
-import ActionModal from "../common/ActionModal";
+import ConfirmModal from "../common/ConfirmModal";
 
 /**
  * Stages a conflicted file as it is now, telling git it is resolved. If the
@@ -22,26 +22,18 @@ export default function MarkResolvedButton({ file }: { file: ConflictFile }): Re
         Mark resolved
       </button>
       {confirming && (
-        <ActionModal
+        <ConfirmModal
           title="Mark resolved with conflict markers?"
+          confirmLabel="Mark resolved anyway"
+          onConfirm={resolve}
           onDismiss={() => setConfirming(false)}
-          actions={[
-            {
-              label: "Mark resolved anyway",
-              primary: true,
-              onClick: () => {
-                setConfirming(false);
-                resolve();
-              },
-            },
-          ]}
         >
           <p>
             <code>{file.path}</code> still has <code>{"<<<<<<<"}</code> conflict markers, which would
             be committed as they are. Open it to pick the lines to keep and save first, unless the
             markers really belong in the file.
           </p>
-        </ActionModal>
+        </ConfirmModal>
       )}
     </>
   );

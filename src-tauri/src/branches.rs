@@ -5,7 +5,10 @@
 use std::path::Path;
 
 use crate::conflicts::unless_conflicted;
-use crate::git::repository::{assert_branch_name, current_branch, Repo};
+use crate::git::repository::{
+    assert_branch_name, assert_new_branch_name, current_branch, git_path, require_clean,
+    require_current_branch, Repo,
+};
 use crate::git::runner::run_git;
 
 /// How many commits `branch` has that HEAD doesn't (ahead), and HEAD has
@@ -29,11 +32,6 @@ fn require_branch<'a>(dir: &Path, name: &'a str) -> Result<&'a str, String> {
         .map_err(|_| format!("There is no branch named {name}"))
 }
 
-/// The checked-out branch, for operations that need one.
-fn require_current(dir: &Path, doing: &str) -> Result<String, String> {
-    current_branch(dir).ok_or_else(|| format!("Check out a branch before {doing}."))
-}
-
 /// Renames branch `name` to `new_name`. Its upstream setting moves along.
 #[tauri::command]
 pub async fn rename_branch(repo: Repo<'_>, name: String, new_name: String) -> Result<(), String> {
@@ -42,9 +40,7 @@ pub async fn rename_branch(repo: Repo<'_>, name: String, new_name: String) -> Re
 
 fn rename_in(dir: &Path, name: &str, new_name: &str) -> Result<(), String> {
     let name = require_branch(dir, name)?;
-    let new_name = assert_branch_name(new_name)?;
-    run_git(dir, ["check-ref-format", "--branch", new_name])
-        .map_err(|_| format!("\"{new_name}\" isn't a valid branch name"))?;
+    let new_name = assert_new_branch_name(dir, new_name)?;
     run_git(dir, ["branch", "-m", name, new_name]).map(drop)
 }
 
@@ -73,7 +69,7 @@ pub async fn merge_branch(repo: Repo<'_>, name: String) -> Result<(), String> {
 
 fn merge_in(dir: &Path, name: &str) -> Result<(), String> {
     let name = require_branch(dir, name)?;
-    require_current(dir, "merging")?;
+    require_current_branch(dir, "merging")?;
     unless_conflicted(dir, run_git(dir, ["merge", "--no-edit", name]).map(drop))
 }
 
@@ -86,11 +82,8 @@ pub async fn rebase_onto_branch(repo: Repo<'_>, name: String) -> Result<(), Stri
 
 fn rebase_in(dir: &Path, name: &str) -> Result<(), String> {
     let name = require_branch(dir, name)?;
-    let current = require_current(dir, "rebasing")?;
-    let changes = run_git(dir, ["status", "--porcelain", "--untracked-files=no"])?;
-    if !changes.trim().is_empty() {
-        return Err(format!("Commit or stash your changes before rebasing {current}."));
-    }
+    let current = require_current_branch(dir, "rebasing")?;
+    require_clean(dir, &format!("rebasing {current}"))?;
     unless_conflicted(dir, run_git(dir, ["rebase", name]).map(drop))
 }
 
@@ -104,7 +97,7 @@ pub async fn squash_merge_branch(repo: Repo<'_>, name: String, message: String) 
 
 fn squash_in(dir: &Path, name: &str, message: &str) -> Result<(), String> {
     let name = require_branch(dir, name)?;
-    require_current(dir, "squash merging")?;
+    require_current_branch(dir, "squash merging")?;
     if message.is_empty() {
         return Err("Enter a commit message for the squashed changes.".into());
     }
@@ -117,8 +110,8 @@ fn squash_in(dir: &Path, name: &str, message: &str) -> Result<(), String> {
         Err(error) => {
             // Stopped on conflicts: commit later with this message (git
             // reads MERGE_MSG first), via the commit form.
-            if let Ok(path) = run_git(dir, ["rev-parse", "--git-path", "MERGE_MSG"]) {
-                let _ = std::fs::write(dir.join(path.trim()), format!("{message}\n"));
+            if let Ok(path) = git_path(dir, "MERGE_MSG") {
+                let _ = std::fs::write(path, format!("{message}\n"));
             }
             unless_conflicted(dir, Err(error))
         }

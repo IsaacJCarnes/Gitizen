@@ -17,8 +17,8 @@ use crate::git::patch::{
     changed_line_numbers, index_content, stages_any_addition, staged_line_indices, STALE,
 };
 use crate::git::repository::{
-    assert_branch_name, assert_hash, first_parent_of, init_repository as git_init, OpenError,
-    Repo, EMPTY_TREE,
+    assert_branch_name, assert_hash, first_parent_of, has_commits, init_repository as git_init,
+    OpenError, Repo, EMPTY_TREE,
 };
 use crate::git::runner::{run_git, run_git_bytes, run_git_with_input};
 use crate::git::types::{CommitFile, FileDiff, GitBranch, GitCommit, GitStatus};
@@ -151,7 +151,7 @@ pub(crate) fn is_untracked(dir: &Path, path: &str) -> Result<bool, String> {
 
 /// HEAD, or git's empty tree before the first commit.
 fn head_or_empty_tree(dir: &Path) -> &'static str {
-    if run_git(dir, ["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok() {
+    if has_commits(dir) {
         "HEAD"
     } else {
         EMPTY_TREE

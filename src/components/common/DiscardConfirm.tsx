@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useAppContext } from "../../context/AppContext";
-import ActionModal from "./ActionModal";
+import ConfirmModal from "./ConfirmModal";
 
 /** Something about to be thrown away for good, and how to do it. */
 export interface DiscardRequest {
@@ -36,20 +36,14 @@ export function useDiscardConfirmation(): {
   };
 
   const discardDialog = pending && (
-    <ActionModal
+    <ConfirmModal
       title={pending.title}
+      confirmLabel={pending.confirmLabel}
+      onConfirm={() => {
+        if (dontAsk) setSkipDiscardWarning(true);
+        pending.run();
+      }}
       onDismiss={() => setPending(null)}
-      actions={[
-        {
-          label: pending.confirmLabel,
-          primary: true,
-          onClick: () => {
-            if (dontAsk) setSkipDiscardWarning(true);
-            setPending(null);
-            pending.run();
-          },
-        },
-      ]}
     >
       <p>{pending.what} will be discarded.</p>
       <p>
@@ -64,7 +58,7 @@ export function useDiscardConfirmation(): {
         />
         Don&apos;t warn me again until Gitizen is closed
       </label>
-    </ActionModal>
+    </ConfirmModal>
   );
 
   return { confirmDiscard, discardDialog };

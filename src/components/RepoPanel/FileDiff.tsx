@@ -2,9 +2,11 @@ import "./FileDiff.css";
 import { useEffect, useState } from "react";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
+import { useContextMenu } from "../../hooks/useContextMenu";
 import { useDiffSettings } from "../../hooks/useDiffSettings";
 import { gitizen } from "../../api/gitizen";
 import { pluralize, shortHash } from "../../utils/format";
+import { loadOrReset } from "../../utils/load";
 import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
 import DiffView, { type LineStaging } from "../common/DiffView";
 import { useDiscardConfirmation } from "../common/DiscardConfirm";
@@ -44,7 +46,8 @@ export default function FileDiff(): React.JSX.Element {
   const { settings, updateSettings } = useDiffSettings();
   const [applying, setApplying] = useState(false);
   const { confirmDiscard, discardDialog } = useDiscardConfirmation();
-  const [lineMenu, setLineMenu] = useState<{ x: number; y: number; line: number; group: number[] } | null>(null);
+  // A changed line's menu: the line, and its group of changed lines.
+  const { menu: lineMenu, openMenu, closeMenu } = useContextMenu<{ line: number; group: number[] }>();
 
   // A stash file picked in the sidebar is shown read-only, like a commit's.
   const stashFile = !selectedCommit && branchStash ? selectedStashFile : null;
@@ -58,20 +61,7 @@ export default function FileDiff(): React.JSX.Element {
   // Checked again after every refresh, since the file may come or go.
   const [editable, setEditable] = useState(false);
   const [editing, setEditing] = useState<{ path: string; text: string } | null>(null);
-  useEffect(() => {
-    if (!path) {
-      setEditable(false);
-      return;
-    }
-    let active = true;
-    gitizen.canEditFile(path).then(
-      (can) => active && setEditable(can),
-      () => active && setEditable(false),
-    );
-    return () => {
-      active = false;
-    };
-  }, [path, status]);
+  useEffect(() => loadOrReset(path ? gitizen.canEditFile(path) : null, setEditable, false), [path, status]);
   // Picking another file (or commit) leaves the editor without saving.
   useEffect(() => setEditing(null), [path, selectedCommit, stashFile]);
   const editingPath = editing?.path === path ? editing : null;
@@ -202,7 +192,7 @@ export default function FileDiff(): React.JSX.Element {
           onLineMenu={
             shownHash
               ? undefined
-              : (event, line, group) => setLineMenu({ x: event.clientX, y: event.clientY, line, group })
+              : (event, line, group) => openMenu(event, { line, group })
           }
           emptyMessage={
             settings.hideWhitespace ? "No changes besides whitespace." : "No changes to show."
@@ -215,8 +205,8 @@ export default function FileDiff(): React.JSX.Element {
         <ContextMenu
           x={lineMenu.x}
           y={lineMenu.y}
-          entries={lineMenuEntries(lineMenu.line, lineMenu.group)}
-          onClose={() => setLineMenu(null)}
+          entries={lineMenuEntries(lineMenu.target.line, lineMenu.target.group)}
+          onClose={closeMenu}
         />
       )}
       {discardDialog}

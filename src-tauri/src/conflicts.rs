@@ -10,9 +10,10 @@ use std::process::{Command, Stdio};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
-use crate::ai_commit::{run_shell_command, shell, AppSettings, MAX_DIFF_BYTES, TIMEOUT};
-use crate::git::repository::{assert_hash, current_branch, Repo};
+use crate::ai_commit::{run_shell_command, shell, MAX_DIFF_BYTES, TIMEOUT};
+use crate::git::repository::{assert_hash, current_branch, git_path, read_git_file, Repo};
 use crate::git::runner::{git_command, run_git, run_git_bytes};
+use crate::settings::{AppSettings, SavedCommand};
 use crate::util::{blocking, unique_temp_dir, write_keeping_line_endings};
 
 /// An operation that is in progress because it stopped part way, usually
@@ -92,7 +93,7 @@ pub struct RebaseStep {
 /// ("rebase-merge" for today's rebase, "rebase-apply" for the older one).
 fn rebase_step(dir: &Path) -> Option<RebaseStep> {
     let number = |name: &str| -> Option<u32> {
-        std::fs::read_to_string(git_file(dir, name)?).ok()?.trim().parse().ok()
+        read_git_file(dir, name)?.trim().parse().ok()
     };
     let (current, total) = match (number("rebase-merge/msgnum"), number("rebase-merge/end")) {
         (Some(current), Some(total)) => (current, total),
@@ -126,13 +127,6 @@ pub(crate) fn conflicts_in(dir: &Path) -> Result<ConflictState, String> {
     Ok(ConflictState { operation, files, message, incoming, current, step })
 }
 
-/// Where `name` (e.g. "MERGE_HEAD") is in the git folder. `--git-path`
-/// resolves inside worktrees and custom git dirs too; the printed path is
-/// relative to `dir` (or absolute), so it is joined on.
-fn git_file(dir: &Path, name: &str) -> Option<PathBuf> {
-    run_git(dir, ["rev-parse", "--git-path", name]).ok().map(|path| dir.join(path.trim()))
-}
-
 /// Names the incoming and current sides of a stopped operation.
 fn branch_names(dir: &Path, operation: Operation) -> (Option<String>, Option<String>) {
     match operation {
@@ -144,7 +138,7 @@ fn branch_names(dir: &Path, operation: Operation) -> (Option<String>, Option<Str
     }
     // The first line of a file in the git folder (e.g. MERGE_HEAD), trimmed.
     let read = |name: &str| {
-        let text = std::fs::read_to_string(git_file(dir, name)?).ok()?;
+        let text = read_git_file(dir, name)?;
         let first = text.lines().next()?.trim().to_string();
         (!first.is_empty()).then_some(first)
     };
@@ -197,7 +191,7 @@ fn commit_name(dir: &Path, hash: &str, current: Option<&str>) -> String {
 /// The newest commit a squash merge brings in, from the "commit <hash>"
 /// lines git writes to SQUASH_MSG.
 fn squashed_tip(dir: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(git_file(dir, "SQUASH_MSG")?).ok()?;
+    let text = read_git_file(dir, "SQUASH_MSG")?;
     let hash = text.lines().find_map(|line| line.strip_prefix("commit "))?.trim();
     assert_hash(hash).ok().map(str::to_string)
 }
@@ -205,7 +199,7 @@ fn squashed_tip(dir: &Path) -> Option<String> {
 /// `MERGE_MSG`, which merge, cherry-pick and revert write for the commit
 /// that finishes them, minus git's "#" comment lines.
 fn prepared_message(dir: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(git_file(dir, "MERGE_MSG")?).ok()?;
+    let text = read_git_file(dir, "MERGE_MSG")?;
     let message = text
         .lines()
         .filter(|line| !line.starts_with('#'))
@@ -257,7 +251,7 @@ pub(crate) fn operation_in(dir: &Path) -> Option<Operation> {
     if let Some(operation) = crate::stash::operation(dir) {
         return Some(operation);
     }
-    let exists = |name: &str| git_file(dir, name).is_some_and(|path| path.exists());
+    let exists = |name: &str| git_path(dir, name).is_ok_and(|path| path.exists());
     // A rebase replays commits as cherry-picks, so it is checked first.
     if exists("rebase-merge") || exists("rebase-apply") {
         Some(Operation::Rebase)
@@ -469,24 +463,6 @@ branch's version first, then =======, then the incoming version. Resolve every c
 keeping the intent of both sides where they don't contradict. Reply with only the complete \
 resolved file: no commentary, no code fences, and no conflict markers.";
 
-/// The saved AI resolve command, or "" when none is set up. It is separate
-/// from the commit message command, so each can use its own tool or model.
-#[tauri::command]
-pub async fn ai_resolve_command(app: AppHandle, state: State<'_, AppSettings>) -> Result<String, String> {
-    Ok(state.read(&app)?.ai_resolve_command)
-}
-
-/// Saves the AI resolve command (trimmed; "" clears it) and returns what was saved.
-#[tauri::command]
-pub async fn set_ai_resolve_command(
-    app: AppHandle,
-    state: State<'_, AppSettings>,
-    command: String,
-) -> Result<String, String> {
-    let saved = state.update(&app, |settings| settings.ai_resolve_command = command.trim().to_string())?;
-    Ok(saved.ai_resolve_command)
-}
-
 /// Asks the saved AI resolve command to resolve one conflicted file and returns its
 /// answer. Nothing is written: the conflict editor shows it in the output
 /// for review, and Save writes it.
@@ -498,7 +474,7 @@ pub async fn ai_resolve_conflict(
     path: String,
 ) -> Result<String, String> {
     let dir = repo.require()?;
-    let command = state.ai_command(&app, |settings| settings.ai_resolve_command)?;
+    let command = state.ai_command(&app, SavedCommand::AiResolve)?;
     // The AI can take minutes; other git calls keep answering meanwhile.
     blocking(move || ai_resolve_in(&dir, &path, &command)).await
 }
@@ -556,24 +532,6 @@ fn clean_resolution(output: &str, final_newline: bool) -> Result<String, String>
     Ok(text)
 }
 
-/// The external tool command for conflicted files, or "" when none is set.
-#[tauri::command]
-pub async fn editor_command(app: AppHandle, state: State<'_, AppSettings>) -> Result<String, String> {
-    Ok(state.read(&app)?.editor_command)
-}
-
-/// Saves the external tool command (trimmed; "" falls back to git's merge
-/// tool, or the system text editor).
-#[tauri::command]
-pub async fn set_editor_command(
-    app: AppHandle,
-    state: State<'_, AppSettings>,
-    command: String,
-) -> Result<String, String> {
-    let saved = state.update(&app, |settings| settings.editor_command = command.trim().to_string())?;
-    Ok(saved.editor_command)
-}
-
 /// Which external tool `open_in_merge_tool` used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -597,7 +555,7 @@ pub async fn open_in_merge_tool(
 ) -> Result<ExternalTool, String> {
     let dir = repo.require()?;
     let file = require_conflicted(&dir, &path)?;
-    let command = state.read(&app)?.editor_command;
+    let command = state.read(&app)?.command(SavedCommand::Editor);
     let merge_tool = run_git(&dir, ["config", "--get", "merge.tool"]).unwrap_or_default();
     if command.is_empty() && !merge_tool.trim().is_empty() {
         // The tool runs until its window is closed, so it is waited for on a

@@ -2,8 +2,7 @@ import "../RepoPanel/CommitActionDialogs.css";
 import { useState } from "react";
 import type { GitBranch } from "../../../shared/gitTypes";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
-import { pluralize } from "../../utils/format";
-import ActionModal from "../common/ActionModal";
+import { joinMessage, pluralize } from "../../utils/format";
 import FormModal from "../common/FormModal";
 
 interface BranchDialogProps {
@@ -49,28 +48,16 @@ export function RenameBranchDialog({ branch, onDismiss }: BranchDialogProps): Re
  */
 export function DeleteBranchDialog({ branch, onDismiss }: BranchDialogProps): React.JSX.Element {
   const { deleteBranch, status } = useGitOperationsContext();
-  const [working, setWorking] = useState(false);
   const unmerged = branch.ahead > 0;
 
-  const remove = async (): Promise<void> => {
-    setWorking(true);
-    const deleted = await deleteBranch(branch.name, unmerged);
-    setWorking(false);
-    if (deleted) onDismiss();
-  };
-
   return (
-    <ActionModal
+    <FormModal
       title={`Delete ${branch.name}?`}
+      submitLabel="Delete branch"
+      workingLabel="Deleting…"
+      ready
+      onSubmit={() => deleteBranch(branch.name, unmerged)}
       onDismiss={onDismiss}
-      actions={[
-        {
-          label: working ? "Deleting…" : "Delete branch",
-          primary: true,
-          disabled: working,
-          onClick: () => void remove(),
-        },
-      ]}
     >
       <p>
         The local branch <code>{branch.name}</code> will be deleted. A copy already pushed stays on
@@ -85,7 +72,7 @@ export function DeleteBranchDialog({ branch, onDismiss }: BranchDialogProps): Re
           Unless they are pushed or on another branch, they will be lost.
         </p>
       )}
-    </ActionModal>
+    </FormModal>
   );
 }
 
@@ -95,7 +82,6 @@ export function SquashMergeDialog({ branch, onDismiss }: BranchDialogProps): Rea
   const [summary, setSummary] = useState(`Squash merge branch '${branch.name}'`);
   const [description, setDescription] = useState("");
   const current = status?.branch ?? "the current branch";
-  const message = description.trim() ? `${summary.trim()}\n\n${description.trim()}` : summary.trim();
 
   return (
     <FormModal
@@ -103,7 +89,7 @@ export function SquashMergeDialog({ branch, onDismiss }: BranchDialogProps): Rea
       submitLabel="Squash and merge"
       workingLabel="Merging…"
       ready={summary.trim() !== ""}
-      onSubmit={() => squashMergeBranch(branch.name, message)}
+      onSubmit={() => squashMergeBranch(branch.name, joinMessage(summary, description))}
       onDismiss={onDismiss}
       className="commit-dialog"
     >

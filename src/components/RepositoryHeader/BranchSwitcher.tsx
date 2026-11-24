@@ -1,6 +1,7 @@
 import "./BranchSwitcher.css";
 import { useEffect, useRef, useState } from "react";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
+import { useContextMenu } from "../../hooks/useContextMenu";
 import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
 import { useBranchMenu } from "../Branches/useBranchMenu";
 
@@ -31,7 +32,8 @@ export default function BranchSwitcher(): React.JSX.Element {
   const { branchEntries, branchDialog } = useBranchMenu();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [menu, setMenu] = useState<{ name: string; x: number; y: number } | null>(null);
+  // A branch's menu, for the branch name.
+  const { menu, openMenu, closeMenu } = useContextMenu<string>();
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Close on a click outside the dropdown (or its menu) or on Escape.
@@ -109,10 +111,7 @@ export default function BranchSwitcher(): React.JSX.Element {
                 <button
                   title={branch.current ? `${branch.name} (checked out)` : `Check out ${branch.name}`}
                   onClick={() => choose(branch.name)}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    setMenu({ name: branch.name, x: event.clientX, y: event.clientY });
-                  }}
+                  onContextMenu={(event) => openMenu(event, branch.name)}
                 >
                   <span className="name">{branch.name}</span>
                   {!branch.current && (branch.ahead > 0 || branch.behind > 0) && (
@@ -131,8 +130,8 @@ export default function BranchSwitcher(): React.JSX.Element {
         <ContextMenu
           x={menu.x}
           y={menu.y}
-          entries={alsoOnSelect(branchEntries(menu.name, false), () => setOpen(false))}
-          onClose={() => setMenu(null)}
+          entries={alsoOnSelect(branchEntries(menu.target, false), () => setOpen(false))}
+          onClose={closeMenu}
         />
       )}
       {branchDialog}

@@ -17,6 +17,7 @@ import type {
   GitStatus,
   Remote,
   Resolution,
+  SavedCommandKind,
   BranchStash,
   StashOutcome,
 } from "./gitTypes";
@@ -51,8 +52,8 @@ export const Command = {
   CanEditFile: "can_edit_file",
   WorkingFile: "working_file",
   SaveWorkingFile: "save_working_file",
-  AiCommitCommand: "ai_commit_command",
-  SetAiCommitCommand: "set_ai_commit_command",
+  SavedCommand: "saved_command",
+  SaveCommand: "save_command",
   GenerateCommitMessage: "generate_commit_message",
   Remotes: "remotes",
   AddRemote: "add_remote",
@@ -74,13 +75,9 @@ export const Command = {
   ResolveConflict: "resolve_conflict",
   ContinueOperation: "continue_operation",
   AbortOperation: "abort_operation",
-  AiResolveCommand: "ai_resolve_command",
-  SetAiResolveCommand: "set_ai_resolve_command",
   AiResolveConflict: "ai_resolve_conflict",
   ConflictVersions: "conflict_versions",
   SaveConflictResolution: "save_conflict_resolution",
-  EditorCommand: "editor_command",
-  SetEditorCommand: "set_editor_command",
   OpenInMergeTool: "open_in_merge_tool",
 } as const;
 
@@ -194,10 +191,14 @@ export interface GitizenApi {
   /** Diff of one file in stash `hash` against the commit it was made on (untracked files show as new). */
   stashDiff(hash: string, path: string, ignoreWhitespace?: boolean): Promise<string>;
   checkout(branch: string): Promise<void>;
-  /** The saved AI command line tool for commit messages (e.g. `claude -p`), or "" if none is set up. */
-  aiCommitCommand(): Promise<string>;
-  /** Saves the AI command (trimmed; "" clears it). Resolves to what was saved. */
-  setAiCommitCommand(command: string): Promise<string>;
+  /**
+   * A command line saved in Gitizen's settings (the AI commit message or
+   * resolve command, e.g. `claude -p`, or the external merge tool, e.g.
+   * `code {file}`), or "" if none is set up.
+   */
+  savedCommand(which: SavedCommandKind): Promise<string>;
+  /** Saves a command line (trimmed; "" clears it). Resolves to what was saved. */
+  saveCommand(which: SavedCommandKind, command: string): Promise<string>;
   /**
    * Pipes a prompt plus the staged diff to the saved AI command and splits
    * what it prints into summary and description. Stages and commits nothing.
@@ -267,18 +268,10 @@ export interface GitizenApi {
    * still has conflict markers.
    */
   aiResolveConflict(path: string): Promise<string>;
-  /** The saved AI command for resolving conflicts (separate from the commit one), or "" if none is set up. */
-  aiResolveCommand(): Promise<string>;
-  /** Saves the AI resolve command (trimmed; "" clears it). Resolves to what was saved. */
-  setAiResolveCommand(command: string): Promise<string>;
   /** Both sides of a conflicted file merged with conflict markers, plus the file as it is now. */
   conflictVersions(path: string): Promise<ConflictVersions>;
   /** Writes `text` to a conflicted file (keeping its line endings), without staging it. */
   saveConflictResolution(path: string, text: string): Promise<void>;
-  /** The external tool command for conflicted files, e.g. `code {file}`; "" when none is set. */
-  editorCommand(): Promise<string>;
-  /** Saves the external tool command (trimmed; "" clears it). Resolves to what was saved. */
-  setEditorCommand(command: string): Promise<string>;
   /**
    * Opens a conflicted file in the saved command, else git's `merge.tool`
    * (waiting until it closes), else the system text editor.

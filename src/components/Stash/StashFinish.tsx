@@ -1,11 +1,13 @@
 import "./Stash.css";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import { pluralize } from "../../utils/format";
+import AbortOperationButton from "../Conflicts/AbortOperationButton";
 
 /**
  * Takes the commit form's place while adding to the stash, or popping it,
  * stopped on conflicts: once every file is resolved, saves the combined
- * stash or finishes popping (no commit is made either way).
+ * stash or finishes popping (no commit is made either way). Abort beside
+ * it puts the stash and your changes back as they were.
  */
 export default function StashFinish(): React.JSX.Element {
   const {
@@ -23,14 +25,17 @@ export default function StashFinish(): React.JSX.Element {
             ? "All conflicts resolved. Finish to drop the stash and keep its changes here."
             : "All conflicts resolved. Save to keep the combined changes in the stash."}
       </p>
-      <button
-        className="primary"
-        disabled={files.length > 0}
-        title={files.length > 0 ? "Resolve every conflicted file first" : undefined}
-        onClick={() => void continueOperation()}
-      >
-        {popping ? "Finish popping stash" : "Save stash"}
-      </button>
+      <div className="commit-amend">
+        <button
+          className="primary"
+          disabled={files.length > 0}
+          title={files.length > 0 ? "Resolve every conflicted file first" : undefined}
+          onClick={() => void continueOperation()}
+        >
+          {popping ? "Finish popping stash" : "Save stash"}
+        </button>
+        <AbortOperationButton />
+      </div>
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { gitizen } from "../../api/gitizen";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import { githubCommitPage } from "../../utils/github";
 import ActionModal from "../common/ActionModal";
+import ConfirmModal from "../common/ConfirmModal";
 import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
 import { useBranchMenu } from "../Branches/useBranchMenu";
 import { CherryPickDialog, CreateBranchDialog, CreateTagDialog } from "./CommitActionDialogs";
@@ -174,12 +175,6 @@ export default function CommitContextMenu({
   }, [menuOpen, dialog, branchDialogOpen, onClose]);
 
   const closeDialog = (): void => setDialog(null);
-  const pushedWarning = (
-    <p>
-      This commit is already on the remote. Changing it rewrites history, so Push becomes a
-      force push afterwards, and anyone who pulled the commit will have to reconcile.
-    </p>
-  );
 
   return (
     <>
@@ -187,19 +182,17 @@ export default function CommitContextMenu({
         <ContextMenu x={x} y={y} entries={entries} onClose={() => setMenuOpen(false)} />
       )}
       {dialog?.kind === "confirmPushed" && (
-        <ActionModal
+        <ConfirmModal
           title={dialog.rewrite === "undo" ? "Undo a pushed commit?" : "Amend a pushed commit?"}
+          confirmLabel={dialog.rewrite === "undo" ? "Undo commit" : "Amend commit"}
+          onConfirm={() => runWhenClean(dialog.rewrite, true)}
           onDismiss={closeDialog}
-          actions={[
-            {
-              label: dialog.rewrite === "undo" ? "Undo commit" : "Amend commit",
-              primary: true,
-              onClick: () => runWhenClean(dialog.rewrite, true),
-            },
-          ]}
         >
-          {pushedWarning}
-        </ActionModal>
+          <p>
+            This commit is already on the remote. Changing it rewrites history, so Push becomes a
+            force push afterwards, and anyone who pulled the commit will have to reconcile.
+          </p>
+        </ConfirmModal>
       )}
       {dialog?.kind === "needsClean" && otherBranch && (
         <ActionModal

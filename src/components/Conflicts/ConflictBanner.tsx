@@ -5,13 +5,12 @@ import {
   OPERATION_NAME,
 } from "../../utils/conflictText";
 import { pluralize } from "../../utils/format";
-import AbortOperationButton from "./AbortOperationButton";
 
 /**
  * Sits above the changed files while a merge, cherry-pick, rebase or revert
- * is stopped: how many conflicts are left (committing is blocked until
- * none), and a button to abort the whole operation. A rebase's abort
- * button sits beside "Continue rebase" in the commit form instead.
+ * is stopped: what is being brought into what, and how many conflicts are
+ * left (committing is blocked until none). The buttons that finish or
+ * abort it are at the bottom of the sidebar, in the commit form's place.
  */
 export default function ConflictBanner(): React.JSX.Element | null {
   const {
@@ -48,7 +47,6 @@ export default function ConflictBanner(): React.JSX.Element | null {
                 : "All conflicts resolved. Finish it below."}
         </small>
       </span>
-      {operation !== "rebase" && <AbortOperationButton />}
     </div>
   );
 }

@@ -117,6 +117,13 @@ export type ExternalTool = "mergeTool" | "editor";
 /** How to settle a conflicted file: our side, their side, or the file as it is now. */
 export type Resolution = "ours" | "theirs" | "asIs";
 
+/**
+ * A command line saved in Gitizen's settings (mirrors `SavedCommand` in
+ * src-tauri/src/settings.rs): the AI commands for commit messages and for
+ * resolving conflicts, and the external tool that opens conflicted files.
+ */
+export type SavedCommandKind = "aiCommit" | "aiResolve" | "editor";
+
 /** The current branch's stash (Gitizen keeps one per branch). */
 export interface BranchStash {
   /** The stash commit's hash. */
