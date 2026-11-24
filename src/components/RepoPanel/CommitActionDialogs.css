@@ -1,33 +1,11 @@
-.commit-dialog {
-  display: grid;
-  gap: 10px;
-  white-space: normal;
-}
-
-.commit-dialog label {
-  display: grid;
-  gap: 4px;
-}
-
-.commit-dialog label.inline {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.commit-dialog .commit-dialog-target {
+/* The commit (or branch) a dialog acts on, under its title. */
+.commit-dialog-target {
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.commit-dialog .commit-dialog-target code {
+.commit-dialog-target code {
   color: var(--mute);
-}
-
-.commit-dialog .hint {
-  margin: 0;
-  color: var(--mute);
-  font-size: 12.5px;
 }

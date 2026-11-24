@@ -54,7 +54,7 @@ export default function RepoSwitcher(): React.JSX.Element {
         {repo && baseName(repo)} <span aria-hidden="true">▾</span>
       </button>
       {open && (
-        <div className="repo-switcher-menu" role="menu">
+        <div className="repo-switcher-menu popover" role="menu">
           {recentRepos.length === 0 ? (
             <p className="placeholder">No recent repositories</p>
           ) : (

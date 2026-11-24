@@ -1,0 +1,105 @@
+/*
+ * Gitizen's design tokens. Every colour (and the shared fonts, radii and
+ * shadows) the UI uses is defined here; component styles only ever read
+ * these variables, so a theme is just another set of values.
+ *
+ * The light theme is the default. The dark theme applies when the system
+ * prefers dark, unless `data-theme="light"` is set on <html>; setting
+ * `data-theme="dark"` forces it. A new theme is one more
+ * `:root[data-theme="<name>"]` block overriding the colours below.
+ */
+:root {
+  color-scheme: light;
+
+  /* Surfaces */
+  --bg: #f3f5f4;
+  --panel: #fff;
+  --line: #d9dfdc;
+
+  /* Text */
+  --ink: #1c2321;
+  --mute: #6a7570;
+  /* Text on a filled accent, e.g. the primary button. */
+  --on-accent: #fff;
+
+  /* Meaning */
+  --accent: #0f6b5c;
+  --danger: #b3261e;
+  --warning: #c7811a;
+  --warning-soft: color-mix(in srgb, var(--warning) 10%, transparent);
+
+  /* Rows: selected, and hovered */
+  --selected: #e8edf5;
+  --hover: color-mix(in srgb, var(--selected) 50%, transparent);
+
+  /* Diffs */
+  --add: #e1f4e6;
+  --del: #fbe4e2;
+  --hunk: #e8edf5;
+
+  /* Lane colours of the commit graph, cycled through by lane. */
+  --lane-0: #2f9e8f;
+  --lane-1: #d9822b;
+  --lane-2: #7c5cc4;
+  --lane-3: #d6457a;
+  --lane-4: #3b82c4;
+  --lane-5: #8aa62e;
+  --lane-6: #c9a227;
+  --lane-7: #cc5a3a;
+
+  /* Depth */
+  --shadow-popover: 0 6px 20px rgb(0 0 0 / 0.18);
+  --shadow-modal: 0 12px 40px rgb(0 0 0 / 0.25);
+  --backdrop: rgb(0 0 0 / 0.35);
+
+  /* Shape and type (shared by every theme) */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+  --font-ui: system-ui, sans-serif;
+  --font-mono: ui-monospace, Menlo, Consolas, monospace;
+}
+
+/* The dark theme, for both the system setting and data-theme="dark". */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #141917;
+    --panel: #1c2220;
+    --line: #2d3633;
+    --ink: #e6ebe8;
+    --mute: #8d9993;
+    --on-accent: #0b1210;
+    --accent: #4fc2ab;
+    --danger: #f2867c;
+    --warning: #e0a046;
+    --selected: #222b3a;
+    --add: #1a3a2a;
+    --del: #40211f;
+    --hunk: #222b3a;
+    --shadow-popover: 0 6px 20px rgb(0 0 0 / 0.45);
+    --shadow-modal: 0 12px 40px rgb(0 0 0 / 0.55);
+    --backdrop: rgb(0 0 0 / 0.5);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #141917;
+  --panel: #1c2220;
+  --line: #2d3633;
+  --ink: #e6ebe8;
+  --mute: #8d9993;
+  --on-accent: #0b1210;
+  --accent: #4fc2ab;
+  --danger: #f2867c;
+  --warning: #e0a046;
+  --selected: #222b3a;
+  --add: #1a3a2a;
+  --del: #40211f;
+  --hunk: #222b3a;
+  --shadow-popover: 0 6px 20px rgb(0 0 0 / 0.45);
+  --shadow-modal: 0 12px 40px rgb(0 0 0 / 0.55);
+  --backdrop: rgb(0 0 0 / 0.5);
+}

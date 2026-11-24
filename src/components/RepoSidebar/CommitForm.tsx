@@ -129,7 +129,7 @@ export default function CommitForm(): React.JSX.Element {
               onClick={generate}
             >
               {generatingMessage ? (
-                <div className="commit-spinner" aria-hidden="true"></div>
+                <span className="spinner" aria-hidden="true" />
               ) : (
                 <>&#10023;</>
               )}

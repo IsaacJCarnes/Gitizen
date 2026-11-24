@@ -6,7 +6,7 @@
   border-top: 1px solid var(--line);
 }
 
-.description-container{
+.description-container {
   position: relative;
   display: flex;
   flex-direction: column;
@@ -38,31 +38,16 @@
 
 .commit-generate button:first-child {
   border-width: 0 1px 0 0;
-  border-radius: 6px 0 0 6px;
-  padding: 0px 4px 0px 4px;
+  border-radius: var(--radius) 0 0 var(--radius);
+  padding: 0 4px;
 }
 
 .commit-generate button:last-child {
   border-width: 0;
-  border-radius: 0 6px 6px 0;
-  padding: 0px 4px 0px 4px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 0 4px;
 }
 
 .commit-generate-settings {
   padding-inline: 10px;
-}
-
-.commit-spinner {
-  width: 10px;
-  height: 10px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: commit-spin 0.8s linear infinite;
-}
-
-@keyframes commit-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }

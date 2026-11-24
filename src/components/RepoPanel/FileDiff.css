@@ -43,36 +43,12 @@
 
 .diff-settings input {
   margin: 0;
-  accent-color: var(--accent);
 }
 
-/* Two or more buttons joined into one control; the pressed one is filled. */
-.diff-header .segmented {
-  display: inline-flex;
-}
-
-.diff-header .segmented button {
+/* The Unified / Split switch (a `.button-group`). */
+.diff-header .button-group button {
   padding: 2px 9px;
   font-size: 12.5px;
-  border-radius: 0;
-}
-
-.diff-header .segmented button + button {
-  border-left: none;
-}
-
-.diff-header .segmented button:first-child {
-  border-radius: 6px 0 0 6px;
-}
-
-.diff-header .segmented button:last-child {
-  border-radius: 0 6px 6px 0;
-}
-
-.diff-header .segmented button.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--panel);
 }
 
 /* Editing a file in place: the text fills the panel below the header. */
@@ -107,9 +83,5 @@
   margin: 0 16px 12px;
   resize: none;
   white-space: pre;
-  font:
-    12.5px/1.5 ui-monospace,
-    Menlo,
-    Consolas,
-    monospace;
+  font: 12.5px/1.5 var(--font-mono);
 }

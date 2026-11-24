@@ -169,7 +169,7 @@ export default function ConflictEditor({
           >
             {busy === "ai" ? (
               <>
-                <span className="conflict-spinner" aria-hidden="true" /> Resolving…
+                <span className="spinner" aria-hidden="true" /> Resolving…
               </>
             ) : (
               "Resolve with AI"
@@ -319,7 +319,7 @@ function ToolWithSettings({
   onSettings,
 }: ToolWithSettingsProps): React.JSX.Element {
   return (
-    <span className="conflict-tool">
+    <span className="conflict-tool button-group">
       <button disabled={disabled} title={title} onClick={onClick}>
         {children}
       </button>

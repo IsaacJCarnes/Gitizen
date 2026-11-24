@@ -1,10 +1,6 @@
 .diff {
   margin: 0;
-  font:
-    12.5px/1.5 ui-monospace,
-    Menlo,
-    Consolas,
-    monospace;
+  font: 12.5px/1.5 var(--font-mono);
 }
 
 .diff.unified {
@@ -48,7 +44,6 @@
 .diff-line .check input {
   margin: 0;
   cursor: pointer;
-  accent-color: var(--accent);
 }
 
 .diff-line .check input:disabled {
@@ -136,7 +131,7 @@
   line-height: 1.2;
   padding: 0 7px;
   border: 0;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--accent);
   cursor: pointer;

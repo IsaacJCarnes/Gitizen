@@ -6,7 +6,7 @@
 }
 
 .file-change-list li.on {
-  background: var(--hunk);
+  background: var(--selected);
 }
 
 .file-change-list .name {
@@ -29,7 +29,6 @@
   margin: 0;
   flex: none;
   cursor: pointer;
-  accent-color: var(--accent);
 }
 
 .file-change-list .code {
@@ -40,5 +39,5 @@
 }
 
 .file-change-list .c-D {
-  color: #b3261e;
+  color: var(--danger);
 }

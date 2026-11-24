@@ -82,7 +82,7 @@ export default function BranchSwitcher(): React.JSX.Element {
         {current ?? "Detached HEAD"} <span aria-hidden="true">▾</span>
       </button>
       {open && (
-        <div className="branch-switcher-menu">
+        <div className="branch-switcher-menu popover">
           <input
             type="search"
             className="branch-switcher-search"

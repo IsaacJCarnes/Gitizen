@@ -36,21 +36,11 @@ export interface CommitGraph {
   laneCount: number;
 }
 
-/** Palette cycled through by lane index. */
-const LANE_COLORS = [
-  "#2f9e8f",
-  "#d9822b",
-  "#7c5cc4",
-  "#d6457a",
-  "#3b82c4",
-  "#8aa62e",
-  "#c9a227",
-  "#cc5a3a",
-];
+/** How many lane colours the theme defines (`--lane-0` to `--lane-7` in theme.css). */
+const LANE_COLORS = 8;
 
-/** Colour for a lane, wrapping around the palette. */
-export const laneColor = (lane: number): string =>
-  LANE_COLORS[lane % LANE_COLORS.length];
+/** Colour for a lane, wrapping around the theme's palette, as a CSS value. */
+export const laneColor = (lane: number): string => `var(--lane-${lane % LANE_COLORS})`;
 
 /**
  * Assigns each node a lane and works out the lines to draw in its row.

@@ -113,7 +113,7 @@ Right-click any commit in the history for:
 - Line staging is off while whitespace is hidden, because the index is rebuilt from the full diff. If the file changed since its diff was shown, the change is refused instead of hitting the wrong lines.
 
 ### General
-- Light and dark themes follow the operating system setting.
+- Light and dark themes follow the operating system setting. Every colour lives in `src/styles/theme.css` as a CSS variable, so a theme only overrides those (setting `data-theme="light"` or `"dark"` on `<html>` forces one).
 - Git errors pop up in a modal with git's message instead of failing silently. The modal stays until dismissed (OK, Escape or a click outside), and offers an action when one can fix the problem.
 - Right-click menus close on a click outside, Escape, scrolling or the window losing focus, and stay inside the window. Items with a submenu open it on hover, click or the right arrow key.
 - The commands set up for AI commit messages, AI conflict resolving and the external merge tool are saved in `settings.json` in the app's config folder.
@@ -153,7 +153,8 @@ src-tauri/               Rust backend (Tauri 2)
 src/                     UI (React)
   main.tsx, App.tsx      React entry point and root component
   api/gitizen.ts         Implements GitizenApi with Tauri invoke() calls
-  styles/global.css      Theme variables and base element styles
+  styles/theme.css       Theme variables: every colour, plus shared fonts, radii and shadows (light and dark)
+  styles/global.css      Base element styles and shared classes (.popover, .button-group, .spinner, .hint)
   context/               React contexts: UI state (view, recent repositories, discard warning) and git state
   hooks/
     useGitOperations.ts  All git state and actions for the app
@@ -178,6 +179,7 @@ src/                     UI (React)
 
 ## Conventions
 - Each component lives next to its own CSS file, grouped in a folder by the area of the screen it belongs to.
+- CSS never names a colour directly: it reads the variables in `src/styles/theme.css` (add one there if nothing fits), and reuses the shared classes in `global.css` (`.popover`, `.button-group`, `.spinner`, `.hint`, and `.modal-form` in ActionModal.css) instead of restyling them.
 - Anything returned by the backend is typed in `shared/gitTypes.ts` and mirrored in `src-tauri/src/git/types.rs` (or next to the command in its module). A new git operation gets a name in `Command` (`shared/ipc.ts`), a method in `GitizenApi`, a call in `src/api/gitizen.ts` (TypeScript checks it matches `GitizenApi`), and a `#[tauri::command]` in one of the backend modules, registered in `lib.rs`.
 - A backend command is a thin `async` wrapper that gets the open repository and calls a plain `*_in(dir, …)` function, which is what the Rust tests call. Slow commands (network, AI, an external merge tool) run through `util::blocking` so other commands keep answering.
 - Commands reject with git's message as a plain string. The exception is opening a repository, which rejects with an `OpenRepositoryError` object (`{ kind: "notARepository", path, message }` or `{ kind: "failed", message }`, `OpenError` in Rust) so the UI can offer to create one. `useGitOperations` normalises every failure into that shape for the error modal.

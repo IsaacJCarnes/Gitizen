@@ -40,17 +40,20 @@ export default function CommitGraphCell({
         <path
           key={index}
           d={linePath(line)}
-          stroke={laneColor(line.color)}
+          // Lane colours are CSS variables, which only style properties
+          // (not SVG presentation attributes) resolve everywhere.
+          style={{ stroke: laneColor(line.color) }}
           strokeDasharray={line.dashed ? "3 3" : undefined}
         />
       ))}
       <circle
-        className="node"
+        className={`node${pending ? " pending" : ""}`}
         cx={laneX(row.lane)}
         cy={ROW_HEIGHT / 2}
         r={NODE_RADIUS}
-        fill={pending ? "var(--panel)" : color}
-        stroke={color}
+        // The colour goes in a variable so CSS can still restyle the node
+        // (e.g. outline the selected one).
+        style={{ "--node-color": color } as React.CSSProperties}
         strokeDasharray={pending ? "2 2" : undefined}
       />
     </svg>

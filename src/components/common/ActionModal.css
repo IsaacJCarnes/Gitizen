@@ -2,14 +2,14 @@
   padding: 0;
   width: min(440px, calc(100vw - 48px));
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-xl);
   background: var(--panel);
   color: var(--ink);
-  box-shadow: 0 12px 40px rgb(0 0 0 / 0.25);
+  box-shadow: var(--shadow-modal);
 }
 
 .action-modal::backdrop {
-  background: rgb(0 0 0 / 0.35);
+  background: var(--backdrop);
 }
 
 .action-modal-content {
@@ -39,7 +39,7 @@
 }
 
 .action-modal-body code {
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font: 12px/1.45 var(--font-mono);
 }
 
 .action-modal footer {
@@ -51,9 +51,8 @@
 /* A one-line command typed into a modal, e.g. the AI command. */
 .action-modal .command-input {
   width: 100%;
-  box-sizing: border-box;
   margin-bottom: 8px;
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font: 12px/1.45 var(--font-mono);
 }
 
 /* The "don't warn me again" tick box under a discard warning. */
@@ -63,4 +62,28 @@
   gap: 6px;
   color: var(--mute);
   font-size: 12.5px;
+}
+
+/* A form inside a modal: labelled fields stacked with hints between. */
+.modal-form {
+  display: grid;
+  gap: 10px;
+  white-space: normal;
+}
+
+.modal-form label {
+  display: grid;
+  gap: 4px;
+}
+
+.modal-form label.inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Radio buttons side by side, e.g. Publish's two ways to add a remote. */
+.modal-form .modal-form-choices {
+  display: flex;
+  gap: 16px;
 }

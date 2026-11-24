@@ -34,9 +34,9 @@ export default function PublishModal({ onDismiss }: PublishModalProps): React.JS
         github ? publishRepository(name, description, isPrivate) : addRemote(remoteName, url)
       }
       onDismiss={onDismiss}
-      className="publish-form"
+      className="modal-form"
     >
-      <div className="publish-modes" role="radiogroup">
+      <div className="modal-form-choices" role="radiogroup">
         <label className="inline">
           <input
             type="radio"

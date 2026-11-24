@@ -24,7 +24,7 @@ export function RenameBranchDialog({ branch, onDismiss }: BranchDialogProps): Re
       ready={trimmed !== "" && trimmed !== branch.name}
       onSubmit={() => renameBranch(branch.name, trimmed)}
       onDismiss={onDismiss}
-      className="commit-dialog"
+      className="modal-form"
     >
       <label>
         New name
@@ -91,7 +91,7 @@ export function SquashMergeDialog({ branch, onDismiss }: BranchDialogProps): Rea
       ready={summary.trim() !== ""}
       onSubmit={() => squashMergeBranch(branch.name, joinMessage(summary, description))}
       onDismiss={onDismiss}
-      className="commit-dialog"
+      className="modal-form"
     >
       <p className="hint">
         {branch.name}&apos;s {pluralize(branch.ahead, "commit")} will be combined into one new commit

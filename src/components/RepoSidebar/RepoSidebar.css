@@ -6,11 +6,10 @@
   flex-direction: column;
 }
 
-.repo-sidebar>h2 {
+.repo-sidebar > h2 {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-left: 8px;
   margin: 0;
   padding: 10px 12px 4px;
   color: var(--mute);
@@ -18,7 +17,7 @@
   font-size: 13px;
 }
 
-.repo-sidebar>h2 small {
+.repo-sidebar > h2 small {
   margin-left: auto;
   font-weight: 400;
 }

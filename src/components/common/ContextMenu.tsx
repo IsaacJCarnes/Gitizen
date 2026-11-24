@@ -70,7 +70,7 @@ export default function ContextMenu({ x, y, entries, onClose }: ContextMenuProps
   return (
     <div
       ref={menuRef}
-      className="context-menu"
+      className="context-menu popover"
       role="menu"
       style={position}
       // The menu's own right-click shouldn't open the browser's menu.
@@ -139,7 +139,7 @@ function Submenu({ entries, onClose }: { entries: MenuEntry[]; onClose: () => vo
   }, []);
 
   return (
-    <div ref={ref} className={`context-menu context-submenu ${side}`} role="menu">
+    <div ref={ref} className={`context-menu popover context-submenu ${side}`} role="menu">
       <MenuEntries entries={entries} onClose={onClose} />
     </div>
   );

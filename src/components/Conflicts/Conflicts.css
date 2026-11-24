@@ -4,9 +4,9 @@
   gap: 8px;
   margin: 6px 8px 2px;
   padding: 6px 8px;
-  border: 1px solid #c7811a;
-  border-radius: 6px;
-  background: color-mix(in srgb, #c7811a 10%, transparent);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--warning-soft);
 }
 
 .conflict-banner span {
@@ -16,7 +16,7 @@
 }
 
 .conflict-banner b {
-  color: #c7811a;
+  color: var(--warning);
   font-size: 13px;
 }
 
@@ -42,7 +42,7 @@
 
 /* A conflicted file's row: amber "!" code and a Mark resolved button. */
 .file-change-list li.conflicted .code {
-  color: #c7811a;
+  color: var(--warning);
 }
 
 .file-change-list li.conflicted .conflict-spacer {
@@ -56,12 +56,12 @@
 
 .commit-blocked {
   margin: 0;
-  color: #c7811a;
+  color: var(--warning);
   font-size: 12.5px;
 }
 
 .repository-header .conflict-button {
-  border-color: #c7811a;
-  color: #c7811a;
+  border-color: var(--warning);
+  color: var(--warning);
   font-weight: 600;
 }

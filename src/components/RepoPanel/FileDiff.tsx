@@ -147,7 +147,7 @@ export default function FileDiff(): React.JSX.Element {
           </button>
         )}
         <span className="diff-settings" style={editingPath ? { display: "none" } : undefined}>
-          <span className="segmented" role="group" aria-label="Diff layout">
+          <span className="button-group" role="group" aria-label="Diff layout">
             {(["unified", "split"] as const).map((layout) => (
               <button
                 key={layout}

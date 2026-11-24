@@ -19,34 +19,9 @@
   font-size: 13px;
 }
 
-/* The merge tool button and its settings gear read as one control. */
-.conflict-tool {
-  display: inline-flex;
-}
-
-.conflict-tool button:first-child {
-  border-radius: 6px 0 0 6px;
-}
-
+/* A tool's settings gear, joined to its button (see `.button-group`). */
 .conflict-tool button:last-child {
-  border-left: none;
-  border-radius: 0 6px 6px 0;
   padding-inline: 8px;
-}
-
-.conflict-spinner {
-  width: 11px;
-  height: 11px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: conflict-spin 0.8s linear infinite;
-}
-
-@keyframes conflict-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* Both sides, scrolling above the output. */
@@ -54,11 +29,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  font:
-    12.5px/1.5 ui-monospace,
-    Menlo,
-    Consolas,
-    monospace;
+  font: 12.5px/1.5 var(--font-mono);
 }
 
 .conflict-columns-head {
@@ -69,7 +40,7 @@
   grid-template-columns: 1fr 1fr;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
-  font: 600 12px system-ui, sans-serif;
+  font: 600 12px var(--font-ui);
   color: var(--mute);
 }
 
@@ -124,18 +95,17 @@
 }
 
 .conflict-side.incoming {
-  background: color-mix(in srgb, #c7811a 10%, transparent);
+  background: var(--warning-soft);
 }
 
 .conflict-side input {
   margin: 0 8px 0 14px;
-  accent-color: var(--accent);
   cursor: pointer;
 }
 
 .conflict-side-empty {
   padding: 0 14px;
-  font: italic 12px system-ui, sans-serif;
+  font: italic 12px var(--font-ui);
   color: var(--mute);
 }
 
@@ -187,11 +157,7 @@
   margin: 0 16px 12px;
   resize: none;
   white-space: pre;
-  font:
-    12.5px/1.5 ui-monospace,
-    Menlo,
-    Consolas,
-    monospace;
+  font: 12.5px/1.5 var(--font-mono);
 }
 
 .conflict-binary {

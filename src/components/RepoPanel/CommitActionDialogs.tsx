@@ -36,7 +36,7 @@ export function CreateBranchDialog({
       ready={name.trim() !== ""}
       onSubmit={() => createBranch(name, commit.hash, checkout)}
       onDismiss={onDismiss}
-      className="commit-dialog"
+      className="modal-form"
     >
       <CommitLine commit={commit} />
       <label>
@@ -77,7 +77,7 @@ export function CreateTagDialog({
       ready={name.trim() !== ""}
       onSubmit={() => createTag(name, commit.hash, message)}
       onDismiss={onDismiss}
-      className="commit-dialog"
+      className="modal-form"
     >
       <CommitLine commit={commit} />
       <label>
@@ -127,7 +127,7 @@ export function CherryPickDialog({
       ready={branch !== ""}
       onSubmit={() => cherryPick(commit.hash, branch)}
       onDismiss={onDismiss}
-      className="commit-dialog"
+      className="modal-form"
     >
       <CommitLine commit={commit} />
       <label>

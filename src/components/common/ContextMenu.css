@@ -4,10 +4,6 @@
   min-width: 200px;
   padding: 4px;
   display: grid;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 6px 20px rgb(0 0 0 / 0.18);
 }
 
 .context-menu button {
@@ -15,6 +11,7 @@
   border: none;
   background: transparent;
   padding: 5px 10px;
+  white-space: nowrap;
 }
 
 .context-menu button:not(:disabled):hover,
@@ -75,8 +72,4 @@
 
 .context-submenu.left::before {
   right: -8px;
-}
-
-.context-menu button {
-  white-space: nowrap;
 }

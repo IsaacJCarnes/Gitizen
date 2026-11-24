@@ -1,5 +1,5 @@
 .commit-graph li.on {
-  background: var(--hunk);
+  background: var(--selected);
 }
 
 .commit-graph button {
@@ -15,7 +15,7 @@
 }
 
 .commit-graph button:hover {
-  background: color-mix(in srgb, var(--hunk) 50%, transparent);
+  background: var(--hover);
 }
 
 .commit-graph .refs {
@@ -38,7 +38,7 @@
   padding: 0 6px;
   border: 1px solid;
   border-left-width: 3px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--panel);
 }
 
@@ -68,6 +68,12 @@
 
 .commit-graph .node {
   stroke-width: 2;
+  fill: var(--node-color);
+  stroke: var(--node-color);
+}
+
+.commit-graph .node.pending {
+  fill: var(--panel);
 }
 
 .commit-graph li.on .node {
