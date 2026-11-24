@@ -1,6 +1,5 @@
 import "./CommitHistory.css";
 import { useMemo } from "react";
-import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import type { GitCommit } from "../../../shared/gitTypes";
 import { buildCommitGraph, laneColor, type GraphNode } from "../../utils/commitGraph";
@@ -59,14 +58,12 @@ export default function CommitHistory(): React.JSX.Element {
     selectCommit,
     branchStash,
     conflicts,
-    selectStashFile,
     stashSelected,
     selectStash,
     popStash,
     discardFiles,
   } = git;
   const { confirmDiscard, discardDialog } = useDiscardConfirmation();
-  const { setView } = useAppContext();
   // A commit's menu, or the "Uncommitted changes" row's (null) or the stash's.
   const { menu, openMenu, closeMenu } = useContextMenu<GitCommit | null | typeof STASH>();
   const changeCount = status?.files.length ?? 0;
@@ -134,16 +131,6 @@ export default function CommitHistory(): React.JSX.Element {
     },
   ];
 
-  /** Shows the working tree, with the stash's first file open. */
-  const openStash = (): void => {
-    selectStash();
-    const first = branchStash?.files[0];
-    if (first) {
-      selectStashFile(first);
-      setView("diff");
-    }
-  };
-
   if (rows.length === 0) {
     return <p className="placeholder">No commits yet.</p>;
   }
@@ -158,7 +145,7 @@ export default function CommitHistory(): React.JSX.Element {
             return (
               <li key={STASH} className={`pending stash${stashSelected ? " on" : ""}`}>
                 <button
-                  onClick={openStash}
+                  onClick={selectStash}
                   title="Show the stash's changes"
                   onContextMenu={(event) => openMenu(event, STASH)}
                 >

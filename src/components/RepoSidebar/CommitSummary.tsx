@@ -18,17 +18,20 @@ export default function CommitSummary({
   return (
     <div className="commit-summary">
       <div className="commit-summary-title">
-        <button
-          className="commit-summary-toggle"
-          aria-expanded={expanded}
-          aria-label={
-            expanded ? "Collapse commit details" : "Expand commit details"
-          }
-          title={expanded ? "Collapse" : "Expand"}
-          onClick={() => setExpanded((open) => !open)}
-        >
-          <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
-        </button>
+        {commit.body && (
+          <button
+            className="commit-summary-toggle"
+            aria-expanded={expanded}
+            aria-label={
+              expanded ? "Collapse commit details" : "Expand commit details"
+            }
+            title={expanded ? "Collapse" : "Expand"}
+            onClick={() => setExpanded((open) => !open)}
+            disabled={!commit.body}
+          >
+            <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+          </button>
+        )}
         <b>{commit.message}</b>
       </div>
       {expanded && <>{commit.body && <p>{commit.body}</p>}</>}
