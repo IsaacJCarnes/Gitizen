@@ -14,7 +14,8 @@ use std::path::{Path, PathBuf};
 
 use crate::git::parsers::{parse_log, parse_name_status, parse_status, LOG_FORMAT};
 use crate::git::patch::{
-    changed_line_numbers, index_content, stages_any_addition, staged_line_indices, STALE,
+    changed_line_numbers, index_content, stages_any_addition, staged_line_indices, tidy_change_runs,
+    STALE,
 };
 use crate::git::repository::{
     assert_branch_name, assert_hash, first_parent_of, has_commits, init_repository as git_init,
@@ -168,7 +169,14 @@ pub(crate) fn combined_diff(dir: &Path, path: &str, ignore_whitespace: Option<bo
     }
     let mut args = diff_options(ignore_whitespace);
     args.extend([head_or_empty_tree(dir), "--", path]);
-    run_git(dir, args)
+    run_diff(dir, args)
+}
+
+/// Runs a `git diff` (built on `diff_options`) for the UI to show, with
+/// unchanged lines git left among the changes made context again (see
+/// `tidy_change_runs`).
+pub(crate) fn run_diff<'a>(dir: &Path, args: impl IntoIterator<Item = &'a str>) -> Result<String, String> {
+    run_git(dir, args).map(|diff| tidy_change_runs(&diff))
 }
 
 /// Indices of the changed lines of `diff` (from `combined_diff`, whitespace
@@ -295,7 +303,7 @@ pub async fn commit_diff(
         args.push(old_path);
     }
     args.push(&path);
-    run_git(&dir, args)
+    run_diff(&dir, args)
 }
 
 #[tauri::command]

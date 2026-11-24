@@ -25,6 +25,7 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 
 ### Branches
 - The branch button in the header opens a list of local branches with a search box that filters them as you type. Click a branch (or press Enter on the first match) to check it out. Each branch shows how far it is ahead of (↑) and behind (↓) the checked-out branch. A new repository's unborn branch is listed too, and a detached HEAD shows as **Detached HEAD**.
+- Switching branches (from that list or a commit's menu) with uncommitted changes first asks what to do with them, like GitHub Desktop: **Leave on <branch>** stashes them (untracked files too) in that branch's stash, to pop when you come back, or **Bring to <branch>** carries them over. When the other branch changes some of the same files, the changes go over through a stash that is applied there and dropped; if they change the same lines, it stops on conflicts for the conflict editor, like popping a stash. Resolving keeps the merged changes on the new branch; cancelling leaves you there with a clean tree and your changes kept as the old branch's stash. Leaving them on a branch that already has a stash adds them to it, which may stop on conflicts like any stash (see Stashing); then the switch doesn't happen.
 - Right-click a branch in that list, or a branch's tip in the history, to **Rename** it (only the local branch; the name is checked with `git check-ref-format`) or **Delete** it. The checked-out branch can't be deleted. A branch with commits the current branch doesn't have says how many, and is deleted anyway (forced) once confirmed.
 - In the history, a branch with commits the current branch lacks can also be brought into it:
   - **Merge … into …**: a merge commit, or a fast-forward when possible.
@@ -103,6 +104,8 @@ Right-click any commit in the history for:
 
 ### Diffs
 - Diff view with added, removed and hunk-header lines highlighted, and old and new line numbers.
+- Each run of changes is a hunk of its own. Where git's hunk has unchanged lines between two runs of changes, it is split there, and those lines fold into an **Expand** row like the space between hunks (the context git shows before the first change and after the last stays). Each piece gets its own `@@` header; the first keeps git's hint naming the enclosing function or block.
+- A line that a run of changes removes and adds back unchanged (git's diff sometimes does this, e.g. with a `}` between two edits) is shown as an unchanged line instead, so it isn't counted as a change or staged with its neighbours. Runs too big to match up (over 250,000 removed × added lines, like a rewritten file) are shown as git wrote them.
 - **Unified / Split** setting in the diff header: one column, or removed lines on the left beside the added lines that replace them on the right.
 - **Hide whitespace** setting hides changes that only touch whitespace (`git diff -w`), for working-tree, commit and stash diffs. Both settings are saved between sessions (in the webview's localStorage, key `gitizen.diffSettings`).
 - Diff header shows the file path and where the change lives (commit hash, Stash, or Uncommitted), with a button back to the history.
@@ -132,7 +135,7 @@ src-tauri/               Rust backend (Tauri 2)
   src/
     main.rs, lib.rs      App entry point: builds the window, registers commands
     commands.rs          Core git commands: open, status, log, branches, diffs, staging, commit, undo, checkout
-    branches.rs          Rename, delete, merge, rebase onto and squash merge local branches
+    branches.rs          Switch (leaving or bringing changes), rename, delete, merge, rebase onto and squash merge local branches
     commit_actions.rs    Commit menu actions: checkout commit, create branch or tag, cherry-pick, open on GitHub
     remote.rs            Remotes, publishing with the GitHub CLI, fetch, pull and push
     conflicts.rs         Stopped operations and conflicted files: conflict editor data, resolve, continue, abort, AI resolve, merge tool
@@ -147,7 +150,7 @@ src-tauri/               Rust backend (Tauri 2)
       runner.rs          Runs the git CLI (no shell, no console window, never prompts)
       repository.rs      Holds the open repository (and `git init`); input validation, branch and git-folder helpers
       parsers.rs         Pure functions that parse raw git output (unit tested)
-      patch.rs           Works out which diff lines are staged and builds index content for line staging (unit tested)
+      patch.rs           Tidies diffs, works out which diff lines are staged and builds index content for line staging (unit tested)
       types.rs           Rust mirrors of shared/gitTypes.ts
 
 src/                     UI (React)

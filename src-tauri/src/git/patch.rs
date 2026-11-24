@@ -152,6 +152,104 @@ pub fn stages_any_addition(combined: &str, staged: &HashSet<usize>) -> bool {
         .any(|(index, line)| matches!(line, BodyLine::Added { .. }) && staged.contains(&index))
 }
 
+/// Biggest run of changes (removed lines times added lines) `tidy_change_runs`
+/// matches up; bigger ones, like a rewritten file, are left as git wrote them.
+const TIDY_LIMIT: usize = 250_000;
+
+/// Turns lines that a run of changes removes and adds back unchanged into
+/// context. git can leave such a line inside a run of changes (its diff
+/// gives up the exhaustive search on big inputs, and the patience and
+/// histogram algorithms don't aim for the fewest changes), where it looks
+/// changed and gets staged with the run. Within each run of `-` and `+`
+/// lines, the longest common sequence of removed and added text becomes
+/// context. Every line keeps its old and new line number, so the hunk
+/// headers stay valid and line staging works on the result as on git's.
+pub fn tidy_change_runs(diff: &str) -> String {
+    let lines: Vec<&str> = diff.split('\n').collect();
+    let is_change = |line: &str| line.starts_with('-') || line.starts_with('+');
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut in_hunk = false;
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        if line.starts_with("@@ ") {
+            in_hunk = true;
+        } else if !line.starts_with(['-', '+', ' ', '\\']) {
+            // A header line ("diff --git ...") ends the previous file's hunks.
+            in_hunk = false;
+        }
+        if !in_hunk || !is_change(line) {
+            out.push(line.to_string());
+            i += 1;
+            continue;
+        }
+        // A run: consecutive removed and added lines, with any "\ No
+        // newline at end of file" notes among them.
+        let start = i;
+        while i < lines.len() && (is_change(lines[i]) || lines[i].starts_with('\\')) {
+            i += 1;
+        }
+        out.extend(tidy_run(&lines[start..i]));
+    }
+    out.join("\n")
+}
+
+/// One run of changes with its common lines made context (see `tidy_change_runs`).
+fn tidy_run(run: &[&str]) -> Vec<String> {
+    let as_is = || run.iter().map(|line| line.to_string()).collect();
+    // A note ties the line before it to the end of the file; leave such runs alone.
+    if run.iter().any(|line| line.starts_with('\\')) {
+        return as_is();
+    }
+    let side = |marker: char| -> Vec<&str> {
+        run.iter().filter(|line| line.starts_with(marker)).map(|line| &line[1..]).collect()
+    };
+    let (removed, added) = (side('-'), side('+'));
+    let (n, m) = (removed.len(), added.len());
+    if n == 0 || m == 0 || n * m > TIDY_LIMIT {
+        return as_is();
+    }
+    // lcs[r][a]: longest common sequence of removed[r..] and added[a..].
+    let mut lcs = vec![vec![0u32; m + 1]; n + 1];
+    for r in (0..n).rev() {
+        for a in (0..m).rev() {
+            lcs[r][a] = if removed[r] == added[a] {
+                lcs[r + 1][a + 1] + 1
+            } else {
+                lcs[r + 1][a].max(lcs[r][a + 1])
+            };
+        }
+    }
+    if lcs[0][0] == 0 {
+        return as_is();
+    }
+    // Before each common line: the removals, then the additions, that come
+    // before it on each side; after the last one, whatever is left.
+    let mut out = Vec::with_capacity(run.len());
+    let (mut minus, mut plus) = (Vec::new(), Vec::new());
+    let (mut r, mut a) = (0, 0);
+    while r < n && a < m {
+        if removed[r] == added[a] && lcs[r][a] == lcs[r + 1][a + 1] + 1 {
+            out.append(&mut minus);
+            out.append(&mut plus);
+            out.push(format!(" {}", removed[r]));
+            r += 1;
+            a += 1;
+        } else if lcs[r + 1][a] >= lcs[r][a + 1] {
+            minus.push(format!("-{}", removed[r]));
+            r += 1;
+        } else {
+            plus.push(format!("+{}", added[a]));
+            a += 1;
+        }
+    }
+    minus.extend(removed[r..].iter().map(|text| format!("-{text}")));
+    plus.extend(added[a..].iter().map(|text| format!("+{text}")));
+    out.append(&mut minus);
+    out.append(&mut plus);
+    out
+}
+
 /// Error for a line-staging request made against a diff that is out of date.
 pub const STALE: &str = "The file changed since its diff was shown. Try again on the updated diff.";
 
@@ -287,6 +385,31 @@ mod tests {
         assert_eq!(added_in_worktree, set(&[4]));
         let staged = staged_line_indices(COMBINED, &removed_in_index, &added_in_worktree);
         assert_eq!(staged, vec![at(COMBINED, "-two"), at(COMBINED, "+TWO")]);
+    }
+
+    #[test]
+    fn tidies_unchanged_lines_out_of_runs_of_changes() {
+        // "}" is removed and added back between two real changes.
+        let diff = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,5 +1,5 @@\n x\n-a\n-}\n-b\n+A\n+}\n+B\n y\n";
+        let tidy = tidy_change_runs(diff);
+        assert_eq!(tidy, "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,5 +1,5 @@\n x\n-a\n+A\n }\n-b\n+B\n y\n");
+        // Every line keeps its numbers, so line staging still works on it.
+        let head = "x\na\n}\nb\ny\n";
+        let all = changed_line_indices(&tidy);
+        assert_eq!(all.len(), 4);
+        assert_eq!(index_content(head, &tidy, &all).unwrap(), "x\nA\n}\nB\ny\n");
+        let first = set(&[at(&tidy, "-a"), at(&tidy, "+A")]);
+        assert_eq!(index_content(head, &tidy, &first).unwrap(), "x\nA\n}\nb\ny\n");
+
+        // Unequal runs: the common line lines up with leftovers on either side.
+        let uneven = "@@ -1,3 +1,2 @@\n-a\n-k\n-b\n+k\n+c\n";
+        assert_eq!(tidy_change_runs(uneven), "@@ -1,3 +1,2 @@\n-a\n k\n-b\n+c\n");
+
+        // Nothing in common, notes, and git's own context stay as they are.
+        assert_eq!(tidy_change_runs(COMBINED), COMBINED);
+        let note = "@@ -1 +1 @@\n-a\n\\ No newline at end of file\n+a\n";
+        assert_eq!(tidy_change_runs(note), note);
+        assert_eq!(tidy_change_runs(""), "");
     }
 
     #[test]

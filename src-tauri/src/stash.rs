@@ -13,7 +13,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::commands::diff_options;
+use crate::commands::{diff_options, run_diff};
 use crate::conflicts::{conflicted_files, operation_in, Operation};
 use crate::git::parsers::parse_name_status;
 use crate::git::repository::{
@@ -222,7 +222,7 @@ fn stash_diff_in(dir: &Path, hash: &str, path: &str, ignore_whitespace: Option<b
     };
     let mut args = diff_options(ignore_whitespace);
     args.extend([from.as_str(), to.as_str(), "--", path]);
-    run_git(dir, args)
+    run_diff(dir, args)
 }
 
 /// Stashes `paths` (all changes when empty) on the current branch. If the
@@ -238,7 +238,7 @@ pub async fn stash_changes(
     stash_in(&repo.require()?, message.trim(), &paths.unwrap_or_default())
 }
 
-fn stash_in(dir: &Path, message: &str, paths: &[String]) -> Result<StashOutcome, String> {
+pub(crate) fn stash_in(dir: &Path, message: &str, paths: &[String]) -> Result<StashOutcome, String> {
     let branch = branch_for_stash(dir)?;
     if !has_changes(dir, paths)? {
         return Err("There are no changes to stash.".into());
@@ -270,6 +270,35 @@ fn stash_in(dir: &Path, message: &str, paths: &[String]) -> Result<StashOutcome,
             abort_in(dir)?;
             Err(error)
         }
+    }
+}
+
+/// Switches to `target` taking every uncommitted change along, for when git
+/// won't carry them over itself because `target` changes the same files:
+/// they are stashed, the branch is switched, and the stash is applied there
+/// and dropped. If they conflict with `target`, it stops like popping a
+/// stash ("conflicts"): finishing keeps the merged changes on `target`;
+/// aborting leaves them in a stash on the branch they came from.
+pub(crate) fn bring_in(dir: &Path, target: &str) -> Result<StashOutcome, String> {
+    let source = branch_for_stash(dir)?;
+    let stash = push(dir, &format!("Bringing changes to {target}"), &[])?;
+    if let Err(error) = run_git(dir, ["checkout", target]) {
+        // Still on the source branch: put the changes back.
+        apply(dir, &stash, true)?;
+        drop_stash_entry(dir, &stash)?;
+        return Err(error);
+    }
+    match apply(dir, &stash, true) {
+        Ok(()) => drop_stash_entry(dir, &stash).map(|()| StashOutcome::Done),
+        Err(_) if !conflicted_files(dir)?.is_empty() => {
+            let state = InProgress { kind: Kind::Pop, branch: target.into(), existing: stash, added: None, rest: None };
+            write_in_progress(dir, &state)?;
+            Ok(StashOutcome::Conflicts)
+        }
+        Err(error) => Err(format!(
+            "Switched to {target}, but your changes couldn't be applied there, so they are kept as \
+             {source}'s stash: {error}"
+        )),
     }
 }
 

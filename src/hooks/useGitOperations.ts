@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   BranchStash,
+  ChangesOnSwitch,
   CommitFile,
   ConflictState,
   FileChange,
@@ -17,6 +18,13 @@ import { toAppError, type AppError } from "../utils/errors";
 import { joinMessage, splitMessage } from "../utils/format";
 import { loadOrReset, loadUnlessCancelled } from "../utils/load";
 import { useDiffSettings } from "./useDiffSettings";
+
+/**
+ * What stopped on conflicts with a stash: adding to the branch's stash
+ * ("stash"), popping it ("pop"), or bringing changes to another branch
+ * ("bring", applied there through a stash).
+ */
+export type StashConflictKind = "stash" | "pop" | "bring";
 
 /** A network operation the header's sync buttons can run. */
 export type SyncAction = "fetch" | "pull" | "push";
@@ -133,9 +141,18 @@ export interface GitOperations {
    * Set when stashing ("stash") or popping ("pop") just stopped on
    * conflicts, so the UI can warn before the user resolves them.
    */
-  stashConflict: "stash" | "pop" | null;
+  stashConflict: StashConflictKind | null;
   dismissStashConflict: () => void;
+  /**
+   * Switches to `branch`. With uncommitted changes, first asks (through
+   * `pendingSwitch`) whether to leave them on the current branch or bring
+   * them along, and resolves once that is answered and done.
+   */
   checkoutBranch: (branch: string) => Promise<boolean>;
+  /** The branch waiting to be switched to until the user says what to do with the changes. */
+  pendingSwitch: string | null;
+  /** Answers `pendingSwitch`: leave or bring the changes, or null to stay put. */
+  answerSwitch: (changes: ChangesOnSwitch | null) => Promise<void>;
   /** Checks out a commit itself (detached HEAD). */
   checkoutCommit: (hash: string) => Promise<boolean>;
   /** Creates a branch at `hash`, switching to it when `checkout`. */
@@ -232,7 +249,10 @@ export function useGitOperations({
   const [selectedStashFile, setSelectedStashFile] = useState<CommitFile | null>(null);
   const [stashSelected, setStashSelected] = useState(false);
   const [stashDiff, setStashDiff] = useState("");
-  const [stashConflict, setStashConflict] = useState<"stash" | "pop" | null>(null);
+  const [stashConflict, setStashConflict] = useState<StashConflictKind | null>(null);
+  const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
+  // Settles the `checkoutBranch` call waiting on `pendingSwitch`.
+  const settleSwitch = useRef<((switched: boolean) => void) | null>(null);
   const [selectedConflict, setSelectedConflict] = useState<string | null>(null);
   // The operation seen by the last refresh, to notice one starting.
   const lastOperation = useRef<ConflictState["operation"]>(null);
@@ -491,7 +511,7 @@ export function useGitOperations({
    * records `kind` so the UI can warn about them.
    */
   const runStash = useCallback(
-    async (kind: "stash" | "pop", call: () => Promise<StashOutcome>): Promise<boolean> => {
+    async (kind: StashConflictKind, call: () => Promise<StashOutcome>): Promise<boolean> => {
       let conflicted = false;
       const ok = await runOperation(async () => {
         conflicted = (await call()) === "conflicts";
@@ -512,6 +532,36 @@ export function useGitOperations({
 
   const dismissStashConflict = useCallback((): void => setStashConflict(null), []);
 
+  const checkoutBranch = useCallback(
+    (branch: string): Promise<boolean> => {
+      if (!status?.files.length) return runOperation(() => gitizen.checkout(branch));
+      // Ask first; a switch still waiting on an answer is dropped.
+      settleSwitch.current?.(false);
+      setPendingSwitch(branch);
+      return new Promise((resolve) => {
+        settleSwitch.current = resolve;
+      });
+    },
+    [status, runOperation],
+  );
+
+  const answerSwitch = useCallback(
+    async (changes: ChangesOnSwitch | null): Promise<void> => {
+      const settle = settleSwitch.current;
+      settleSwitch.current = null;
+      setPendingSwitch(null);
+      if (!pendingSwitch || !changes) {
+        settle?.(false);
+        return;
+      }
+      // Leaving them may stop on conflicts with the branch's stash, which
+      // the stash conflict warning then explains.
+      const kind = changes === "leave" ? "stash" : "bring";
+      settle?.(await runStash(kind, () => gitizen.switchBranch(pendingSwitch, changes)));
+    },
+    [pendingSwitch, runStash],
+  );
+
   const publishRepository = useCallback(
     async (name: string, description: string, isPrivate: boolean): Promise<boolean> => {
       // Publishing pushes, so the header shows it like a push meanwhile.
@@ -531,7 +581,6 @@ export function useGitOperations({
       (...args: A): Promise<boolean> =>
         runOperation(() => call(...args));
     return {
-      checkoutBranch: act(gitizen.checkout),
       checkoutCommit: act(gitizen.checkoutCommit),
       addRemote: act(gitizen.addRemote),
       createBranch: act(gitizen.createBranch),
@@ -688,6 +737,9 @@ export function useGitOperations({
 
   return {
     ...simpleActions,
+    checkoutBranch,
+    pendingSwitch,
+    answerSwitch,
     repo,
     status,
     commits,

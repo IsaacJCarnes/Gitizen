@@ -60,6 +60,7 @@ export const gitizen: GitizenApi = {
   createTag: (name, hash, message) => invoke(Command.CreateTag, { name, hash, message }),
   cherryPick: (hash, branch) => invoke(Command.CherryPick, { hash, branch }),
   openInBrowser: (url) => invoke(Command.OpenInBrowser, { url }),
+  switchBranch: (name, changes) => invoke(Command.SwitchBranch, { name, changes }),
   renameBranch: (name, newName) => invoke(Command.RenameBranch, { name, newName }),
   deleteBranch: (name, force) => invoke(Command.DeleteBranch, { name, force }),
   mergeBranch: (name) => invoke(Command.MergeBranch, { name }),

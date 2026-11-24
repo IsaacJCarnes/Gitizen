@@ -7,6 +7,7 @@
  * exports as `gitizen`.
  */
 import type {
+  ChangesOnSwitch,
   CommitFile,
   ConflictState,
   ConflictVersions,
@@ -66,6 +67,7 @@ export const Command = {
   CreateTag: "create_tag",
   CherryPick: "cherry_pick",
   OpenInBrowser: "open_in_browser",
+  SwitchBranch: "switch_branch",
   RenameBranch: "rename_branch",
   DeleteBranch: "delete_branch",
   MergeBranch: "merge_branch",
@@ -237,6 +239,13 @@ export interface GitizenApi {
   cherryPick(hash: string, branch: string): Promise<void>;
   /** Opens a https://github.com/ page in the default browser (other URLs are refused). */
   openInBrowser(url: string): Promise<void>;
+  /**
+   * Switches to local branch `name`, first leaving any uncommitted changes
+   * on the current branch (stashed, which may stop on conflicts with its
+   * stash like `stashChanges`, without switching) or bringing them along
+   * (rejects, changing nothing, when `name` changes the same files).
+   */
+  switchBranch(name: string, changes: ChangesOnSwitch): Promise<StashOutcome>;
   /** Renames a local branch; its upstream setting moves with it. */
   renameBranch(name: string, newName: string): Promise<void>;
   /**

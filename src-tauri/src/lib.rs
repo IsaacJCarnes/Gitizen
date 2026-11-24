@@ -71,6 +71,7 @@ pub fn run() {
             commit_actions::create_tag,
             commit_actions::cherry_pick,
             commit_actions::open_in_browser,
+            branches::switch_branch,
             branches::rename_branch,
             branches::delete_branch,
             branches::merge_branch,

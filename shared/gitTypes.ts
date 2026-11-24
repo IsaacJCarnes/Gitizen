@@ -136,6 +136,12 @@ export interface BranchStash {
   files: CommitFile[];
 }
 
+/**
+ * What switching branches does with uncommitted changes: "leave" stashes
+ * them on the branch being left, "bring" carries them to the other branch.
+ */
+export type ChangesOnSwitch = "leave" | "bring";
+
 /** What stashing or popping did: finished, or stopped on conflicts to resolve. */
 export type StashOutcome = "done" | "conflicts";
 

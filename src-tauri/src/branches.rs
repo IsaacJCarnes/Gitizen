@@ -1,8 +1,12 @@
-//! Managing local branches from their right-click menu: renaming and
-//! deleting them, and bringing another branch into the current one by
-//! merging, rebasing onto it, or squashing it into a single commit.
+//! Managing local branches: switching to one with uncommitted changes
+//! (leaving them stashed or bringing them along), and from their
+//! right-click menu renaming and deleting them, and bringing another branch
+//! into the current one by merging, rebasing onto it, or squashing it into
+//! a single commit.
 
 use std::path::Path;
+
+use serde::Deserialize;
 
 use crate::conflicts::unless_conflicted;
 use crate::git::repository::{
@@ -10,6 +14,7 @@ use crate::git::repository::{
     require_current_branch, Repo,
 };
 use crate::git::runner::run_git;
+use crate::stash::{bring_in, stash_in, StashOutcome};
 
 /// How many commits `branch` has that HEAD doesn't (ahead), and HEAD has
 /// that `branch` doesn't (behind). Both 0 when HEAD has no commits yet.
@@ -30,6 +35,50 @@ fn require_branch<'a>(dir: &Path, name: &'a str) -> Result<&'a str, String> {
     run_git(dir, ["show-ref", "--verify", "--quiet", full.as_str()])
         .map(|_| name)
         .map_err(|_| format!("There is no branch named {name}"))
+}
+
+/// What happens to uncommitted changes when switching branches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChangesOnSwitch {
+    /// Stash them on the branch being left (its one stash), to pop later.
+    Leave,
+    /// Carry them over to the other branch, as `git checkout` does.
+    Bring,
+}
+
+/// Switches to local branch `name`, first doing `changes` with any
+/// uncommitted changes. Leaving them stashes them on the current branch;
+/// if that branch already has a stash and the two conflict, it stops there
+/// ("conflicts", without switching) for the conflict editor, like stashing
+/// does. Bringing them fails, changing nothing, if `name` changes the same
+/// files.
+#[tauri::command]
+pub async fn switch_branch(
+    repo: Repo<'_>,
+    name: String,
+    changes: ChangesOnSwitch,
+) -> Result<StashOutcome, String> {
+    switch_in(&repo.require()?, &name, changes)
+}
+
+fn switch_in(dir: &Path, name: &str, changes: ChangesOnSwitch) -> Result<StashOutcome, String> {
+    let name = require_branch(dir, name)?;
+    let dirty = !run_git(dir, ["status", "--porcelain", "--untracked-files=all"])?.trim().is_empty();
+    if dirty && changes == ChangesOnSwitch::Leave {
+        let current = require_current_branch(dir, "leaving changes on it")?;
+        if stash_in(dir, &format!("Left on {current} when switching to {name}"), &[])? == StashOutcome::Conflicts {
+            return Ok(StashOutcome::Conflicts);
+        }
+    }
+    match run_git(dir, ["checkout", name]) {
+        Ok(_) => Ok(StashOutcome::Done),
+        // `name` changes some of the same files, so git won't carry the
+        // changes over by itself: move them through a stash instead, which
+        // may stop on conflicts for the conflict editor.
+        Err(error) if dirty && error.contains("would be overwritten") => bring_in(dir, name),
+        Err(error) => Err(error),
+    }
 }
 
 /// Renames branch `name` to `new_name`. Its upstream setting moves along.
@@ -138,6 +187,77 @@ mod tests {
 
     fn count(dir: &Path, spec: &str) -> String {
         git(dir, &["rev-list", "--count", spec]).trim().to_string()
+    }
+
+    #[test]
+    fn switches_leaving_or_bringing_changes() {
+        let dir = diverged();
+        let porcelain = || git(&dir, &["status", "--porcelain"]);
+        let stashes = || git(&dir, &["stash", "list"]);
+
+        // Bring: the edit (and a new file) come along to side.
+        std::fs::write(dir.join("base.txt"), "edited\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "new\n").unwrap();
+        assert_eq!(switch_in(&dir, "side", ChangesOnSwitch::Bring).unwrap(), StashOutcome::Done);
+        assert_eq!(current_branch(&dir).as_deref(), Some("side"));
+        assert_eq!(porcelain(), " M base.txt\n?? new.txt\n");
+
+        // Leave: they are stashed on side, and main is clean.
+        assert_eq!(switch_in(&dir, "main", ChangesOnSwitch::Leave).unwrap(), StashOutcome::Done);
+        assert_eq!(current_branch(&dir).as_deref(), Some("main"));
+        assert_eq!(porcelain(), "");
+        assert!(stashes().contains("On side: Left on side when switching to main"), "{}", stashes());
+
+        assert!(switch_in(&dir, "missing", ChangesOnSwitch::Bring).is_err());
+
+        // A clean tree just switches, whatever the choice.
+        switch_in(&dir, "side", ChangesOnSwitch::Leave).unwrap();
+        assert_eq!(current_branch(&dir).as_deref(), Some("side"));
+        assert_eq!(stashes().lines().count(), 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn brings_changes_to_files_the_other_branch_changes_too() {
+        use crate::conflicts::{abort_in, conflicts_in, continue_in, Operation};
+
+        // f.txt has five lines; side changes the first, main the last.
+        let dir = new_repo("bring");
+        commit_file(&dir, "f.txt", "1\n2\n3\n4\n5\n");
+        git(&dir, &["checkout", "-q", "-b", "side"]);
+        commit_file(&dir, "f.txt", "one\n2\n3\n4\n5\n");
+        git(&dir, &["checkout", "-q", "main"]);
+        commit_file(&dir, "f.txt", "1\n2\n3\n4\nfive\n");
+
+        // An edit to the middle line comes along, merged with side's change.
+        std::fs::write(dir.join("f.txt"), "1\n2\nthree\n4\nfive\n").unwrap();
+        assert_eq!(switch_in(&dir, "side", ChangesOnSwitch::Bring).unwrap(), StashOutcome::Done);
+        assert_eq!(current_branch(&dir).as_deref(), Some("side"));
+        assert_eq!(std::fs::read_to_string(dir.join("f.txt")).unwrap(), "one\n2\nthree\n4\n5\n");
+        assert_eq!(git(&dir, &["stash", "list"]), "");
+
+        // An edit to the line main changed conflicts on the way back.
+        std::fs::write(dir.join("f.txt"), "one\n2\nthree\n4\nFIVE\n").unwrap();
+        assert_eq!(switch_in(&dir, "main", ChangesOnSwitch::Bring).unwrap(), StashOutcome::Conflicts);
+        assert_eq!(current_branch(&dir).as_deref(), Some("main"));
+        assert_eq!(conflicts_in(&dir).unwrap().operation, Some(Operation::StashPop));
+
+        // Aborting keeps the changes as side's stash; resolving keeps them here.
+        abort_in(&dir).unwrap();
+        assert_eq!(git(&dir, &["status", "--porcelain"]), "");
+        assert!(git(&dir, &["stash", "list"]).contains("On side: Bringing changes to main"));
+        git(&dir, &["checkout", "-q", "side"]);
+        git(&dir, &["stash", "pop", "-q"]);
+        assert_eq!(switch_in(&dir, "main", ChangesOnSwitch::Bring).unwrap(), StashOutcome::Conflicts);
+        std::fs::write(dir.join("f.txt"), "one\n2\nthree\n4\nFIVE\n").unwrap();
+        git(&dir, &["add", "f.txt"]);
+        continue_in(&dir).unwrap();
+        assert_eq!(conflicts_in(&dir).unwrap().operation, None);
+        assert_eq!(git(&dir, &["status", "--porcelain"]), " M f.txt\n");
+        assert_eq!(git(&dir, &["stash", "list"]), "");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
