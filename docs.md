@@ -88,7 +88,15 @@ Right-click any commit in the history for:
   - Undo removes the commit but keeps its changes staged and puts its message back in the commit form (unless you are already writing one). Undoing the first commit leaves the branch with no commits; merge commits can't be undone.
   - On a branch that isn't checked out, Gitizen switches to it first. If you have uncommitted changes, it asks whether to commit them first or stash them and continue.
   - A commit that is already on the remote asks first, since the next push then has to be a force push.
+- **Revert commit**: adds a commit to the current branch that undoes this one (a merge is undone against its first parent). Needs no uncommitted changes to tracked files; conflicts open the conflict editor.
+- **Reset <branch> to this commit** (on an earlier commit of the current branch's line), with a submenu: **Soft** keeps the changes of the commits after it staged, **Mixed** keeps them unstaged, **Hard** throws them away along with any uncommitted changes. A confirmation says how many commits leave the branch, which of them are on no other branch, tag or remote (they drop out of the history), and that ones the remote has come back with Pull. Only the checked-out branch moves.
+- For each tag on the commit, a **Tag <name>** submenu: **Push tag** pushes it to `origin` (or the only remote), **Delete tag…** deletes it, and from the remote too if you tick that.
+- With several commits selected, right-clicking one of them adds **Squash N commits…** at the top: it asks for the message (starting from the oldest commit's subject, the others' subjects listed below) and makes them one commit with all of their changes and the oldest one's author. Later commits are replayed on top.
 - **Copy SHA**, and **View on GitHub** when a remote is on github.com (the tracked remote first, then `origin`, then any other). Only `https://github.com/` pages can be opened.
+
+### Reordering and rewriting safely
+- Drag one of the current branch's own commits up or down in the history to reorder them; a line shows where it will land. The commits that change place (and those after them) are replayed with an interactive rebase, so a conflict stops it for the conflict editor like any rebase, and **Abort Rebase** puts everything back.
+- Squashing and reordering only rewrite the checked-out branch's own commits: from its tip back to the first merge, or the first commit that another branch, a tag or a remote branch also has. Rewriting those changes nothing anyone else can see, so other branches, tags and the remote never end up pointing at history that was replaced. Other commits can't be dragged, and the squash item says why it's off. Both need no uncommitted changes to tracked files.
 
 ### Conflicts
 - When a merge, squash merge, cherry-pick, rebase, revert, pull or stash operation stops on conflicts, Gitizen takes over instead of reporting an error, also when it finds one stopped on opening a repository.
@@ -145,6 +153,7 @@ src-tauri/               Rust backend (Tauri 2)
     commands.rs          Core git commands: open, status, log, branches, diffs, staging, commit, undo, checkout
     branches.rs          Switch (leaving or bringing changes), rename, delete, merge, rebase onto and squash merge local branches
     commit_actions.rs    Commit menu actions: checkout commit, create branch or tag, cherry-pick, open on GitHub
+    history.rs           Revert, reset, squash, reorder (only the branch's own commits), delete and push tags
     remote.rs            Remotes, publishing to GitHub, fetch, pull and push
     clone.rs             Cloning from a URL, listing the account's GitHub repositories, picking a folder
     github.rs            GitHub sign-in through git's credential helper (or a token), and GitHub's REST API
@@ -190,7 +199,8 @@ src/                     UI (React)
     GitHub/              The GitHub account button and sign-in modal
     Clone/               The clone modal (from GitHub or a URL)
     RepoSidebar/         Left sidebar: working-tree files, commit form, commit files
-    RepoPanel/           Main panel: commit history graph, commit menu and its dialogs, file diff and editor
+    RepoPanel/           Main panel: commit history graph (multi-select, drag to reorder), commit menu and its dialogs
+                         (branch, tag, cherry-pick, squash, reset, delete tag), file diff and editor
 ```
 
 ## Conventions

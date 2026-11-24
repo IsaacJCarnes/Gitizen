@@ -11,6 +11,7 @@ mod discard;
 mod edit_file;
 mod git;
 mod github;
+mod history;
 mod recent_repos;
 mod remote;
 mod settings;
@@ -85,6 +86,13 @@ pub fn run() {
             commit_actions::create_tag,
             commit_actions::cherry_pick,
             commit_actions::open_in_browser,
+            history::rewritable_commits,
+            history::revert_commit,
+            history::reset_to_commit,
+            history::squash_commits,
+            history::reorder_commits,
+            history::delete_tag,
+            history::push_tag,
             branches::switch_branch,
             branches::rename_branch,
             branches::delete_branch,

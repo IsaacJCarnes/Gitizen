@@ -8,6 +8,10 @@ import ConfirmModal from "../common/ConfirmModal";
 import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
 import { useBranchMenu } from "../Branches/useBranchMenu";
 import { CherryPickDialog, CreateBranchDialog, CreateTagDialog } from "./CommitActionDialogs";
+import { DeleteTagDialog, ResetDialog, SquashDialog } from "./HistoryDialogs";
+import { commitsAfter, RESET_MODES } from "../../utils/history";
+import type { ResetMode } from "../../../shared/gitTypes";
+import { pluralize } from "../../utils/format";
 
 /** Rewriting the last commit of a branch. */
 type Rewrite = "undo" | "amend";
@@ -21,7 +25,9 @@ type Rewrite = "undo" | "amend";
 type Dialog =
   | { kind: "confirmPushed"; rewrite: Rewrite }
   | { kind: "needsClean"; rewrite: Rewrite }
-  | { kind: "createBranch" | "createTag" | "cherryPick" };
+  | { kind: "createBranch" | "createTag" | "cherryPick" | "squash" }
+  | { kind: "reset"; mode: ResetMode }
+  | { kind: "deleteTag"; tag: string };
 
 interface CommitContextMenuProps {
   commit: GitCommit;
@@ -44,6 +50,12 @@ interface CommitContextMenuProps {
  * A commit that is the head of local branches also gets each branch's own
  * controls (rename, delete, merge and so on): inline for one branch, or a
  * submenu per branch name when several point at the commit.
+ *
+ * It can also revert any commit, reset the current branch back to it, push
+ * or delete the tags on it, and, with several commits selected, squash
+ * them. Squashing only works on the current branch's own commits (see
+ * `rewritable`), so no other branch, tag or remote is left with history
+ * that was rewritten under it.
  */
 export default function CommitContextMenu({
   commit,
@@ -62,6 +74,12 @@ export default function CommitContextMenu({
     checkoutBranch,
     checkoutCommit,
     reportError,
+    commits,
+    conflicts,
+    selectedCommits,
+    rewritable,
+    revertCommit,
+    pushTag,
   } = useGitOperationsContext();
   const [menuOpen, setMenuOpen] = useState(true);
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -102,6 +120,33 @@ export default function CommitContextMenu({
   };
 
   const localBranches = commit.refs.filter((ref) => ref.type === "branch" && !ref.current);
+  const busy = conflicts.operation !== null ? "Finish or abort the operation in progress first" : undefined;
+  const detached = status?.branch ? undefined : "Check out a branch first";
+
+  // Squashing the selection: commits next to each other among the
+  // branch's own, unshared ones.
+  const squashing = selectedCommits.length > 1 && selectedCommits.some((each) => each.hash === commit.hash);
+  const positions = selectedCommits.map((each) => rewritable.indexOf(each.hash)).sort((a, b) => a - b);
+  const squashBlocked =
+    busy ??
+    detached ??
+    (positions[0] === -1
+      ? `Only ${status?.branch}'s own commits can be squashed: not merges, and not commits that are pushed or that another branch or tag also has`
+      : positions[positions.length - 1] - positions[0] + 1 !== positions.length
+        ? "Select commits that are next to each other"
+        : undefined);
+
+  // Resetting the current branch back to this commit, an earlier one of it.
+  const after = commitsAfter(commits, commit.hash);
+  const resetBlocked =
+    busy ??
+    detached ??
+    (after === null
+      ? "Only commits on the current branch's line can be reset to"
+      : after.length === 0
+        ? "The branch is already at this commit"
+        : undefined);
+  const tags = commit.refs.filter((ref) => ref.type === "tag").map((ref) => ref.name);
   const githubPage = githubCommitPage(remotes, status?.upstream, commit.hash);
 
   const entries: MenuEntry[] = [
@@ -127,7 +172,52 @@ export default function CommitContextMenu({
       title: isMerge ? "Merge commits can't be cherry-picked here" : undefined,
       onSelect: () => setDialog({ kind: "cherryPick" }),
     },
+    {
+      label: "Revert commit",
+      disabled: Boolean(busy ?? detached),
+      title: busy ?? detached ?? `Add a commit to ${status?.branch} that undoes this one`,
+      onSelect: () => void revertCommit(commit.hash),
+    },
+    {
+      label: `Reset ${status?.branch ?? "branch"} to this commit`,
+      disabled: Boolean(resetBlocked),
+      title: resetBlocked,
+      submenu: (["soft", "mixed", "hard"] as const).map((mode) => ({
+        label: `${RESET_MODES[mode].label}…`,
+        title: `Move ${status?.branch} back here; ${RESET_MODES[mode].keeps}`,
+        onSelect: () => setDialog({ kind: "reset", mode }),
+      })),
+    },
   ];
+  if (squashing) {
+    entries.unshift(
+      {
+        label: `Squash ${pluralize(selectedCommits.length, "commit")}…`,
+        disabled: Boolean(squashBlocked),
+        title: squashBlocked ?? "Make the selected commits one commit",
+        onSelect: () => setDialog({ kind: "squash" }),
+      },
+      "separator",
+    );
+  }
+  if (tags.length > 0) {
+    const noRemote = remotes.length === 0 ? "This repository has no remote" : undefined;
+    entries.push(
+      "separator",
+      ...tags.map((tag): MenuEntry => ({
+        label: `Tag ${tag}`,
+        submenu: [
+          {
+            label: "Push tag",
+            disabled: Boolean(noRemote),
+            title: noRemote,
+            onSelect: () => void pushTag(tag),
+          },
+          { label: "Delete tag…", onSelect: () => setDialog({ kind: "deleteTag", tag }) },
+        ],
+      })),
+    );
+  }
   const heads = commit.refs.filter((ref) => ref.type === "branch").map((ref) => ref.name);
   if (heads.length === 1) entries.push("separator", ...branchEntries(heads[0]));
   else if (heads.length > 1) {
@@ -237,6 +327,9 @@ export default function CommitContextMenu({
       {dialog?.kind === "createBranch" && <CreateBranchDialog commit={commit} onDismiss={closeDialog} />}
       {dialog?.kind === "createTag" && <CreateTagDialog commit={commit} onDismiss={closeDialog} />}
       {dialog?.kind === "cherryPick" && <CherryPickDialog commit={commit} onDismiss={closeDialog} />}
+      {dialog?.kind === "squash" && <SquashDialog commits={selectedCommits} onDismiss={closeDialog} />}
+      {dialog?.kind === "reset" && <ResetDialog commit={commit} mode={dialog.mode} onDismiss={closeDialog} />}
+      {dialog?.kind === "deleteTag" && <DeleteTagDialog tag={dialog.tag} onDismiss={closeDialog} />}
       {branchDialog}
     </>
   );

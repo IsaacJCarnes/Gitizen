@@ -10,6 +10,7 @@ import type {
   GitCommit,
   GitStatus,
   Remote,
+  ResetMode,
   Resolution,
   StashOutcome,
 } from "../../shared/gitTypes";
@@ -193,6 +194,21 @@ export interface GitOperations {
   createTag: (name: string, hash: string, message: string) => Promise<boolean>;
   /** Cherry-picks `hash` onto `branch` (switching to it). */
   cherryPick: (hash: string, branch: string) => Promise<boolean>;
+  /**
+   * Hashes of the commits that can be squashed or reordered (newest first):
+   * the current branch's own, unpushed, unshared commits back to the first merge.
+   */
+  rewritable: string[];
+  /** Adds a commit undoing `hash` to the current branch. */
+  revertCommit: (hash: string) => Promise<boolean>;
+  /** Moves the current branch back to its earlier commit `hash`. */
+  resetToCommit: (hash: string, mode: ResetMode) => Promise<boolean>;
+  /** Squashes rewritable commits next to each other into one. */
+  squashCommits: (hashes: string[], message: string) => Promise<boolean>;
+  /** Reorders the newest rewritable commits (`order` oldest first). */
+  reorderCommits: (order: string[]) => Promise<boolean>;
+  deleteTag: (name: string, fromRemote: boolean) => Promise<boolean>;
+  pushTag: (name: string) => Promise<boolean>;
   renameBranch: (name: string, newName: string) => Promise<boolean>;
   /** Deletes a local branch; `force` also deletes unmerged commits. */
   deleteBranch: (name: string, force: boolean) => Promise<boolean>;
@@ -275,6 +291,7 @@ export function useGitOperations({
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [branches, setBranches] = useState<GitBranch[]>([]);
   const [remotes, setRemotes] = useState<Remote[]>([]);
+  const [rewritable, setRewritable] = useState<string[]>([]);
   const [syncing, setSyncing] = useState<SyncAction | null>(null);
   // Read by the background fetch, which mustn't run alongside a sync.
   const syncingRef = useRef(syncing);
@@ -373,7 +390,7 @@ export function useGitOperations({
   /** Reloads status, history, branches, remotes and conflicts together. */
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const [nextStatus, nextCommits, nextBranches, nextRemotes, nextConflicts, nextStash] =
+      const [nextStatus, nextCommits, nextBranches, nextRemotes, nextConflicts, nextStash, nextRewritable] =
         await Promise.all([
           gitizen.status(),
           gitizen.log(),
@@ -381,7 +398,9 @@ export function useGitOperations({
           gitizen.remotes(),
           gitizen.conflicts(),
           gitizen.branchStash(),
+          gitizen.rewritableCommits(),
         ]);
+      setRewritable(nextRewritable);
       setBranchStash(nextStash);
       setStatus(nextStatus);
       setCommits(nextCommits);
@@ -746,6 +765,12 @@ export function useGitOperations({
       createBranch: act(gitizen.createBranch),
       createTag: act(gitizen.createTag),
       cherryPick: act(gitizen.cherryPick),
+      revertCommit: act(gitizen.revertCommit),
+      resetToCommit: act(gitizen.resetToCommit),
+      squashCommits: act(gitizen.squashCommits),
+      reorderCommits: act(gitizen.reorderCommits),
+      deleteTag: act(gitizen.deleteTag),
+      pushTag: act(gitizen.pushTag),
       renameBranch: act(gitizen.renameBranch),
       deleteBranch: act(gitizen.deleteBranch),
       mergeBranch: act(gitizen.mergeBranch),
@@ -916,6 +941,7 @@ export function useGitOperations({
     commits,
     branches,
     remotes,
+    rewritable,
     syncing,
     sync,
     lastFetched,

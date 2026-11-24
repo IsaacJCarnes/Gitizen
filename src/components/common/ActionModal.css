@@ -57,8 +57,9 @@
   font: 12px/1.45 var(--font-mono);
 }
 
-/* The "don't warn me again" tick box under a discard warning. */
-.action-modal .discard-dont-ask {
+/* A tick box under a modal's text, e.g. "don't warn me again" under a discard warning. */
+.action-modal .discard-dont-ask,
+.action-modal .modal-check {
   display: flex;
   align-items: center;
   gap: 6px;

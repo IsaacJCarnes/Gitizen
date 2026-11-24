@@ -199,7 +199,7 @@ fn upstream_of(dir: &Path) -> Option<(String, String)> {
 }
 
 /// `origin` if it exists, else the only remote, else none.
-fn default_remote(dir: &Path) -> Option<String> {
+pub(crate) fn default_remote(dir: &Path) -> Option<String> {
     let remotes = remotes_in(dir);
     if remotes.iter().any(|remote| remote.name == "origin") {
         return Some("origin".into());

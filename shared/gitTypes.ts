@@ -167,6 +167,13 @@ export interface GitHubRepository {
   updatedAt: string;
 }
 
+/**
+ * How far resetting a branch to an earlier commit goes: "soft" keeps the
+ * dropped commits' changes staged, "mixed" keeps them unstaged, "hard"
+ * throws them away along with any uncommitted changes.
+ */
+export type ResetMode = "soft" | "mixed" | "hard";
+
 /** A local branch. */
 export interface GitBranch {
   name: string;

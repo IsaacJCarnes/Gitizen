@@ -19,6 +19,7 @@ import type {
   GitCommit,
   GitStatus,
   Remote,
+  ResetMode,
   Resolution,
   SavedCommandKind,
   BranchStash,
@@ -78,6 +79,13 @@ export const Command = {
   CherryPick: "cherry_pick",
   OpenInBrowser: "open_in_browser",
   SwitchBranch: "switch_branch",
+  RewritableCommits: "rewritable_commits",
+  RevertCommit: "revert_commit",
+  ResetToCommit: "reset_to_commit",
+  SquashCommits: "squash_commits",
+  ReorderCommits: "reorder_commits",
+  DeleteTag: "delete_tag",
+  PushTag: "push_tag",
   RenameBranch: "rename_branch",
   DeleteBranch: "delete_branch",
   MergeBranch: "merge_branch",
@@ -297,6 +305,36 @@ export interface GitizenApi {
    * (rejects, changing nothing, when `name` changes the same files).
    */
   switchBranch(name: string, changes: ChangesOnSwitch): Promise<StashOutcome>;
+  /**
+   * The commits history may be rewritten for (squashed, reordered), newest
+   * first: the checked-out branch's own commits from its tip back to the
+   * first merge or the first commit another branch, a tag or a remote
+   * branch also has. Empty on a detached HEAD.
+   */
+  rewritableCommits(): Promise<string[]>;
+  /**
+   * Adds a commit to the current branch that undoes `hash` (a merge against
+   * its first parent). Needs a clean working tree; conflicts stop it for the
+   * conflict editor.
+   */
+  revertCommit(hash: string): Promise<void>;
+  /** Moves the current branch back to `hash`, an earlier commit of it (see `ResetMode`). */
+  resetToCommit(hash: string, mode: ResetMode): Promise<void>;
+  /**
+   * Squashes `hashes`, rewritable commits next to each other, into one
+   * commit with `message` (the oldest's author), replaying later commits on top.
+   */
+  squashCommits(hashes: string[], message: string): Promise<void>;
+  /**
+   * Puts the branch's newest rewritable commits in a new order: `order`
+   * lists all of the newest `order.length` of them, oldest first. Conflicts
+   * stop the rebase for the conflict editor.
+   */
+  reorderCommits(order: string[]): Promise<void>;
+  /** Deletes a tag, and with `fromRemote` from the remote (origin, or the only one) first. */
+  deleteTag(name: string, fromRemote: boolean): Promise<void>;
+  /** Pushes a tag to the remote (origin, or the only one). */
+  pushTag(name: string): Promise<void>;
   /** Renames a local branch; its upstream setting moves with it. */
   renameBranch(name: string, newName: string): Promise<void>;
   /**
