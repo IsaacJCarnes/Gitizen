@@ -3,7 +3,7 @@ import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import { baseName } from "../../utils/format";
 import FormModal from "../common/FormModal";
-import SignInModal from "../GitHub/SignInModal";
+import { useSignInPrompt } from "../GitHub/useSignInPrompt";
 
 type Mode = "github" | "existing";
 
@@ -19,7 +19,7 @@ interface PublishModalProps {
 export default function PublishModal({ onDismiss }: PublishModalProps): React.JSX.Element {
   const { repo, addRemote, publishRepository } = useGitOperationsContext();
   const { account } = useAppContext().github;
-  const [signingIn, setSigningIn] = useState(false);
+  const { signInModal, prompt } = useSignInPrompt();
   const [mode, setMode] = useState<Mode>("github");
   const [name, setName] = useState(baseName(repo ?? "") ?? "");
   const [description, setDescription] = useState("");
@@ -28,7 +28,7 @@ export default function PublishModal({ onDismiss }: PublishModalProps): React.JS
   const [url, setUrl] = useState("");
   const github = mode === "github";
 
-  if (signingIn) return <SignInModal onDismiss={() => setSigningIn(false)} />;
+  if (signInModal) return signInModal;
 
   return (
     <FormModal
@@ -84,12 +84,7 @@ export default function PublishModal({ onDismiss }: PublishModalProps): React.JS
               the current branch is pushed to it.
             </p>
           ) : (
-            <p className="hint">
-              Sign in to GitHub to create the repository there.{" "}
-              <button type="button" onClick={() => setSigningIn(true)}>
-                Sign in to GitHub
-              </button>
-            </p>
+            prompt("Sign in to GitHub to create the repository there.")
           )}
         </>
       ) : (

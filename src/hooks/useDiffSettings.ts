@@ -1,4 +1,5 @@
 import { useCallback, useSyncExternalStore } from "react";
+import { readStorage, writeStorage } from "../utils/storage";
 
 /** "unified" shows one column; "split" shows removed lines beside added ones. */
 export type DiffLayout = "unified" | "split";
@@ -16,7 +17,7 @@ const DEFAULTS: DiffSettings = { layout: "unified", hideWhitespace: false };
 /** Reads the saved settings, falling back to the defaults for anything missing or invalid. */
 function load(): DiffSettings {
   try {
-    const saved: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
+    const saved: unknown = JSON.parse(readStorage(STORAGE_KEY) ?? "null");
     if (typeof saved !== "object" || saved === null) return DEFAULTS;
     const { layout, hideWhitespace } = saved as Record<string, unknown>;
     return {
@@ -51,11 +52,7 @@ export function useDiffSettings(): {
   const settings = useSyncExternalStore(subscribe, getSnapshot);
   const updateSettings = useCallback((change: Partial<DiffSettings>): void => {
     current = { ...current, ...change };
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
-    } catch {
-      // Storage can be full or disabled; the setting still applies this session.
-    }
+    writeStorage(STORAGE_KEY, JSON.stringify(current));
     listeners.forEach((listener) => listener());
   }, []);
   return { settings, updateSettings };

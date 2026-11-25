@@ -6,14 +6,12 @@
 //! where git's own pushes and pulls to github.com find it too, and in
 //! memory while Gitizen runs.
 
-use std::io::Write;
-use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::git::runner::{git_command, into_result};
+use crate::git::runner::{git_command, run_command_with_input};
 use crate::util::blocking;
 
 /// The signed-in GitHub user, as the UI shows it.
@@ -162,16 +160,7 @@ fn credential(action: &str, input: &str, interactive: bool) -> Result<String, St
     if !interactive {
         command.env("GCM_INTERACTIVE", "never");
     }
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input.as_bytes()).map_err(|error| error.to_string())?;
-    }
-    let output = into_result(child.wait_with_output().map_err(|error| error.to_string())?)?;
+    let output = run_command_with_input(command, input)?;
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
 

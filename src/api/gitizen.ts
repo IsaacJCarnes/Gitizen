@@ -73,7 +73,6 @@ export const gitizen: GitizenApi = {
   revertCommit: (hash) => invoke(Command.RevertCommit, { hash }),
   resetToCommit: (hash, mode) => invoke(Command.ResetToCommit, { hash, mode }),
   squashCommits: (hashes, message) => invoke(Command.SquashCommits, { hashes, message }),
-  reorderCommits: (order) => invoke(Command.ReorderCommits, { order }),
   deleteTag: (name, fromRemote) => invoke(Command.DeleteTag, { name, fromRemote }),
   pushTag: (name) => invoke(Command.PushTag, { name }),
   renameBranch: (name, newName) => invoke(Command.RenameBranch, { name, newName }),

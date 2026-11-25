@@ -7,7 +7,6 @@
 //! carrying git's message.
 
 use tauri::AppHandle;
-use tauri_plugin_dialog::DialogExt;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -24,17 +23,16 @@ use crate::git::repository::{
 use crate::git::runner::{run_git, run_git_bytes, run_git_with_input};
 use crate::git::types::{CommitFile, FileDiff, GitBranch, GitCommit, GitStatus};
 use crate::branches::ahead_behind;
-use crate::util::file_in_repo;
+use crate::util::{file_in_repo, pick_folder};
 
 /// Shows a folder picker and opens the chosen repository. Returns its path,
 /// or None if the picker was cancelled. A folder that isn't a repository
 /// fails with `OpenError::NotARepository` so the UI can offer `init_repository`.
 #[tauri::command]
 pub async fn open_repository(app: AppHandle, repo: Repo<'_>) -> Result<Option<String>, OpenError> {
-    let Some(folder) = app.dialog().file().blocking_pick_folder() else {
+    let Some(directory) = pick_folder(&app)? else {
         return Ok(None);
     };
-    let directory = folder.into_path().map_err(|error| error.to_string())?;
     repo.open(directory.clone())?;
     Ok(Some(directory.to_string_lossy().into_owned()))
 }

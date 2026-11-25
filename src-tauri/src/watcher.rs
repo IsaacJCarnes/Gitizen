@@ -53,11 +53,17 @@ struct Folders {
     git_dir: PathBuf,
 }
 
+impl Folders {
+    fn of(dir: &Path) -> Result<Self, String> {
+        let path = |flag: &str| run_git(dir, ["rev-parse", flag]).map(|path| PathBuf::from(path.trim()));
+        Ok(Self { work_tree: path("--show-toplevel")?, git_dir: path("--absolute-git-dir")? })
+    }
+}
+
 /// Watches the repository at `dir`, calling `on_change` after each burst of
 /// changes that matters. Watching stops when the returned watcher is dropped.
 pub(crate) fn start(dir: &Path, on_change: impl Fn() + Send + 'static) -> Result<RecommendedWatcher, String> {
-    let git_path = |flag: &str| run_git(dir, ["rev-parse", flag]).map(|path| PathBuf::from(path.trim()));
-    let folders = Folders { work_tree: git_path("--show-toplevel")?, git_dir: git_path("--absolute-git-dir")? };
+    let folders = Folders::of(dir)?;
 
     let (sender, receiver) = channel::<PathBuf>();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
@@ -153,16 +159,11 @@ mod tests {
     use crate::util::test_support::{commit_file, git, new_repo};
     use std::sync::mpsc;
 
-    fn folders(dir: &Path) -> Folders {
-        let path = |flag: &str| PathBuf::from(git(dir, &["rev-parse", flag]).trim());
-        Folders { work_tree: path("--show-toplevel"), git_dir: path("--absolute-git-dir") }
-    }
-
     #[test]
     fn leaves_out_changes_nobody_sees() {
         let dir = new_repo("watch-filter");
         std::fs::write(dir.join(".gitignore"), "target/\n").unwrap();
-        let folders = folders(&dir);
+        let folders = Folders::of(&dir).unwrap();
         let work = |name: &str| folders.work_tree.join(name);
         let git_dir = |name: &str| folders.git_dir.join(name);
 

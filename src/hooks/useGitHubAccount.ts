@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GitHubAccount } from "../../shared/gitTypes";
 import { gitizen } from "../api/gitizen";
+import { attempt } from "../utils/load";
 
 /** The GitHub sign-in, and ways to change it. */
 export interface GitHubAccountState {
@@ -37,34 +38,25 @@ export function useGitHubAccount(reportError: (caught: unknown) => void): GitHub
   }, []);
 
   const signInWith = useCallback(
-    async (signingIn: Promise<GitHubAccount>): Promise<boolean> => {
-      try {
-        setAccount(await signingIn);
-        return true;
-      } catch (caught) {
-        reportError(caught);
-        return false;
-      }
-    },
+    (signingIn: () => Promise<GitHubAccount>): Promise<boolean> =>
+      attempt(async () => setAccount(await signingIn()), reportError),
     [reportError],
   );
 
-  const signIn = useCallback(() => signInWith(gitizen.gitHubSignIn()), [signInWith]);
+  const signIn = useCallback(() => signInWith(gitizen.gitHubSignIn), [signInWith]);
   const signInWithToken = useCallback(
-    (token: string) => signInWith(gitizen.gitHubSignInWithToken(token)),
+    (token: string) => signInWith(() => gitizen.gitHubSignInWithToken(token)),
     [signInWith],
   );
 
-  const signOut = useCallback(async (): Promise<boolean> => {
-    try {
-      await gitizen.gitHubSignOut();
-      setAccount(null);
-      return true;
-    } catch (caught) {
-      reportError(caught);
-      return false;
-    }
-  }, [reportError]);
+  const signOut = useCallback(
+    () =>
+      attempt(async () => {
+        await gitizen.gitHubSignOut();
+        setAccount(null);
+      }, reportError),
+    [reportError],
+  );
 
   return useMemo(
     () => ({ account, loading, signIn, signInWithToken, signOut }),

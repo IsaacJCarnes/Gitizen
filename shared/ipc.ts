@@ -83,7 +83,6 @@ export const Command = {
   RevertCommit: "revert_commit",
   ResetToCommit: "reset_to_commit",
   SquashCommits: "squash_commits",
-  ReorderCommits: "reorder_commits",
   DeleteTag: "delete_tag",
   PushTag: "push_tag",
   RenameBranch: "rename_branch",
@@ -306,7 +305,7 @@ export interface GitizenApi {
    */
   switchBranch(name: string, changes: ChangesOnSwitch): Promise<StashOutcome>;
   /**
-   * The commits history may be rewritten for (squashed, reordered), newest
+   * The commits history may be rewritten for (squashed), newest
    * first: the checked-out branch's own commits from its tip back to the
    * first merge or the first commit another branch, a tag or a remote
    * branch also has. Empty on a detached HEAD.
@@ -325,12 +324,6 @@ export interface GitizenApi {
    * commit with `message` (the oldest's author), replaying later commits on top.
    */
   squashCommits(hashes: string[], message: string): Promise<void>;
-  /**
-   * Puts the branch's newest rewritable commits in a new order: `order`
-   * lists all of the newest `order.length` of them, oldest first. Conflicts
-   * stop the rebase for the conflict editor.
-   */
-  reorderCommits(order: string[]): Promise<void>;
   /** Deletes a tag, and with `fromRemote` from the remote (origin, or the only one) first. */
   deleteTag(name: string, fromRemote: boolean): Promise<void>;
   /** Pushes a tag to the remote (origin, or the only one). */

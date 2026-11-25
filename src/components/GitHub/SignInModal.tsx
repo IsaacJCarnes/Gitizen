@@ -4,8 +4,6 @@ import ActionModal from "../common/ActionModal";
 
 interface SignInModalProps {
   onDismiss: () => void;
-  /** Called once signed in (after the modal has closed itself). */
-  onSignedIn?: () => void;
 }
 
 /**
@@ -13,7 +11,7 @@ interface SignInModalProps {
  * Manager opens GitHub's sign-in in the browser), or with a pasted personal
  * access token for setups without one.
  */
-export default function SignInModal({ onDismiss, onSignedIn }: SignInModalProps): React.JSX.Element {
+export default function SignInModal({ onDismiss }: SignInModalProps): React.JSX.Element {
   const { github } = useAppContext();
   const [token, setToken] = useState("");
   const [working, setWorking] = useState<"browser" | "token" | null>(null);
@@ -22,10 +20,7 @@ export default function SignInModal({ onDismiss, onSignedIn }: SignInModalProps)
     setWorking(how);
     const ok = await (how === "browser" ? github.signIn() : github.signInWithToken(token));
     setWorking(null);
-    if (ok) {
-      onDismiss();
-      onSignedIn?.();
-    }
+    if (ok) onDismiss();
   };
 
   return (
@@ -54,7 +49,7 @@ export default function SignInModal({ onDismiss, onSignedIn }: SignInModalProps)
         </p>
         <label>
           Or paste a personal access token
-          <span className="token-row">
+          <span className="field-row">
             <input
               type="password"
               value={token}

@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
+use tauri_plugin_dialog::DialogExt;
 
 /// A JSON file in the app's config folder (e.g. the settings or the recent
 /// repositories), kept in Tauri's managed state. A lock serialises reads and
@@ -64,6 +65,15 @@ impl<T: Serialize + DeserializeOwned + Default> ConfigFile<T> {
 /// valid JSON of the right shape.
 pub(crate) fn parse_config<T: DeserializeOwned + Default>(text: &str) -> T {
     serde_json::from_str(text).unwrap_or_default()
+}
+
+/// Shows the system's folder picker. None if it was cancelled.
+pub(crate) fn pick_folder(app: &AppHandle) -> Result<Option<PathBuf>, String> {
+    app.dialog()
+        .file()
+        .blocking_pick_folder()
+        .map(|folder| folder.into_path().map_err(|error| error.to_string()))
+        .transpose()
 }
 
 /// Runs `work` on a blocking thread, so a slow call (the network, an AI

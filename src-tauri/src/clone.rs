@@ -6,12 +6,11 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use tauri::AppHandle;
-use tauri_plugin_dialog::DialogExt;
 
 use crate::git::repository::Repo;
 use crate::git::runner::run_git;
 use crate::github::{self, GitHub};
-use crate::util::blocking;
+use crate::util::{blocking, pick_folder};
 
 /// One of the signed-in account's GitHub repositories (its own, a
 /// collaborator's, or an organization's it belongs to).
@@ -73,11 +72,7 @@ fn repository_from(item: &serde_json::Value) -> Option<GitHubRepository> {
 /// Shows a folder picker. Returns the chosen folder, or None if cancelled.
 #[tauri::command]
 pub async fn choose_folder(app: AppHandle) -> Result<Option<String>, String> {
-    let Some(folder) = app.dialog().file().blocking_pick_folder() else {
-        return Ok(None);
-    };
-    let path = folder.into_path().map_err(|error| error.to_string())?;
-    Ok(Some(path.to_string_lossy().into_owned()))
+    Ok(pick_folder(&app)?.map(|path| path.to_string_lossy().into_owned()))
 }
 
 /// Clones `url` into a new folder `name` inside `parent` and opens it.

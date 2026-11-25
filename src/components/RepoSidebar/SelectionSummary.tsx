@@ -1,5 +1,5 @@
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
-import { commitsBetween } from "../../utils/commitRange";
+import { commitsBetween } from "../../utils/history";
 import { pluralize, shortHash } from "../../utils/format";
 
 /**

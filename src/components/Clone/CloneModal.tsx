@@ -5,22 +5,15 @@ import { gitizen } from "../../api/gitizen";
 import { useAppContext } from "../../context/AppContext";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import { cloneFolderName, parentFolder } from "../../utils/github";
+import { loadUnlessCancelled } from "../../utils/load";
+import { readStorage, writeStorage } from "../../utils/storage";
 import FormModal from "../common/FormModal";
-import SignInModal from "../GitHub/SignInModal";
+import { useSignInPrompt } from "../GitHub/useSignInPrompt";
 
 type Source = "github" | "url";
 
 /** localStorage key of the folder the last clone went into, offered again next time. */
 const FOLDER_KEY = "gitizen.cloneFolder";
-
-/** The folder the last clone went into, if the webview kept it. */
-function savedFolder(): string | null {
-  try {
-    return localStorage.getItem(FOLDER_KEY);
-  } catch {
-    return null;
-  }
-}
 
 interface CloneModalProps {
   onDismiss: () => void;
@@ -34,31 +27,23 @@ export default function CloneModal({ onDismiss }: CloneModalProps): React.JSX.El
   const { cloneRepository, reportError } = useGitOperationsContext();
   const { github, recentRepos } = useAppContext();
   const [source, setSource] = useState<Source>("github");
-  const [signingIn, setSigningIn] = useState(false);
+  const { signInModal, prompt } = useSignInPrompt();
   const [repositories, setRepositories] = useState<GitHubRepository[] | null>(null);
   const [filter, setFilter] = useState("");
   const [picked, setPicked] = useState<GitHubRepository | null>(null);
   const [url, setUrl] = useState("");
-  const [parent, setParent] = useState(() => savedFolder() ?? parentFolder(recentRepos[0] ?? ""));
+  const [parent, setParent] = useState(() => readStorage(FOLDER_KEY) ?? parentFolder(recentRepos[0] ?? ""));
   // The folder name follows the chosen repository until it is typed in.
   const [typedName, setTypedName] = useState<string | null>(null);
 
   const account = github.account;
   useEffect(() => {
     if (!account) return;
-    let cancelled = false;
     setRepositories(null);
-    gitizen
-      .gitHubRepositories()
-      .then((listed) => !cancelled && setRepositories(listed))
-      .catch((caught) => {
-        if (cancelled) return;
-        setRepositories([]);
-        reportError(caught);
-      });
-    return () => {
-      cancelled = true;
-    };
+    return loadUnlessCancelled(gitizen.gitHubRepositories(), setRepositories, (caught) => {
+      setRepositories([]);
+      reportError(caught);
+    });
   }, [account, reportError]);
 
   const matches = useMemo(() => {
@@ -68,7 +53,7 @@ export default function CloneModal({ onDismiss }: CloneModalProps): React.JSX.El
     );
   }, [repositories, filter]);
 
-  if (signingIn) return <SignInModal onDismiss={() => setSigningIn(false)} />;
+  if (signInModal) return signInModal;
 
   const cloneUrl = source === "github" ? (picked?.cloneUrl ?? "") : url.trim();
   const name = typedName ?? (source === "github" ? (picked?.name ?? "") : cloneFolderName(url));
@@ -85,13 +70,7 @@ export default function CloneModal({ onDismiss }: CloneModalProps): React.JSX.El
 
   const clone = async (): Promise<boolean> => {
     const ok = await cloneRepository(cloneUrl, parent, name);
-    if (ok) {
-      try {
-        localStorage.setItem(FOLDER_KEY, parent);
-      } catch {
-        // Only a convenience for next time.
-      }
-    }
+    if (ok) writeStorage(FOLDER_KEY, parent);
     return ok;
   };
 
@@ -134,12 +113,7 @@ export default function CloneModal({ onDismiss }: CloneModalProps): React.JSX.El
           />
         </label>
       ) : !account ? (
-        <p className="hint">
-          Sign in to GitHub to pick from your repositories.{" "}
-          <button type="button" onClick={() => setSigningIn(true)}>
-            Sign in to GitHub
-          </button>
-        </p>
+        prompt("Sign in to GitHub to pick from your repositories.")
       ) : (
         <div className="clone-picker">
           <input
@@ -183,7 +157,7 @@ export default function CloneModal({ onDismiss }: CloneModalProps): React.JSX.El
 
       <label>
         Clone into
-        <span className="clone-folder">
+        <span className="field-row">
           <input
             value={parent}
             placeholder="Choose a folder"

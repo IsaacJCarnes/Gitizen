@@ -23,8 +23,7 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let output = git_command(dir, args).stdin(Stdio::null()).output().map_err(could_not_run)?;
-    into_result(output)
+    run_command(git_command(dir, args))
 }
 
 /// Like `run_git`, but writes `input` to git's stdin (e.g. file content for
@@ -34,7 +33,19 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let mut child = git_command(dir, args)
+    let stdout = run_command_with_input(git_command(dir, args), input)?;
+    Ok(String::from_utf8_lossy(&stdout).into_owned())
+}
+
+/// Runs a prepared command (from `git_command`, with any extra environment
+/// set) with nothing on stdin, returning its stdout as `into_result` does.
+pub(crate) fn run_command(mut command: Command) -> Result<Vec<u8>, String> {
+    into_result(command.stdin(Stdio::null()).output().map_err(could_not_run)?)
+}
+
+/// Like `run_command`, but writes `input` to the command's stdin.
+pub(crate) fn run_command_with_input(mut command: Command, input: &str) -> Result<Vec<u8>, String> {
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -44,8 +55,7 @@ where
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(input.as_bytes()).map_err(|error| error.to_string())?;
     }
-    let stdout = into_result(child.wait_with_output().map_err(could_not_run)?)?;
-    Ok(String::from_utf8_lossy(&stdout).into_owned())
+    into_result(child.wait_with_output().map_err(could_not_run)?)
 }
 
 /// A `git` command in `dir` that never prompts or opens an editor, for

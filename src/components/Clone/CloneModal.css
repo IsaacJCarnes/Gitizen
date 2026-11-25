@@ -62,14 +62,3 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-/* The folder field and its Browse button on one line. */
-.clone-folder {
-  display: flex;
-  gap: 6px;
-}
-
-.clone-folder input {
-  flex: 1;
-  min-width: 0;
-}

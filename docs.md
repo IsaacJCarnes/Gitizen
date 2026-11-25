@@ -9,9 +9,9 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 - Open a local repository with a folder picker.
 - Picking a folder (or a recent repository) that isn't a git repository pops up a modal offering **Create repository**, which runs `git init` in that folder and opens it. Folders already inside a repository are never re-initialised.
 - Every repository that opens successfully is saved to a recent list (most recent first, up to 15), kept in `recent-repositories.json` in the app's config folder so it survives restarts.
-- The repository name in the header opens a dropdown of recent repositories: click one to switch to it, or hover and click × to remove it from the list. **Add new repo…** at the bottom opens the folder picker.
+- The repository name in the header opens a dropdown of recent repositories: click one to switch to it, or hover and click × to remove it from the list. **Add local repo...** at the bottom opens the folder picker, and **Clone repo...** opens the clone modal.
 - The start screen lists recent repositories under **Open repository** so you can reopen one with a click.
-- **Clone repository** (on the start screen, and **Clone repository…** in the repository dropdown) clones into a new folder and opens it. Pick the repository from your GitHub repositories (yours, collaborations and your organizations', most recently updated first, with a filter box; needs the GitHub sign-in), or paste any URL. Choose the folder to clone into (**Browse…**, remembered for next time) and the new folder's name, which follows the repository's name until you type your own. A folder that already exists must be empty. Private repositories sign in through git's credential helper like any other git command.
+- **Clone repository** (on the start screen, and **Clone repo...** in the repository dropdown) clones into a new folder and opens it. Pick the repository from your GitHub repositories (yours, collaborations and your organizations', most recently updated first, with a filter box; needs the GitHub sign-in), or paste any URL. Choose the folder to clone into (**Browse…**, remembered for next time) and the new folder's name, which follows the repository's name until you type your own. A folder that already exists must be empty. Private repositories sign in through git's credential helper like any other git command.
 - No refresh button: Gitizen watches the repository's files and refreshes by itself (status, history, branches, remotes, the branch's stash, any stopped operation and the open diff) a moment after anything changes, whether in Gitizen, an editor, a terminal or another git tool, even while its window isn't focused. Bursts of changes are gathered into one refresh. Changes to files `.gitignore` ignores (build output, `node_modules`) and git's own object store and lock files are left out. Coming back to the window refreshes too.
 
 ### GitHub account
@@ -94,9 +94,8 @@ Right-click any commit in the history for:
 - With several commits selected, right-clicking one of them adds **Squash N commits…** at the top: it asks for the message (starting from the oldest commit's subject, the others' subjects listed below) and makes them one commit with all of their changes and the oldest one's author. Later commits are replayed on top.
 - **Copy SHA**, and **View on GitHub** when a remote is on github.com (the tracked remote first, then `origin`, then any other). Only `https://github.com/` pages can be opened.
 
-### Reordering and rewriting safely
-- Drag one of the current branch's own commits up or down in the history to reorder them; a line shows where it will land. The commits that change place (and those after them) are replayed with an interactive rebase, so a conflict stops it for the conflict editor like any rebase, and **Abort Rebase** puts everything back.
-- Squashing and reordering only rewrite the checked-out branch's own commits: from its tip back to the first merge, or the first commit that another branch, a tag or a remote branch also has. Rewriting those changes nothing anyone else can see, so other branches, tags and the remote never end up pointing at history that was replaced. Other commits can't be dragged, and the squash item says why it's off. Both need no uncommitted changes to tracked files.
+### Rewriting safely
+- Squashing only rewrites the checked-out branch's own commits: from its tip back to the first merge, or the first commit that another branch, a tag or a remote branch also has. Rewriting those changes nothing anyone else can see, so other branches, tags and the remote never end up pointing at history that was replaced. For other commits the squash item is off and says why. It needs no uncommitted changes to tracked files.
 
 ### Conflicts
 - When a merge, squash merge, cherry-pick, rebase, revert, pull or stash operation stops on conflicts, Gitizen takes over instead of reporting an error, also when it finds one stopped on opening a repository.
@@ -153,7 +152,7 @@ src-tauri/               Rust backend (Tauri 2)
     commands.rs          Core git commands: open, status, log, branches, diffs, staging, commit, undo, checkout
     branches.rs          Switch (leaving or bringing changes), rename, delete, merge, rebase onto and squash merge local branches
     commit_actions.rs    Commit menu actions: checkout commit, create branch or tag, cherry-pick, open on GitHub
-    history.rs           Revert, reset, squash, reorder (only the branch's own commits), delete and push tags
+    history.rs           Revert, reset, squash (only the branch's own commits), delete and push tags
     remote.rs            Remotes, publishing to GitHub, fetch, pull and push
     clone.rs             Cloning from a URL, listing the account's GitHub repositories, picking a folder
     github.rs            GitHub sign-in through git's credential helper (or a token), and GitHub's REST API
@@ -165,9 +164,11 @@ src-tauri/               Rust backend (Tauri 2)
     settings.rs          settings.json: the saved AI and merge tool commands
     recent_repos.rs      Saved list of recently opened repositories, and its commands
     watcher.rs           Watches the open repository's files and tells the window when it changed
-    util.rs              Shared helpers: config files, blocking threads, temp folders, safe paths, test repositories
+    util.rs              Shared helpers: config files, the folder picker, blocking threads, temp folders, safe paths,
+                         test repositories
     git/
-      runner.rs          Runs the git CLI (no shell, no console window, never prompts)
+      runner.rs          Runs the git CLI (no shell, no console window, never prompts); `run_command` and
+                         `run_command_with_input` run a prepared `git_command` (extra environment, stdin)
       repository.rs      Holds the open repository (and `git init`); input validation, branch and git-folder helpers
       parsers.rs         Pure functions that parse raw git output (unit tested)
       patch.rs           Tidies diffs, works out which diff lines are staged and builds index content for line staging (unit tested)
@@ -180,12 +181,18 @@ src/                     UI (React)
   styles/global.css      Base element styles and shared classes (.popover, .button-group, .spinner, .hint)
   context/               React contexts: UI state (view, recent repositories, discard warning) and git state
   hooks/
-    useGitOperations.ts  All git state and actions for the app
+    useGitOperations.ts  All git state and actions for the app, built from the hooks below
+    useCommitSelection.ts  The selected commits (multi-select), their files and the picked file's diff
+    useSync.ts           Fetch, pull, push and publish, the background fetch, and force-push tracking
+    useAutoRefresh.ts    Refreshes when the backend's file watcher reports a change, or the window regains focus
+    useGitHubAccount.ts  The GitHub sign-in (account, sign in with the credential helper or a token, sign out)
     useDiffSettings.ts   Diff layout and whitespace settings, saved in localStorage
     useSavedCommand.ts   Loads and saves one of the commands kept in settings.json
     useContextMenu.ts    Open/close state of a right-click menu
-  utils/                 Pure helpers: commit graph layout, diff line parsing, conflict text, GitHub links,
-                         tri-state checkbox logic, formatting, loading in effects, error normalising
+  utils/                 Pure helpers: commit graph layout, history ranges and squash/reset checks
+                         (history.ts), diff line parsing, conflict text, GitHub links, tri-state checkbox logic,
+                         formatting, loading in effects (`loadUnlessCancelled`, `loadOrReset`, `attempt`),
+                         localStorage (storage.ts), error normalising
   pages/GitizenView/     Top-level page layout
   components/
     common/              Reusable pieces: DiffView, FileListItem, TriStateCheckbox, ContextMenu, and the
@@ -196,20 +203,20 @@ src/                     UI (React)
     EmptyRepositoryView/ Start screen before a repository is open
     ErrorModal/          Pops up failed operations; offers git init for non-repositories
     RepositoryHeader/    Top bar: repo switcher, branch switcher, sync controls and publish modal, GitHub account
-    GitHub/              The GitHub account button and sign-in modal
+    GitHub/              The GitHub account button, sign-in modal, and `useSignInPrompt` for modals that need a sign-in
     Clone/               The clone modal (from GitHub or a URL)
     RepoSidebar/         Left sidebar: working-tree files, commit form, commit files
-    RepoPanel/           Main panel: commit history graph (multi-select, drag to reorder), commit menu and its dialogs
+    RepoPanel/           Main panel: commit history graph (multi-select), commit menu and its dialogs
                          (branch, tag, cherry-pick, squash, reset, delete tag), file diff and editor
 ```
 
 ## Conventions
 - Each component lives next to its own CSS file, grouped in a folder by the area of the screen it belongs to.
-- CSS never names a colour directly: it reads the variables in `src/styles/theme.css` (add one there if nothing fits), and reuses the shared classes in `global.css` (`.popover`, `.button-group`, `.spinner`, `.hint`, and `.modal-form` in ActionModal.css) instead of restyling them.
+- CSS never names a colour directly: it reads the variables in `src/styles/theme.css` (add one there if nothing fits), and reuses the shared classes in `global.css` (`.popover`, `.button-group`, `.spinner`, `.hint`, and `.modal-form` with `.field-row` and `.modal-check` in ActionModal.css) instead of restyling them.
 - Anything returned by the backend is typed in `shared/gitTypes.ts` and mirrored in `src-tauri/src/git/types.rs` (or next to the command in its module). A new git operation gets a name in `Command` (`shared/ipc.ts`), a method in `GitizenApi`, a call in `src/api/gitizen.ts` (TypeScript checks it matches `GitizenApi`), and a `#[tauri::command]` in one of the backend modules, registered in `lib.rs`.
 - A backend command is a thin `async` wrapper that gets the open repository and calls a plain `*_in(dir, …)` function, which is what the Rust tests call. Slow commands (network, AI, an external merge tool) run through `util::blocking` so other commands keep answering.
 - Commands reject with git's message as a plain string. The exception is opening a repository, which rejects with an `OpenRepositoryError` object (`{ kind: "notARepository", path, message }` or `{ kind: "failed", message }`, `OpenError` in Rust) so the UI can offer to create one. `useGitOperations` normalises every failure into that shape for the error modal.
-- Actions in `useGitOperations` resolve to true or false and never reject: on failure the error modal already shows git's message. Each one refreshes the git state after it runs.
+- Actions in `useGitOperations` resolve to true or false and never reject: on failure the error modal already shows git's message. Each one refreshes the git state after it runs. `attempt` (utils/load.ts) is the shared "run it, report a failure, resolve to a boolean" helper.
 - Operations that can stop on conflicts (merge, pull, cherry-pick, rebase, continue, stash) treat stopping with unmerged files as success, and the conflict editor takes over.
 - Tauri maps camelCase argument names from the UI to snake_case Rust parameters (`oldPath` becomes `old_path`).
 - Parsing logic is kept in pure functions (`src-tauri/src/git/parsers.rs`, `src/utils/`) so it can be unit tested without Tauri or React.

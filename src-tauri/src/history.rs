@@ -1,17 +1,14 @@
 //! More history actions from the commit menu: reverting any commit,
 //! resetting the current branch to an earlier commit, squashing a run of
-//! commits into one, reordering commits by dragging them, and deleting and
-//! pushing tags.
+//! commits into one, and deleting and pushing tags.
 //!
-//! Rewriting history (squash, reorder) is only allowed where nothing else
+//! Rewriting history (squashing) is only allowed where nothing else
 //! can see the old commits: commits on the checked-out branch that no other
 //! branch, tag or remote branch contains, and that aren't merges. Rewriting
 //! those changes this branch alone, so nothing else in the repository (or
 //! on the remote) is left pointing at history that no longer exists.
 
-use std::io::Write;
 use std::path::Path;
-use std::process::Stdio;
 
 use serde::Deserialize;
 
@@ -20,9 +17,9 @@ use crate::git::repository::{
     assert_hash, current_branch, first_parent_of, has_commits, require_clean,
     require_current_branch, Repo, EMPTY_TREE,
 };
-use crate::git::runner::{git_command, into_result, run_git};
+use crate::git::runner::{git_command, run_command_with_input, run_git};
 use crate::remote::default_remote;
-use crate::util::{blocking, unique_temp_dir};
+use crate::util::blocking;
 
 /// The commits history may be rewritten for, newest first: the checked-out
 /// branch's own commits, from its tip back along first parents until the
@@ -57,12 +54,18 @@ pub(crate) fn rewritable_in(dir: &Path) -> Result<Vec<String>, String> {
     Ok(hashes)
 }
 
+/// Fails while a merge, rebase or the like is stopped, which `doing` would get mixed into.
+fn require_no_operation(dir: &Path, doing: &str) -> Result<(), String> {
+    match operation_in(dir) {
+        Some(_) => Err(format!("Finish or abort the operation in progress before {doing}.")),
+        None => Ok(()),
+    }
+}
+
 /// The rewritable commits, failing with why when `wanted` aren't all among them.
 fn require_rewritable(dir: &Path, wanted: &[String], doing: &str) -> Result<Vec<String>, String> {
     let branch = require_current_branch(dir, doing)?;
-    if operation_in(dir).is_some() {
-        return Err(format!("Finish or abort the operation in progress before {doing}."));
-    }
+    require_no_operation(dir, doing)?;
     let rewritable = rewritable_in(dir)?;
     if wanted.iter().all(|hash| rewritable.contains(hash)) {
         Ok(rewritable)
@@ -117,9 +120,7 @@ pub async fn reset_to_commit(repo: Repo<'_>, hash: String, mode: ResetMode) -> R
 fn reset_in(dir: &Path, hash: &str, mode: ResetMode) -> Result<(), String> {
     let hash = assert_hash(hash)?;
     let branch = require_current_branch(dir, "resetting")?;
-    if operation_in(dir).is_some() {
-        return Err("Finish or abort the operation in progress before resetting.".into());
-    }
+    require_no_operation(dir, "resetting")?;
     if run_git(dir, ["merge-base", "--is-ancestor", hash, "HEAD"]).is_err() {
         return Err(format!("Only a commit {branch} already has (an earlier one) can be reset to."));
     }
@@ -174,7 +175,8 @@ fn squash_in(dir: &Path, hashes: &[String], message: &str) -> Result<(), String>
     for key in ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE"] {
         command.env(key, author.next().unwrap_or_default());
     }
-    let squashed = run_with_input(command, &format!("{message}\n"))?;
+    let squashed = run_command_with_input(command, &format!("{message}\n"))?;
+    let squashed = String::from_utf8_lossy(&squashed).trim().to_string();
 
     if newest == &rewritable[0] {
         // The squashed commit has HEAD's files, so the branch just moves to it.
@@ -183,74 +185,6 @@ fn squash_in(dir: &Path, hashes: &[String], message: &str) -> Result<(), String>
         // Replays the commits after the run (newest..HEAD) onto it.
         unless_conflicted(dir, run_git(dir, ["rebase", "--onto", squashed.as_str(), newest.as_str()]).map(drop))
     }
-}
-
-/// Runs a prepared git command with `input` on stdin, returning its trimmed output.
-fn run_with_input(mut command: std::process::Command, input: &str) -> Result<String, String> {
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(input.as_bytes()).map_err(|error| error.to_string())?;
-    }
-    let output = into_result(child.wait_with_output().map_err(|error| error.to_string())?)?;
-    Ok(String::from_utf8_lossy(&output).trim().to_string())
-}
-
-/// Puts the branch's newest commits in a new order. `order` lists them
-/// oldest first, and must be the branch's newest `order.len()` rewritable
-/// commits in some order. They are replayed with an interactive rebase
-/// (whose todo list is written for it); conflicts stop it for the conflict
-/// editor like any rebase.
-#[tauri::command]
-pub async fn reorder_commits(repo: Repo<'_>, order: Vec<String>) -> Result<(), String> {
-    let dir = repo.require()?;
-    blocking(move || reorder_in(&dir, &order)).await
-}
-
-fn reorder_in(dir: &Path, order: &[String]) -> Result<(), String> {
-    let rewritable = require_rewritable(dir, order, "reordering commits")?;
-    require_clean(dir, "reordering commits")?;
-    let mut current: Vec<&String> = rewritable.iter().take(order.len()).collect();
-    current.reverse();
-    let mut wanted: Vec<&String> = order.iter().collect();
-    wanted.sort();
-    let mut have = current.clone();
-    have.sort();
-    if wanted != have {
-        return Err("Commits can only be moved among the branch's newest commits.".into());
-    }
-    if current.iter().zip(order).all(|(a, b)| *a == b) {
-        return Ok(());
-    }
-
-    let todo: String = order.iter().map(|hash| format!("pick {hash}\n")).collect();
-    let folder = unique_temp_dir("reorder")?;
-    let todo_file = folder.join("todo");
-    std::fs::write(&todo_file, todo).map_err(|error| error.to_string())?;
-    // git runs the sequence editor through its shell with the todo file's
-    // path; copying ours over it is the whole edit.
-    let editor = format!("cp '{}'", todo_file.to_string_lossy().replace('\\', "/"));
-    let parent = first_parent_of(dir, current[0])?;
-    let mut args = vec!["rebase", "-i", "--no-autosquash"];
-    if parent == EMPTY_TREE {
-        args.push("--root");
-    } else {
-        args.push(parent.as_str());
-    }
-    let mut command = git_command(dir, args);
-    command.env("GIT_SEQUENCE_EDITOR", editor);
-    let result = command
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| error.to_string())
-        .and_then(into_result)
-        .map(drop);
-    let _ = std::fs::remove_dir_all(&folder);
-    unless_conflicted(dir, result)
 }
 
 /// Rejects names that aren't an existing tag.
@@ -303,6 +237,7 @@ fn push_tag_in(dir: &Path, name: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::util::test_support::{commit_file, git, new_repo};
+    use crate::util::unique_temp_dir;
 
     fn log(dir: &Path) -> String {
         git(dir, &["log", "--format=%s", "HEAD"])
@@ -387,33 +322,6 @@ mod tests {
         squash_in(&dir, &now, "C, D and E").unwrap();
         assert_eq!(log(&dir), "C, D and E\nb.txt\na.txt\n");
         assert_eq!(git(&dir, &["status", "--porcelain"]), "");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn reorders_the_newest_commits() {
-        let dir = repo();
-        commit_file(&dir, "e.txt", "e\n");
-        let [e, d, c] = [0, 1, 2].map(|n| rev(&dir, &format!("HEAD~{n}")));
-
-        // e moves below c and d.
-        reorder_in(&dir, &[e.clone(), c.clone(), d.clone()]).unwrap();
-        assert_eq!(log(&dir), "d.txt\nc.txt\ne.txt\nb.txt\na.txt\n");
-        assert_eq!(git(&dir, &["status", "--porcelain"]), "");
-
-        // Only the branch's own newest commits, all of them.
-        let now = rewritable_in(&dir).unwrap();
-        assert!(reorder_in(&dir, &[now[1].clone(), now[0].clone(), rev(&dir, "HEAD~3")]).is_err());
-        assert!(reorder_in(&dir, &[now[0].clone(), now[2].clone()]).is_err());
-
-        // A conflicting order stops for the conflict editor.
-        commit_file(&dir, "e.txt", "e2\n");
-        commit_file(&dir, "e.txt", "e3\n");
-        let (e2, e3) = (rev(&dir, "HEAD~1"), rev(&dir, "HEAD"));
-        reorder_in(&dir, &[e3, e2]).unwrap();
-        assert_eq!(operation_in(&dir), Some(crate::conflicts::Operation::Rebase));
-        crate::conflicts::abort_in(&dir).unwrap();
-        assert_eq!(git(&dir, &["log", "-1", "--format=%s"]).trim(), "e.txt");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

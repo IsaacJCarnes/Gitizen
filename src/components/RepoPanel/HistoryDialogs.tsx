@@ -3,7 +3,7 @@ import type { GitCommit, ResetMode } from "../../../shared/gitTypes";
 import { commitsAfter, RESET_MODES } from "../../utils/history";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import { joinMessage, pluralize, shortHash } from "../../utils/format";
-import ActionModal from "../common/ActionModal";
+import ConfirmModal from "../common/ConfirmModal";
 import FormModal from "../common/FormModal";
 
 interface ResetDialogProps {
@@ -21,19 +21,11 @@ export function ResetDialog({ commit, mode, onDismiss }: ResetDialogProps): Reac
   const branch = status?.branch ?? "the branch";
 
   return (
-    <ActionModal
+    <ConfirmModal
       title={`Reset ${branch} to ${shortHash(commit.hash)} (${RESET_MODES[mode].label})?`}
+      confirmLabel={`${RESET_MODES[mode].label} reset`}
+      onConfirm={() => void resetToCommit(commit.hash, mode)}
       onDismiss={onDismiss}
-      actions={[
-        {
-          label: `${RESET_MODES[mode].label} reset`,
-          primary: true,
-          onClick: () => {
-            onDismiss();
-            void resetToCommit(commit.hash, mode);
-          },
-        },
-      ]}
     >
       <p>
         {branch} moves back to <code>{shortHash(commit.hash)}</code> {commit.message}, leaving out the{" "}
@@ -56,7 +48,7 @@ export function ResetDialog({ commit, mode, onDismiss }: ResetDialogProps): Reac
           <b>Your {pluralize(status?.files.length ?? 0, "uncommitted change")} will be thrown away too.</b>
         </p>
       )}
-    </ActionModal>
+    </ConfirmModal>
   );
 }
 
@@ -128,19 +120,11 @@ export function DeleteTagDialog({ tag, onDismiss }: DeleteTagDialogProps): React
   const [fromRemote, setFromRemote] = useState(false);
 
   return (
-    <ActionModal
+    <ConfirmModal
       title={`Delete tag ${tag}?`}
+      confirmLabel="Delete tag"
+      onConfirm={() => void deleteTag(tag, fromRemote)}
       onDismiss={onDismiss}
-      actions={[
-        {
-          label: "Delete tag",
-          primary: true,
-          onClick: () => {
-            onDismiss();
-            void deleteTag(tag, fromRemote);
-          },
-        },
-      ]}
     >
       <p>The tag is removed; the commit it points at stays.</p>
       {remote && (
@@ -153,6 +137,6 @@ export function DeleteTagDialog({ tag, onDismiss }: DeleteTagDialogProps): React
           Also delete it from {remote.name}, for everyone
         </label>
       )}
-    </ActionModal>
+    </ConfirmModal>
   );
 }

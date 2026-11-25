@@ -43,3 +43,18 @@ export function loadOrReset<T>(
     onError?.(error);
   });
 }
+
+/**
+ * Runs `work`, resolving to true once it is done. On failure the error goes
+ * to `onError` and it resolves to false, so callers can tell without a
+ * try/catch of their own.
+ */
+export async function attempt(work: () => Promise<unknown>, onError: (error: unknown) => void): Promise<boolean> {
+  try {
+    await work();
+    return true;
+  } catch (error) {
+    onError(error);
+    return false;
+  }
+}

@@ -14,14 +14,16 @@ import type {
   Resolution,
   StashOutcome,
 } from "../../shared/gitTypes";
-import { listen } from "@tauri-apps/api/event";
-import { REPOSITORY_CHANGED } from "../../shared/ipc";
 import { gitizen } from "../api/gitizen";
 import { toAppError, type AppError } from "../utils/errors";
-import { commitsBetween } from "../utils/commitRange";
 import { joinMessage, splitMessage } from "../utils/format";
-import { loadOrReset, loadUnlessCancelled } from "../utils/load";
+import { attempt, loadOrReset } from "../utils/load";
+import { useAutoRefresh } from "./useAutoRefresh";
+import { useCommitSelection } from "./useCommitSelection";
 import { useDiffSettings } from "./useDiffSettings";
+import { useSync, type SyncAction } from "./useSync";
+
+export { BACKGROUND_FETCH_MS, type SyncAction } from "./useSync";
 
 /**
  * What stopped on conflicts with a stash: adding to the branch's stash
@@ -30,9 +32,6 @@ import { useDiffSettings } from "./useDiffSettings";
  */
 export type StashConflictKind = "stash" | "pop" | "bring";
 
-/** A network operation the header's sync buttons can run. */
-export type SyncAction = "fetch" | "pull" | "push";
-
 /**
  * How clicking a commit changes the selection: "only" selects just it,
  * "toggle" (Ctrl+click) adds or removes it, "range" (Shift+click) selects
@@ -40,9 +39,6 @@ export type SyncAction = "fetch" | "pull" | "push";
  * between them when one descends from the other, else every row between.
  */
 export type SelectHow = "only" | "toggle" | "range";
-
-/** How often the open repository is fetched in the background. */
-export const BACKGROUND_FETCH_MS = 5 * 60 * 1000;
 
 /**
  * Everything the UI reads about the open repository, plus the actions it can
@@ -73,7 +69,7 @@ export interface GitOperations {
   needsForcePush: boolean;
   /** Adds a remote pointing at an existing repository. */
   addRemote: (name: string, url: string) => Promise<boolean>;
-  /** Creates the repository on GitHub with the GitHub CLI and pushes to it. */
+  /** Creates the repository on the signed-in GitHub account and pushes to it. */
   publishRepository: (name: string, description: string, isPrivate: boolean) => Promise<boolean>;
   /** Working-tree file chosen in the sidebar, and its diff. */
   selectedFile: FileChange | null;
@@ -112,13 +108,13 @@ export interface GitOperations {
   setSelectedFile: (file: FileChange | null) => void;
   setCommitSummary: (summary: string) => void;
   setCommitDescription: (description: string) => void;
-  /** Shows the folder picker and opens the chosen repository. */
-  openRepository: () => Promise<void>;
+  /** Shows the folder picker and opens the chosen repository. Resolves to true once it is open. */
+  openRepository: () => Promise<boolean>;
   /** Opens the repository at `path` (e.g. from the recent list) without a picker. */
-  openRepositoryAt: (path: string) => Promise<void>;
+  openRepositoryAt: (path: string) => Promise<boolean>;
   /** Runs `git init` in `path` (a folder that isn't a repository yet) and opens it. */
-  initRepository: (path: string) => Promise<void>;
-  /** Clones `url` into folder `name` inside `parent` and opens the clone. */
+  initRepository: (path: string) => Promise<boolean>;
+  /** Clones `url` into folder `name` inside `parent` and opens the clone. Resolves to true once open. */
   cloneRepository: (url: string, parent: string, name: string) => Promise<boolean>;
   refresh: () => Promise<void>;
   /** Stages (`staged` true) or unstages every given path in one git call. */
@@ -195,7 +191,7 @@ export interface GitOperations {
   /** Cherry-picks `hash` onto `branch` (switching to it). */
   cherryPick: (hash: string, branch: string) => Promise<boolean>;
   /**
-   * Hashes of the commits that can be squashed or reordered (newest first):
+   * Hashes of the commits that can be squashed (newest first):
    * the current branch's own, unpushed, unshared commits back to the first merge.
    */
   rewritable: string[];
@@ -205,8 +201,6 @@ export interface GitOperations {
   resetToCommit: (hash: string, mode: ResetMode) => Promise<boolean>;
   /** Squashes rewritable commits next to each other into one. */
   squashCommits: (hashes: string[], message: string) => Promise<boolean>;
-  /** Reorders the newest rewritable commits (`order` oldest first). */
-  reorderCommits: (order: string[]) => Promise<boolean>;
   deleteTag: (name: string, fromRemote: boolean) => Promise<boolean>;
   pushTag: (name: string) => Promise<boolean>;
   renameBranch: (name: string, newName: string) => Promise<boolean>;
@@ -292,14 +286,6 @@ export function useGitOperations({
   const [branches, setBranches] = useState<GitBranch[]>([]);
   const [remotes, setRemotes] = useState<Remote[]>([]);
   const [rewritable, setRewritable] = useState<string[]>([]);
-  const [syncing, setSyncing] = useState<SyncAction | null>(null);
-  // Read by the background fetch, which mustn't run alongside a sync.
-  const syncingRef = useRef(syncing);
-  syncingRef.current = syncing;
-  const [lastFetched, setLastFetched] = useState<number | null>(null);
-  const lastFetchedRef = useRef(0);
-  // The background fetch while it runs; a sync waits for it first.
-  const backgroundFetch = useRef<Promise<void> | null>(null);
   const [conflicts, setConflicts] = useState<ConflictState>(NO_CONFLICTS);
   const [branchStash, setBranchStash] = useState<BranchStash | null>(null);
   const [selectedStashFile, setSelectedStashFile] = useState<CommitFile | null>(null);
@@ -328,23 +314,9 @@ export function useGitOperations({
   const [error, setError] = useState<AppError | null>(null);
   const [generatingMessage, setGeneratingMessage] = useState(false);
   const [amending, setAmending] = useState(false);
-  const [needsForcePush, setNeedsForcePush] = useState(false);
   // Set when amending a pushed commit; only takes effect once the amend is
   // actually committed (cancelling it leaves the branch as it was).
   const pendingForcePush = useRef(false);
-  // The selected commits, newest first, and the one clicked last, which a
-  // Shift+click range starts from.
-  const [selection, setSelection] = useState<GitCommit[]>([]);
-  const selectionRef = useRef(selection);
-  selectionRef.current = selection;
-  const selectionAnchor = useRef<string | null>(null);
-  const commitsRef = useRef(commits);
-  commitsRef.current = commits;
-  const selectedCommit = selection[0] ?? null;
-  const selectionBase = selection.length > 1 ? selection[selection.length - 1] : null;
-  const [commitFiles, setCommitFiles] = useState<CommitFile[]>([]);
-  const [selectedCommitFile, setSelectedCommitFile] = useState<CommitFile | null>(null);
-  const [commitDiff, setCommitDiff] = useState("");
   const {
     settings: { hideWhitespace },
   } = useDiffSettings();
@@ -355,37 +327,16 @@ export function useGitOperations({
 
   const dismissError = useCallback((): void => setError(null), []);
 
-  // ---- Actions -------------------------------------------------------------
-
-  // Clear the old commit's files and diff together so a stale file is never
-  // diffed against the newly selected commit.
-  const selectCommit = useCallback((commit: GitCommit | null, how: SelectHow = "only"): void => {
-    const order = commitsRef.current;
-    const position = (hash: string): number => order.findIndex((each) => each.hash === hash);
-    let next: GitCommit[] = [];
-    if (commit && how === "toggle") {
-      const current = selectionRef.current;
-      next = current.some((each) => each.hash === commit.hash)
-        ? current.filter((each) => each.hash !== commit.hash)
-        : [...current, commit];
-      selectionAnchor.current = commit.hash;
-    } else if (commit && how === "range" && selectionAnchor.current) {
-      // Along the branch line when one commit descends from the other.
-      const between = commitsBetween(order, selectionAnchor.current, commit.hash);
-      next = between.length > 0 ? between : [commit];
-    } else if (commit) {
-      next = [commit];
-      selectionAnchor.current = commit.hash;
-    } else {
-      selectionAnchor.current = null;
-    }
-    setSelection(next.sort((a, b) => position(a.hash) - position(b.hash)));
+  // Selecting a commit (or "Uncommitted changes") leaves the stash.
+  const leaveStash = useCallback((): void => {
     setStashSelected(false);
     setSelectedStashFile(null);
-    setCommitFiles([]);
-    setSelectedCommitFile(null);
-    setCommitDiff("");
   }, []);
+  const commitSelection = useCommitSelection({ commits, hideWhitespace, reportError, onSelect: leaveStash });
+  const { selectCommit } = commitSelection;
+
+  // ---- Actions -------------------------------------------------------------
+
 
   /** Reloads status, history, branches, remotes and conflicts together. */
   const refresh = useCallback(async (): Promise<void> => {
@@ -429,51 +380,27 @@ export function useGitOperations({
     }
   }, [reportError, selectCommit, setMessage]);
 
-  // Refreshes whenever the watched repository changes on disk, and on
-  // coming back to the window. A change during a refresh refreshes once
-  // more afterwards, so the last change is never missed.
-  const refreshing = useRef(false);
-  const refreshAgain = useRef(false);
-  useEffect(() => {
-    if (!repo) return;
-    const refreshSoon = async (): Promise<void> => {
-      if (refreshing.current) {
-        refreshAgain.current = true;
-        return;
-      }
-      refreshing.current = true;
-      do {
-        refreshAgain.current = false;
-        await refresh();
-      } while (refreshAgain.current);
-      refreshing.current = false;
-    };
-    const onChange = (): void => void refreshSoon();
-    const unlisten = listen(REPOSITORY_CHANGED, onChange);
-    window.addEventListener("focus", onChange);
-    return () => {
-      void unlisten.then((stop) => stop()).catch(() => {});
-      window.removeEventListener("focus", onChange);
-    };
-  }, [repo, refresh]);
+  useAutoRefresh(repo, refresh);
 
   /**
    * Runs a git command, then refreshes. Resolves to false (with the error
    * shown) if it failed, so callers can tell without a try/catch of their own.
    */
   const runOperation = useCallback(
-    async (operation: () => Promise<unknown>): Promise<boolean> => {
-      try {
+    (operation: () => Promise<unknown>): Promise<boolean> =>
+      attempt(async () => {
         await operation();
         await refresh();
-        return true;
-      } catch (operationError) {
-        reportError(operationError);
-        return false;
-      }
-    },
+      }, reportError),
     [refresh, reportError],
   );
+
+  const { setNeedsForcePush, resetSync, ...sync } = useSync({
+    repo,
+    hasRemotes: remotes.length > 0,
+    runOperation,
+    refresh,
+  });
 
   /**
    * Shows `directory` (already opened by the backend), clears the previous
@@ -484,12 +411,9 @@ export function useGitOperations({
     async (directory: string): Promise<void> => {
       setRepo(directory);
       lastOperation.current = null;
-      // A newly opened repository is fetched in the background right away.
-      lastFetchedRef.current = 0;
-      setLastFetched(null);
+      resetSync();
       setStashConflict(null);
       setAmending(false);
-      setNeedsForcePush(false);
       pendingForcePush.current = false;
       setSelectedFile(null);
       setFileDiff(NO_DIFF);
@@ -499,18 +423,24 @@ export function useGitOperations({
       gitizen.watchRepository().catch(console.error);
       await refresh();
     },
-    [refresh, selectCommit, onRepositoryOpened],
+    [refresh, selectCommit, onRepositoryOpened, resetSync],
   );
 
-  /** Waits for the backend to open a repository (null: the picker was cancelled), then shows it. */
+  /**
+   * Waits for the backend to open a repository (null: the picker was
+   * cancelled), then shows it. Resolves to true once it is shown.
+   */
   const openWith = useCallback(
-    async (opening: Promise<string | null>): Promise<void> => {
-      try {
+    async (opening: Promise<string | null>): Promise<boolean> => {
+      let opened = false;
+      const ok = await attempt(async () => {
         const directory = await opening;
-        if (directory) await showRepository(directory);
-      } catch (openError) {
-        reportError(openError);
-      }
+        if (directory) {
+          await showRepository(directory);
+          opened = true;
+        }
+      }, reportError);
+      return ok && opened;
     },
     [showRepository, reportError],
   );
@@ -525,16 +455,8 @@ export function useGitOperations({
     [openWith],
   );
   const cloneRepository = useCallback(
-    async (url: string, parent: string, name: string): Promise<boolean> => {
-      try {
-        await showRepository(await gitizen.cloneRepository(url, parent, name));
-        return true;
-      } catch (cloneError) {
-        reportError(cloneError);
-        return false;
-      }
-    },
-    [showRepository, reportError],
+    (url: string, parent: string, name: string) => openWith(gitizen.cloneRepository(url, parent, name)),
+    [openWith],
   );
 
   const setFilesStaged = useCallback(
@@ -568,7 +490,7 @@ export function useGitOperations({
       setMessage();
       setAmending(false);
     });
-  }, [commitSummary, commitDescription, amending, conflicts.operation, runOperation, setMessage]);
+  }, [commitSummary, commitDescription, amending, conflicts.operation, runOperation, setMessage, setNeedsForcePush]);
 
   const startAmend = useCallback(
     async (commit: GitCommit, branch?: string): Promise<void> => {
@@ -605,7 +527,7 @@ export function useGitOperations({
       if (!commitSummary.trim()) setMessage(commit.message, commit.body);
       selectCommit(null);
     });
-  }, [commitSummary, runOperation, selectCommit, setMessage]);
+  }, [commitSummary, runOperation, selectCommit, setMessage, setNeedsForcePush]);
 
   const generateCommitMessage = useCallback(async (): Promise<void> => {
     setGeneratingMessage(true);
@@ -618,72 +540,6 @@ export function useGitOperations({
       setGeneratingMessage(false);
     }
   }, [reportError, setMessage]);
-
-  /** Notes a successful fetch. */
-  const fetched = useCallback((): void => {
-    lastFetchedRef.current = Date.now();
-    setLastFetched(lastFetchedRef.current);
-  }, []);
-
-  const sync = useCallback(
-    async (action: SyncAction): Promise<boolean> => {
-      setSyncing(action);
-      // Two git network commands at once could trip over each other's locks.
-      await backgroundFetch.current;
-      const run = {
-        fetch: async () => {
-          await gitizen.fetch();
-          fetched();
-        },
-        pull: gitizen.pull,
-        push: async () => {
-          await gitizen.push(needsForcePush);
-          setNeedsForcePush(false);
-        },
-      }[action];
-      const ok = await runOperation(run);
-      setSyncing(null);
-      return ok;
-    },
-    [runOperation, needsForcePush, fetched],
-  );
-
-  /**
-   * Fetches quietly, then refreshes the ahead/behind counts. Failures (no
-   * network, not signed in) are ignored; the next round tries again.
-   */
-  const fetchInBackground = useCallback((): void => {
-    if (backgroundFetch.current || syncingRef.current) return;
-    // Counts as fetched even on failure, so an offline repository isn't retried every minute.
-    lastFetchedRef.current = Date.now();
-    backgroundFetch.current = gitizen
-      .fetch(true)
-      .then(async () => {
-        fetched();
-        await refresh();
-      })
-      .catch(() => {})
-      .finally(() => {
-        backgroundFetch.current = null;
-      });
-  }, [fetched, refresh]);
-
-  // Fetch in the background when a repository with remotes opens, then
-  // every few minutes, and on coming back to the window once that is due.
-  const hasRemotes = remotes.length > 0;
-  useEffect(() => {
-    if (!repo || !hasRemotes) return;
-    const fetchIfDue = (): void => {
-      if (Date.now() - lastFetchedRef.current >= BACKGROUND_FETCH_MS) fetchInBackground();
-    };
-    fetchIfDue();
-    const timer = window.setInterval(fetchIfDue, 30_000);
-    window.addEventListener("focus", fetchIfDue);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", fetchIfDue);
-    };
-  }, [repo, hasRemotes, fetchInBackground]);
 
   /**
    * Runs a stash call. Stopping on conflicts counts as not done, and
@@ -741,17 +597,6 @@ export function useGitOperations({
     [pendingSwitch, runStash],
   );
 
-  const publishRepository = useCallback(
-    async (name: string, description: string, isPrivate: boolean): Promise<boolean> => {
-      // Publishing pushes, so the header shows it like a push meanwhile.
-      setSyncing("push");
-      const ok = await runOperation(() => gitizen.publishRepository(name, description, isPrivate));
-      setSyncing(null);
-      return ok;
-    },
-    [runOperation],
-  );
-
   // Actions that are a single backend call (taking the same arguments)
   // followed by a refresh.
   const simpleActions = useMemo(() => {
@@ -768,7 +613,6 @@ export function useGitOperations({
       revertCommit: act(gitizen.revertCommit),
       resetToCommit: act(gitizen.resetToCommit),
       squashCommits: act(gitizen.squashCommits),
-      reorderCommits: act(gitizen.reorderCommits),
       deleteTag: act(gitizen.deleteTag),
       pushTag: act(gitizen.pushTag),
       renameBranch: act(gitizen.renameBranch),
@@ -853,26 +697,6 @@ export function useGitOperations({
     });
   }, [status]);
 
-  // Commits rewritten or gone after a refresh (amended, squashed, reset)
-  // leave the selection; with none left, the working tree shows again.
-  useEffect(() => {
-    const present = new Set(commits.map((commit) => commit.hash));
-    const kept = selectionRef.current.filter((commit) => present.has(commit.hash));
-    if (kept.length === selectionRef.current.length) return;
-    if (kept.length === 0) selectCommit(null);
-    else setSelection(kept);
-  }, [commits, selectCommit]);
-
-  // Files changed by the selected commit (or commits, together).
-  useEffect(() => {
-    if (!selectedCommit) return;
-    return loadUnlessCancelled(
-      gitizen.commitFiles(selectedCommit.hash, selectionBase?.hash),
-      setCommitFiles,
-      reportError,
-    );
-  }, [selectedCommit, selectionBase, reportError]);
-
   const selectStashFile = useCallback((file: CommitFile | null): void => {
     setSelectedStashFile(file);
     if (file) setSelectedFile(null);
@@ -911,28 +735,10 @@ export function useGitOperations({
     [branchStash, selectedStashFile, hideWhitespace, reportError],
   );
 
-  // Diff of the file chosen within the selected commit.
-  useEffect(
-    () =>
-      loadOrReset(
-        selectedCommit &&
-          selectedCommitFile &&
-          gitizen.commitDiff(
-            selectedCommit.hash,
-            selectedCommitFile.path,
-            selectedCommitFile.oldPath,
-            hideWhitespace,
-            selectionBase?.hash,
-          ),
-        setCommitDiff,
-        "",
-        reportError,
-      ),
-    [selectedCommit, selectionBase, selectedCommitFile, hideWhitespace, reportError],
-  );
-
   return {
     ...simpleActions,
+    ...sync,
+    ...commitSelection,
     checkoutBranch,
     pendingSwitch,
     answerSwitch,
@@ -942,11 +748,6 @@ export function useGitOperations({
     branches,
     remotes,
     rewritable,
-    syncing,
-    sync,
-    lastFetched,
-    needsForcePush,
-    publishRepository,
     selectedFile,
     diff,
     stagedLines,
@@ -955,14 +756,6 @@ export function useGitOperations({
     error,
     reportError,
     dismissError,
-    selectedCommit,
-    selectedCommits: selection,
-    selectionBase,
-    commitFiles,
-    selectedCommitFile,
-    commitDiff,
-    selectCommit,
-    setSelectedCommitFile,
     setSelectedFile,
     setCommitSummary,
     setCommitDescription,

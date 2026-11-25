@@ -1,5 +1,5 @@
 import "./CommitHistory.css";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import type { GitCommit } from "../../../shared/gitTypes";
 import { buildCommitGraph, laneColor, type GraphNode } from "../../utils/commitGraph";
@@ -42,8 +42,7 @@ function findTrunk(commits: GitCommit[]): string | undefined {
  * has changes, an "Uncommitted changes" row sits on top, attached to HEAD.
  * Clicking a row selects it; the sidebar then shows that row's files.
  * Ctrl+click adds or removes commits and Shift+click selects a range;
- * several commits show their changes together. The branch's own commits
- * (see `rewritable`) can be dragged up or down to reorder them.
+ * several commits show their changes together.
  * Right-clicking a commit opens its menu (undo, amend and so on);
  * right-clicking "Uncommitted changes" offers to stash or discard them all,
  * and right-clicking the stash offers to pop or discard it.
@@ -66,15 +65,7 @@ export default function CommitHistory(): React.JSX.Element {
     selectStash,
     popStash,
     discardFiles,
-    rewritable,
-    reorderCommits,
   } = git;
-  // Dragging a commit to reorder: the one dragged, and where it would land
-  // (above or below another of the branch's own commits).
-  const [dragged, setDragged] = useState<string | null>(null);
-  const [dropAt, setDropAt] = useState<{ hash: string; below: boolean } | null>(null);
-  // Only the branch's own commits move, and not in the middle of an operation.
-  const movable = (hash: string): boolean => conflicts.operation === null && rewritable.includes(hash);
   const { confirmDiscard, discardDialog } = useDiscardConfirmation();
   // A commit's menu, or the "Uncommitted changes" row's (null) or the stash's.
   const { menu, openMenu, closeMenu } = useContextMenu<GitCommit | null | typeof STASH>();
@@ -149,22 +140,6 @@ export default function CommitHistory(): React.JSX.Element {
     },
   ];
 
-  /** Drops the dragged commit above or below `target`, replaying the commits that change place. */
-  const drop = (target: string, below: boolean): void => {
-    setDragged(null);
-    setDropAt(null);
-    if (!dragged || dragged === target) return;
-    // Newest first, like the history.
-    const moved = rewritable.filter((hash) => hash !== dragged);
-    moved.splice(moved.indexOf(target) + (below ? 1 : 0), 0, dragged);
-    // Everything from the deepest commit that changed place up to the tip is replayed.
-    let deepest = -1;
-    moved.forEach((hash, index) => {
-      if (hash !== rewritable[index]) deepest = index;
-    });
-    if (deepest >= 0) void reorderCommits(moved.slice(0, deepest + 1).reverse());
-  };
-
   if (rows.length === 0) {
     return <p className="placeholder">No commits yet.</p>;
   }
@@ -197,38 +172,11 @@ export default function CommitHistory(): React.JSX.Element {
           }
           const commit = entry;
           const selected = commit ? selectedHashes.has(commit.hash) : !selectedCommit && !stashSelected;
-          const canMove = commit !== null && movable(commit.hash);
-          const dropClass =
-            dragged && commit && dropAt?.hash === commit.hash ? (dropAt.below ? " drop-below" : " drop-above") : "";
 
           return (
             <li
               key={commit?.hash ?? PENDING}
-              className={`${commit ? "" : "pending"}${selected ? " on" : ""}${canMove ? " movable" : ""}${dropClass}`}
-              draggable={canMove}
-              title={canMove ? "Drag to reorder this branch's commits" : undefined}
-              onDragStart={(event) => {
-                if (!commit) return;
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData("text/plain", commit.hash);
-                setDragged(commit.hash);
-              }}
-              onDragOver={(event) => {
-                if (!dragged || !canMove || !commit) return;
-                event.preventDefault();
-                const box = event.currentTarget.getBoundingClientRect();
-                const below = event.clientY > box.top + box.height / 2;
-                if (dropAt?.hash !== commit.hash || dropAt.below !== below) setDropAt({ hash: commit.hash, below });
-              }}
-              onDrop={(event) => {
-                if (!dragged || !canMove || !commit) return;
-                event.preventDefault();
-                drop(commit.hash, dropAt?.below ?? false);
-              }}
-              onDragEnd={() => {
-                setDragged(null);
-                setDropAt(null);
-              }}
+              className={`${commit ? "" : "pending"}${selected ? " on" : ""}`}
             >
               <button
                 onClick={(event) => select(commit, event)}

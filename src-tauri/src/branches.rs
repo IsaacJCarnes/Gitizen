@@ -14,7 +14,7 @@ use crate::git::repository::{
     require_current_branch, Repo,
 };
 use crate::git::runner::run_git;
-use crate::stash::{bring_in, stash_in, StashOutcome};
+use crate::stash::{bring_in, has_changes, stash_in, StashOutcome};
 
 /// How many commits `branch` has that HEAD doesn't (ahead), and HEAD has
 /// that `branch` doesn't (behind). Both 0 when HEAD has no commits yet.
@@ -64,7 +64,7 @@ pub async fn switch_branch(
 
 fn switch_in(dir: &Path, name: &str, changes: ChangesOnSwitch) -> Result<StashOutcome, String> {
     let name = require_branch(dir, name)?;
-    let dirty = !run_git(dir, ["status", "--porcelain", "--untracked-files=all"])?.trim().is_empty();
+    let dirty = has_changes(dir, &[])?;
     if dirty && changes == ChangesOnSwitch::Leave {
         let current = require_current_branch(dir, "leaving changes on it")?;
         if stash_in(dir, &format!("Left on {current} when switching to {name}"), &[])? == StashOutcome::Conflicts {

@@ -90,3 +90,14 @@
   display: flex;
   gap: 16px;
 }
+
+/* A field and its button on one line, e.g. a folder and Browse. */
+.modal-form .field-row {
+  display: flex;
+  gap: 6px;
+}
+
+.modal-form .field-row input {
+  flex: 1;
+  min-width: 0;
+}

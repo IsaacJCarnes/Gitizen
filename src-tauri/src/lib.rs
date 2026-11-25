@@ -90,7 +90,6 @@ pub fn run() {
             history::revert_commit,
             history::reset_to_commit,
             history::squash_commits,
-            history::reorder_commits,
             history::delete_tag,
             history::push_tag,
             branches::switch_branch,

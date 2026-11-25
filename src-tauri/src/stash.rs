@@ -140,7 +140,7 @@ fn drop_stash_entry(dir: &Path, hash: &str) -> Result<(), String> {
 
 /// True if git lists any change (untracked files included) to `paths`, or
 /// anywhere when `paths` is empty.
-fn has_changes(dir: &Path, paths: &[String]) -> Result<bool, String> {
+pub(crate) fn has_changes(dir: &Path, paths: &[String]) -> Result<bool, String> {
     let mut args = vec!["status".to_string(), "--porcelain".into(), "--untracked-files=all".into(), "--".into()];
     args.extend(paths.iter().cloned());
     Ok(!run_git(dir, args)?.trim().is_empty())

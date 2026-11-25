@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { GitCommit } from "../../../shared/gitTypes";
+import type { GitCommit, ResetMode } from "../../../shared/gitTypes";
 import { gitizen } from "../../api/gitizen";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import { githubCommitPage } from "../../utils/github";
@@ -7,10 +7,10 @@ import ActionModal from "../common/ActionModal";
 import ConfirmModal from "../common/ConfirmModal";
 import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
 import { useBranchMenu } from "../Branches/useBranchMenu";
+import { OPERATION_IN_PROGRESS } from "../Stash/stashMenu";
 import { CherryPickDialog, CreateBranchDialog, CreateTagDialog } from "./CommitActionDialogs";
 import { DeleteTagDialog, ResetDialog, SquashDialog } from "./HistoryDialogs";
-import { commitsAfter, RESET_MODES } from "../../utils/history";
-import type { ResetMode } from "../../../shared/gitTypes";
+import { commitsAfter, RESET_MODES, resetProblem, squashProblem } from "../../utils/history";
 import { pluralize } from "../../utils/format";
 
 /** Rewriting the last commit of a branch. */
@@ -120,32 +120,15 @@ export default function CommitContextMenu({
   };
 
   const localBranches = commit.refs.filter((ref) => ref.type === "branch" && !ref.current);
-  const busy = conflicts.operation !== null ? "Finish or abort the operation in progress first" : undefined;
+  const busy = conflicts.operation !== null ? OPERATION_IN_PROGRESS : undefined;
   const detached = status?.branch ? undefined : "Check out a branch first";
 
   // Squashing the selection: commits next to each other among the
   // branch's own, unshared ones.
   const squashing = selectedCommits.length > 1 && selectedCommits.some((each) => each.hash === commit.hash);
-  const positions = selectedCommits.map((each) => rewritable.indexOf(each.hash)).sort((a, b) => a - b);
-  const squashBlocked =
-    busy ??
-    detached ??
-    (positions[0] === -1
-      ? `Only ${status?.branch}'s own commits can be squashed: not merges, and not commits that are pushed or that another branch or tag also has`
-      : positions[positions.length - 1] - positions[0] + 1 !== positions.length
-        ? "Select commits that are next to each other"
-        : undefined);
-
+  const squashBlocked = busy ?? detached ?? squashProblem(selectedCommits, rewritable, status?.branch ?? null);
   // Resetting the current branch back to this commit, an earlier one of it.
-  const after = commitsAfter(commits, commit.hash);
-  const resetBlocked =
-    busy ??
-    detached ??
-    (after === null
-      ? "Only commits on the current branch's line can be reset to"
-      : after.length === 0
-        ? "The branch is already at this commit"
-        : undefined);
+  const resetBlocked = busy ?? detached ?? resetProblem(commitsAfter(commits, commit.hash));
   const tags = commit.refs.filter((ref) => ref.type === "tag").map((ref) => ref.name);
   const githubPage = githubCommitPage(remotes, status?.upstream, commit.hash);
 
