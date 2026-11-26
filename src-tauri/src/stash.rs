@@ -17,7 +17,7 @@ use crate::commands::{diff_options, run_diff};
 use crate::conflicts::{conflicted_files, operation_in, Operation};
 use crate::git::parsers::parse_name_status;
 use crate::git::repository::{
-    assert_hash, current_branch, git_path, read_git_file, require_current_branch, Repo, EMPTY_TREE,
+    assert_branch_name, assert_hash, git_path, read_git_file, require_current_branch, Repo, EMPTY_TREE,
 };
 use crate::git::runner::run_git;
 use crate::git::types::CommitFile;
@@ -64,9 +64,14 @@ pub enum StashOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BranchStash {
     pub hash: String,
-    /// The commit the stash was made on (its first parent), where the
-    /// history graph attaches it.
+    /// The branch it was made on.
+    pub branch: String,
+    /// The commit the stash was made on (its first parent).
     pub base: String,
+    /// Where the history graph attaches it: `base` while that commit is
+    /// still on the branch, else the branch's tip (after the commit was
+    /// undone or amended away), so the stash stays with its branch.
+    pub anchor: String,
     /// The stash's message, without git's "On <branch>: " prefix.
     pub message: String,
     /// The files it changes, untracked ones included.
@@ -115,10 +120,17 @@ fn stash_entries(dir: &Path) -> Result<Vec<(String, String)>, String> {
 /// The message of a stash made on `branch`, or None if it was made on
 /// another branch (or is one of Gitizen's own in-progress stashes).
 fn message_on(subject: &str, branch: &str) -> Option<String> {
-    let message = subject
-        .strip_prefix(&format!("On {branch}: "))
-        .or_else(|| subject.strip_prefix(&format!("WIP on {branch}: ")))?;
-    (message != INTERNAL).then(|| message.to_string())
+    parse_subject(subject).filter(|(on, _)| on == branch).map(|(_, message)| message)
+}
+
+/// The branch a stash was made on and its message, from its reflog subject
+/// ("On <branch>: <message>" or "WIP on <branch>: <hash> <subject>"). None
+/// for stashes made on a detached HEAD and Gitizen's in-progress ones.
+fn parse_subject(subject: &str) -> Option<(String, String)> {
+    let rest = subject.strip_prefix("On ").or_else(|| subject.strip_prefix("WIP on "))?;
+    // Branch names can't contain ':', so the first ": " ends the name.
+    let (branch, message) = rest.split_once(": ")?;
+    (branch != "(no branch)" && message != INTERNAL).then(|| (branch.to_string(), message.to_string()))
 }
 
 /// The newest stash made on `branch`: its hash and message.
@@ -176,25 +188,58 @@ fn branch_for_stash(dir: &Path) -> Result<String, String> {
     require_current_branch(dir, "using its stash")
 }
 
-/// The current branch's stash, if it has one.
+/// Every branch's stash (the newest one made on each branch), so the
+/// history can show them all, not only the checked-out branch's.
 #[tauri::command]
-pub async fn branch_stash(repo: Repo<'_>) -> Result<Option<BranchStash>, String> {
-    branch_stash_in(&repo.require()?)
+pub async fn branch_stashes(repo: Repo<'_>) -> Result<Vec<BranchStash>, String> {
+    stashes_in(&repo.require()?)
 }
 
+fn stashes_in(dir: &Path) -> Result<Vec<BranchStash>, String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut stashes = Vec::new();
+    for (hash, subject) in stash_entries(dir)? {
+        let Some((branch, message)) = parse_subject(&subject) else {
+            continue;
+        };
+        // Newest first, so the first one seen is the branch's stash.
+        if seen.insert(branch.clone()) {
+            stashes.push(describe(dir, hash, branch, message)?);
+        }
+    }
+    Ok(stashes)
+}
+
+/// The current branch's stash, if it has one.
+#[cfg(test)]
 fn branch_stash_in(dir: &Path) -> Result<Option<BranchStash>, String> {
+    use crate::git::repository::current_branch;
     // While adding to a stash, it is still the branch's (now being rebuilt).
     let branch = read_in_progress(dir).map(|state| state.branch).or_else(|| current_branch(dir));
     let Some(branch) = branch else {
         return Ok(None);
     };
-    let Some((hash, message)) = find_branch_stash(dir, &branch)? else {
-        return Ok(None);
-    };
+    Ok(stashes_in(dir)?.into_iter().find(|stash| stash.branch == branch))
+}
+
+fn describe(dir: &Path, hash: String, branch: String, message: String) -> Result<BranchStash, String> {
     let output = run_git(dir, ["stash", "show", "--name-status", "-z", "--include-untracked", hash.as_str()])
         .unwrap_or_default();
     let base = run_git(dir, ["rev-parse", &format!("{hash}^1")])?.trim().to_string();
-    Ok(Some(BranchStash { hash, base, message, files: parse_name_status(&output) }))
+    let anchor = anchor_for(dir, &base, &branch);
+    Ok(BranchStash { hash, branch, base, anchor, message, files: parse_name_status(&output) })
+}
+
+/// Where the graph attaches a stash made on `base` of `branch`: `base`
+/// while the branch still contains it, else the branch's tip. A branch
+/// that no longer exists leaves it on `base`.
+fn anchor_for(dir: &Path, base: &str, branch: &str) -> String {
+    let tip = run_git(dir, ["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}^{{commit}}")])
+        .map(|tip| tip.trim().to_string());
+    match tip {
+        Ok(tip) if run_git(dir, ["merge-base", "--is-ancestor", base, tip.as_str()]).is_err() => tip,
+        _ => base.to_string(),
+    }
 }
 
 /// The diff of one file in stash `hash`: against the commit it was made on,
@@ -323,18 +368,60 @@ fn pop_in(dir: &Path) -> Result<StashOutcome, String> {
             write_in_progress(dir, &InProgress { kind: Kind::Pop, branch, existing, added: None, rest: None })?;
             Ok(StashOutcome::Conflicts)
         }
+        // git refuses to apply over uncommitted changes to the same files.
+        Err(_) if has_changes(dir, &[])? => pop_over_changes(dir, branch, existing),
         Err(error) => Err(error),
     }
 }
 
-/// Throws the current branch's stash away for good.
-#[tauri::command]
-pub async fn drop_stash(repo: Repo<'_>) -> Result<(), String> {
-    drop_in(&repo.require()?)
+/// Pops `existing` over uncommitted changes that touch the same files: sets
+/// the changes aside, applies the stash to the clean working tree, then
+/// merges the changes back in, where they may conflict with the stash (for
+/// the conflict editor; `finish_in` or `abort_in` settle it).
+fn pop_over_changes(dir: &Path, branch: String, existing: String) -> Result<StashOutcome, String> {
+    let rest = push(dir, INTERNAL, &[])?;
+    let state = InProgress { kind: Kind::Pop, branch, existing: existing.clone(), added: None, rest: Some(rest.clone()) };
+    write_in_progress(dir, &state)?;
+    // The stash goes in first (it fits HEAD), staged so the changes can
+    // merge into it; then the changes on top.
+    let merged = run_git(dir, ["stash", "apply", existing.as_str()])
+        .and_then(|_| run_git(dir, ["add", "--all"]))
+        .map_err(|error| (error, false))
+        .and_then(|_| run_git(dir, ["stash", "apply", rest.as_str()]).map_err(|error| (error, true)));
+    match merged {
+        Ok(_) => finish_in(dir).map(|()| StashOutcome::Done),
+        Err((_, true)) if !conflicted_files(dir)?.is_empty() => Ok(StashOutcome::Conflicts),
+        Err((error, _)) => {
+            // Put the stash and the changes back as they were.
+            abort_in(dir)?;
+            Err(error)
+        }
+    }
 }
 
-fn drop_in(dir: &Path) -> Result<(), String> {
-    let branch = branch_for_stash(dir)?;
+/// True while a stopped pop is merging uncommitted changes (set aside
+/// first) back into the popped stash, rather than the stash into the branch.
+pub(crate) fn pop_set_aside_changes(dir: &Path) -> bool {
+    read_in_progress(dir).is_some_and(|state| state.kind == Kind::Pop && state.rest.is_some())
+}
+
+/// Throws a branch's stash away for good: `branch`'s, or the current
+/// branch's when it is left out.
+#[tauri::command]
+pub async fn drop_stash(repo: Repo<'_>, branch: Option<String>) -> Result<(), String> {
+    drop_in(&repo.require()?, branch.as_deref())
+}
+
+fn drop_in(dir: &Path, branch: Option<&str>) -> Result<(), String> {
+    let branch = match branch {
+        Some(branch) => {
+            if let Some(operation) = operation_in(dir) {
+                return Err(format!("Finish or abort the {} in progress first.", operation.git_name()));
+            }
+            assert_branch_name(branch)?.to_string()
+        }
+        None => branch_for_stash(dir)?,
+    };
     let (existing, _) = find_branch_stash(dir, &branch)?.ok_or_else(|| format!("{branch} has no stash."))?;
     drop_stash_entry(dir, &existing)
 }
@@ -351,6 +438,10 @@ pub(crate) fn finish_in(dir: &Path) -> Result<(), String> {
         Kind::Pop => {
             run_git(dir, ["reset", "-q"])?;
             drop_stash_entry(dir, &state.existing)?;
+            // The changes set aside are merged back in already.
+            if let Some(rest) = &state.rest {
+                drop_stash_entry(dir, rest)?;
+            }
         }
         Kind::Add => {
             let message = stash_entries(dir)?
@@ -380,6 +471,16 @@ pub(crate) fn finish_in(dir: &Path) -> Result<(), String> {
 pub(crate) fn abort_in(dir: &Path) -> Result<(), String> {
     let state = read_in_progress(dir).ok_or("No stash is in progress")?;
     match state.kind {
+        Kind::Pop if state.rest.is_some() => {
+            // The changes were set aside before popping, so the working tree
+            // can be emptied and they come back exactly as they were.
+            run_git(dir, ["reset", "--hard", "-q"])?;
+            run_git(dir, ["clean", "-fdq"])?;
+            if let Some(rest) = &state.rest {
+                apply(dir, rest, true)?;
+                drop_stash_entry(dir, rest)?;
+            }
+        }
         Kind::Pop => {
             // Puts back what the stash changed, keeping unstaged local edits.
             run_git(dir, ["reset", "--merge", "-q"])?;
@@ -472,11 +573,87 @@ mod tests {
         assert!(branch_stash_in(&dir).unwrap().is_none());
         git(&dir, &["checkout", "-q", "main"]);
         assert_eq!(branch_stash_in(&dir).unwrap().unwrap().message, "keep it");
-        drop_in(&dir).unwrap();
+        drop_in(&dir, None).unwrap();
         assert_eq!(pop_in(&dir).unwrap(), StashOutcome::Done);
         assert_eq!(stash_count(&dir), 0);
         assert_eq!((read(&dir, "a.txt"), read(&dir, "b.txt"), read(&dir, "new.txt")), ("1\nA\n3\n".into(), "B\n".into(), "new\n".into()));
         assert!(pop_in(&dir).unwrap_err().contains("no stash"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lists_every_branch_stash_and_keeps_it_on_its_branch() {
+        let dir = repo();
+        std::fs::write(dir.join("a.txt"), "1\nmain\n3\n").unwrap();
+        stash_in(&dir, "On main", &[]).unwrap();
+        git(&dir, &["checkout", "-q", "-b", "side"]);
+        commit_file(&dir, "c.txt", "c\n");
+        std::fs::write(dir.join("b.txt"), "side\n").unwrap();
+        stash_in(&dir, "On side", &[]).unwrap();
+
+        // Both stashes are listed, each with its own branch.
+        let stashes = stashes_in(&dir).unwrap();
+        let mut found: Vec<_> = stashes.iter().map(|stash| (stash.branch.as_str(), stash.message.as_str())).collect();
+        found.sort();
+        assert_eq!(found, [("main", "On main"), ("side", "On side")]);
+        let side_tip = git(&dir, &["rev-parse", "side"]).trim().to_string();
+        let side = stashes.iter().find(|stash| stash.branch == "side").unwrap();
+        assert_eq!((side.base.as_str(), side.anchor.as_str()), (side_tip.as_str(), side_tip.as_str()));
+
+        // Undoing the commit it was made on: it moves to the branch's tip.
+        git(&dir, &["reset", "-q", "--soft", "HEAD~1"]);
+        git(&dir, &["commit", "-q", "-m", "Redone"]);
+        let new_tip = git(&dir, &["rev-parse", "side"]).trim().to_string();
+        let side = stashes_in(&dir).unwrap().into_iter().find(|stash| stash.branch == "side").unwrap();
+        assert_eq!(side.base, side_tip);
+        assert_eq!(side.anchor, new_tip);
+
+        // Another branch's stash can be discarded without switching to it.
+        drop_in(&dir, Some("main")).unwrap();
+        assert_eq!(stashes_in(&dir).unwrap().len(), 1);
+        assert!(drop_in(&dir, Some("main")).unwrap_err().contains("no stash"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pops_over_uncommitted_changes_to_the_same_file() {
+        let dir = repo();
+        commit_file(&dir, "long.txt", "1\n2\n3\n4\n5\n6\n7\n");
+        std::fs::write(dir.join("long.txt"), "stashed\n2\n3\n4\n5\n6\n7\n").unwrap();
+        stash_in(&dir, "Mine", &[]).unwrap();
+
+        // Changes elsewhere in the same file merge without conflicts.
+        std::fs::write(dir.join("long.txt"), "1\n2\n3\n4\n5\n6\nlocal\n").unwrap();
+        assert_eq!(pop_in(&dir).unwrap(), StashOutcome::Done);
+        assert_eq!(read(&dir, "long.txt"), "stashed\n2\n3\n4\n5\n6\nlocal\n");
+        assert_eq!(stash_count(&dir), 0);
+        assert_eq!(git(&dir, &["status", "--porcelain"]), " M long.txt\n");
+
+        // The same line: stops for the conflict editor, labelled as the
+        // stash and your changes. Abort puts both back.
+        git(&dir, &["checkout", "-q", "--", "long.txt"]);
+        std::fs::write(dir.join("a.txt"), "1\nstashed\n3\n").unwrap();
+        stash_in(&dir, "Mine", &[]).unwrap();
+        std::fs::write(dir.join("a.txt"), "1\nlocal\n3\n").unwrap();
+        std::fs::write(dir.join("loose.txt"), "loose\n").unwrap();
+        assert_eq!(pop_in(&dir).unwrap(), StashOutcome::Conflicts);
+        assert_eq!(operation_in(&dir), Some(Operation::StashPop));
+        assert!(pop_set_aside_changes(&dir));
+        abort_in(&dir).unwrap();
+        assert_eq!((read(&dir, "a.txt"), read(&dir, "loose.txt")), ("1\nlocal\n3\n".into(), "loose\n".into()));
+        assert_eq!(stash_count(&dir), 1);
+
+        // Resolving it: the stash is gone and the resolution is unstaged.
+        assert_eq!(pop_in(&dir).unwrap(), StashOutcome::Conflicts);
+        std::fs::write(dir.join("a.txt"), "1\nboth\n3\n").unwrap();
+        git(&dir, &["add", "a.txt"]);
+        finish_in(&dir).unwrap();
+        assert_eq!(stash_count(&dir), 0);
+        assert_eq!(read(&dir, "a.txt"), "1\nboth\n3\n");
+        assert!(dir.join("loose.txt").exists());
+        assert!(git(&dir, &["diff", "--cached", "--name-only"]).trim().is_empty());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

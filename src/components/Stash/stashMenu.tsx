@@ -1,3 +1,4 @@
+import type { BranchStash } from "../../../shared/gitTypes";
 import type { GitOperations } from "../../hooks/useGitOperations";
 import { pluralize } from "../../utils/format";
 import type { MenuItem } from "../common/ContextMenu";
@@ -10,23 +11,34 @@ export const OPERATION_IN_PROGRESS = "Finish or abort the operation in progress 
 export const POP_TITLE =
   "Bring the stashed changes back to the working directory and remove the stash";
 
-/** What `confirmDiscard` needs to drop the current branch's stash. */
-export function discardStashRequest({
-  branchStash,
-  status,
-  dropStash,
-}: Pick<GitOperations, "branchStash" | "status" | "dropStash">): DiscardRequest {
+/** What `confirmDiscard` needs to drop a branch's stash. */
+export function discardStashRequest(
+  { dropStash }: Pick<GitOperations, "dropStash">,
+  stash: BranchStash,
+): DiscardRequest {
   return {
     title: "Discard the stash?",
     what: (
       <>
-        The stash on <code>{status?.branch ?? "this branch"}</code> (
-        {pluralize(branchStash?.files.length ?? 0, "file")})
+        The stash on <code>{stash.branch}</code> ({pluralize(stash.files.length, "file")})
       </>
     ),
     confirmLabel: "Discard stash",
-    run: () => void dropStash(),
+    run: () => void dropStash(stash.branch),
   };
+}
+
+/** Pop's label and tooltip for `stash`: another branch's is popped after switching to it. */
+export function popLabel(stash: BranchStash, currentBranch: string | null | undefined): {
+  label: string;
+  title: string;
+} {
+  return stash.branch === currentBranch
+    ? { label: "Pop stash", title: POP_TITLE }
+    : {
+        label: `Switch to ${stash.branch} and pop`,
+        title: `Check out ${stash.branch}, then bring its stashed changes back and remove the stash`,
+      };
 }
 
 /**

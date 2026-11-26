@@ -18,6 +18,8 @@ export default function StashConflictModal(): React.JSX.Element | null {
     void abortOperation();
   };
 
+  // Popping onto uncommitted changes merges those changes into the stash.
+  const overChanges = conflicts.incoming === "your changes";
   const text = {
     stash: {
       title: "These changes conflict with the stash",
@@ -26,8 +28,10 @@ export default function StashConflictModal(): React.JSX.Element | null {
         "Resolve the conflicts to save everything together as one stash, or cancel to leave the stash and your changes as they were.",
     },
     pop: {
-      title: "The stash conflicts with your branch",
-      intro: `The stash and ${branch} both change the same lines in:`,
+      title: overChanges ? "The stash conflicts with your changes" : "The stash conflicts with your branch",
+      intro: overChanges
+        ? "The stash and your uncommitted changes both change the same lines in:"
+        : `The stash and ${branch} both change the same lines in:`,
       outro:
         "Resolve the conflicts to finish popping it (the stash is removed once you finish), or cancel to leave the stash and your changes as they were.",
     },

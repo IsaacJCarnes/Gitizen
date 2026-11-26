@@ -51,6 +51,24 @@ pub async fn open_repository_at(repo: Repo<'_>, path: String) -> Result<String, 
     Ok(path)
 }
 
+/// Closes the open repository, going back to the start screen (after it
+/// was removed from the recent list, or its folder was deleted).
+#[tauri::command]
+pub async fn close_repository(
+    repo: Repo<'_>,
+    watcher: tauri::State<'_, crate::watcher::RepositoryWatcher>,
+) -> Result<(), String> {
+    watcher.stop();
+    repo.close()
+}
+
+/// True while `path` is still a folder inside a git work tree.
+#[tauri::command]
+pub async fn repository_exists(path: String) -> bool {
+    let directory = PathBuf::from(path);
+    directory.is_dir() && crate::git::repository::is_work_tree(&directory)
+}
+
 /// Runs `git init` in `path` (a folder the user picked that isn't a
 /// repository yet) and opens it. Returns the path.
 #[tauri::command]

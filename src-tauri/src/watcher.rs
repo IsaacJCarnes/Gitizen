@@ -47,6 +47,15 @@ pub async fn watch_repository(
     Ok(())
 }
 
+impl RepositoryWatcher {
+    /// Stops watching (the repository was closed).
+    pub fn stop(&self) {
+        if let Ok(mut watch) = self.0.lock() {
+            *watch = None;
+        }
+    }
+}
+
 /// The folders of a repository: its work tree and its git folder.
 struct Folders {
     work_tree: PathBuf,

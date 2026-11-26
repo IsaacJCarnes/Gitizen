@@ -1,0 +1,123 @@
+.image-diff {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 16px;
+}
+
+.image-diff.side-by-side {
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.image-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.image-diff.side-by-side .image-side {
+  flex: 1 1 260px;
+  max-width: calc(50% - 8px);
+}
+
+.image-side figcaption,
+.image-stack-labels span {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.image-side small {
+  color: var(--mute);
+  font-size: 12px;
+}
+
+.deleted figcaption,
+.image-stack-labels .deleted {
+  color: #c2473c;
+}
+
+.added figcaption,
+.image-stack-labels .added {
+  color: #2f8a4e;
+}
+
+/* A checkerboard behind the image, so transparent parts are visible. */
+.image-frame {
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background-color: var(--panel);
+  background-image:
+    linear-gradient(45deg, var(--line) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--line) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--line) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--line) 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+  line-height: 0;
+}
+
+.image-frame img {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+}
+
+.image-side.deleted .image-frame {
+  border-color: #c2473c;
+}
+
+.image-side.added .image-frame {
+  border-color: #2f8a4e;
+}
+
+/* Stacked modes: the new image lies exactly over the old one. */
+.image-stack {
+  position: relative;
+  overflow: hidden;
+}
+
+.image-stack .image-top {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-position: left top;
+}
+
+.image-swipe-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.image-stack-labels {
+  display: flex;
+  justify-content: space-between;
+  width: min(100%, 480px);
+}
+
+.image-slider {
+  width: min(100%, 480px);
+  padding: 0;
+  border: none;
+  background: none;
+  accent-color: var(--accent);
+}

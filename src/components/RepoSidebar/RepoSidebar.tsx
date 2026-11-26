@@ -18,14 +18,14 @@ import FileChangeList from "./FileChangeList";
  * form's place.
  */
 export default function RepoSidebar(): React.JSX.Element {
-  const { selectedCommit, conflicts, stashSelected, branchStash } = useGitOperationsContext();
+  const { selectedCommit, conflicts, selectedStash } = useGitOperationsContext();
   const stashing = conflicts.operation !== null && FINISHES_WITHOUT_COMMIT.has(conflicts.operation);
 
   return (
     <aside className="repo-sidebar">
       {selectedCommit ? (
         <CommitFileList />
-      ) : stashSelected && branchStash ? (
+      ) : selectedStash ? (
         <>
           <StashFileList />
           <StashActions />

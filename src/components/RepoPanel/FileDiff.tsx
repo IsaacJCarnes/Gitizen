@@ -11,6 +11,14 @@ import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
 import DiffView, { type LineStaging } from "../common/DiffView";
 import { useDiscardConfirmation } from "../common/DiscardConfirm";
 import FileEditor from "./FileEditor";
+import ImageDiff from "./ImageDiff";
+import { isImagePath } from "../../utils/images";
+
+const IMAGE_MODES = [
+  { mode: "side", label: "Side by side", title: "The old and new image next to each other" },
+  { mode: "swipe", label: "Swipe", title: "Stacked, with a slider splitting old (left) from new (right)" },
+  { mode: "fade", label: "Fade", title: "Stacked, with a slider fading from old to new" },
+] as const;
 
 /**
  * Diff of the file picked in the sidebar, with a header naming the file and
@@ -40,7 +48,7 @@ export default function FileDiff(): React.JSX.Element {
     discardLines,
     status,
     reportError,
-    branchStash,
+    selectedStash,
     selectedStashFile,
     stashDiff,
   } = useGitOperationsContext();
@@ -51,13 +59,19 @@ export default function FileDiff(): React.JSX.Element {
   const { menu: lineMenu, openMenu, closeMenu } = useContextMenu<{ line: number; group: number[] }>();
 
   // A stash file picked in the sidebar is shown read-only, like a commit's.
-  const stashFile = !selectedCommit && branchStash ? selectedStashFile : null;
+  const stashFile = !selectedCommit && selectedStash ? selectedStashFile : null;
   const path = selectedCommit ? selectedCommitFile?.path : (stashFile?.path ?? selectedFile?.path);
+  const oldPath = selectedCommit ? selectedCommitFile?.oldPath : (stashFile?.oldPath ?? selectedFile?.oldPath);
+  const image = isImagePath(path);
+  // Whether the image has both an old and a new version to compare; an
+  // added or deleted one has nothing to switch between.
+  const [comparable, setComparable] = useState(false);
+  useEffect(() => setComparable(false), [path, selectedCommit, stashFile]);
   const shownDiff = selectedCommit ? commitDiff : stashFile ? stashDiff : diff;
   let source = selectedCommit ? shortHash(selectedCommit.hash) : stashFile ? "Stash" : "Uncommitted";
   if (selectedCommit && selectionBase) source = `${shortHash(selectionBase.hash)} … ${source}`;
   // The commit (or stash) whose copy of the file is shown, if not the working tree's.
-  const shownHash = selectedCommit?.hash ?? (stashFile ? branchStash?.hash : undefined);
+  const shownHash = selectedCommit?.hash ?? (stashFile ? selectedStash?.hash : undefined);
 
   // Whether the file can be edited: a text file in the working directory.
   // Checked again after every refresh, since the file may come or go.
@@ -136,19 +150,36 @@ export default function FileDiff(): React.JSX.Element {
           {path}
         </span>
         <small>{editingPath ? "Working directory" : source}</small>
-        {path && editable && !editingPath && (
+        {path && editable && !editingPath && !image && (
           <button
             title={
               atHead
                 ? "Edit this file"
-                : "Edit the file as it is now in the working directory, not as it was in this commit"
+                : "Edit this file in the working directory"
             }
             onClick={startEditing}
           >
             {atHead ? "Edit" : "Edit in working directory"}
           </button>
         )}
-        <span className="diff-settings" style={editingPath ? { display: "none" } : undefined}>
+        {image && comparable && (
+          <span className="diff-settings">
+            <span className="button-group" role="group" aria-label="Image comparison">
+              {IMAGE_MODES.map(({ mode, label, title }) => (
+                <button
+                  key={mode}
+                  className={settings.imageMode === mode ? "active" : ""}
+                  aria-pressed={settings.imageMode === mode}
+                  title={title}
+                  onClick={() => updateSettings({ imageMode: mode })}
+                >
+                  {label}
+                </button>
+              ))}
+            </span>
+          </span>
+        )}
+        <span className="diff-settings" style={editingPath || image ? { display: "none" } : undefined}>
           <span className="button-group" role="group" aria-label="Diff layout">
             {(["unified", "split"] as const).map((layout) => (
               <button
@@ -184,6 +215,16 @@ export default function FileDiff(): React.JSX.Element {
           path={path}
           initialText={editingPath.text}
           onDone={() => setEditing(null)}
+        />
+      ) : path && image ? (
+        <ImageDiff
+          path={path}
+          oldPath={oldPath}
+          hash={shownHash}
+          stash={Boolean(stashFile)}
+          mode={settings.imageMode}
+          reloadKey={shownHash ? undefined : status}
+          onComparable={setComparable}
         />
       ) : path ? (
         <DiffView

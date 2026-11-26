@@ -133,6 +133,10 @@ fn branch_names(dir: &Path, operation: Operation) -> (Option<String>, Option<Str
         // The branch's stash merges into the changes being added to it, or
         // into the branch when popping.
         Operation::Stash => return (Some("stash".into()), Some("your changes".into())),
+        // Popping onto uncommitted changes merges those back into the stash.
+        Operation::StashPop if crate::stash::pop_set_aside_changes(dir) => {
+            return (Some("your changes".into()), Some("stash".into()))
+        }
         Operation::StashPop => return (Some("stash".into()), current_branch(dir)),
         _ => {}
     }

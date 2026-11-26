@@ -39,9 +39,13 @@ export const gitizen: GitizenApi = {
   commit: (message, amend) => invoke(Command.Commit, { message, amend }),
   undoLastCommit: () => invoke(Command.UndoLastCommit),
   stashChanges: (message, paths) => invoke(Command.StashChanges, { message, paths }),
-  branchStash: () => invoke(Command.BranchStash),
+  branchStashes: () => invoke(Command.BranchStashes),
   popStash: () => invoke(Command.PopStash),
-  dropStash: () => invoke(Command.DropStash),
+  dropStash: (branch) => invoke(Command.DropStash, { branch }),
+  imageVersions: (path, oldPath, hash, stash) =>
+    invoke(Command.ImageVersions, { path, oldPath, hash, stash }),
+  closeRepo: () => invoke(Command.CloseRepository),
+  repoExists: (path) => invoke(Command.RepositoryExists, { path }),
   stashDiff: (hash, path, ignoreWhitespace) =>
     invoke(Command.StashDiff, { hash, path, ignoreWhitespace }),
   checkout: (branch) => invoke(Command.Checkout, { branch }),

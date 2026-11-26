@@ -4,10 +4,13 @@ import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import { baseName } from "../../utils/format";
 import FormModal from "../common/FormModal";
 import { useSignInPrompt } from "../GitHub/useSignInPrompt";
+import { publishWarning } from "./publishTarget";
 
 type Mode = "github" | "existing";
 
 interface PublishModalProps {
+  /** Which option starts selected: creating on GitHub, or connecting an existing remote. */
+  initialMode?: Mode;
   onDismiss: () => void;
 }
 
@@ -15,12 +18,19 @@ interface PublishModalProps {
  * Puts a repository that has no remote online: either creates it on the
  * signed-in GitHub account (and pushes the current branch there), or adds an
  * existing repository's URL as a remote so the branch can be pushed there.
+ * Creating it from a branch other than main warns first, since that branch
+ * becomes the new repository's default branch.
  */
-export default function PublishModal({ onDismiss }: PublishModalProps): React.JSX.Element {
-  const { repo, addRemote, publishRepository } = useGitOperationsContext();
+export default function PublishModal({
+  initialMode = "github",
+  onDismiss,
+}: PublishModalProps): React.JSX.Element {
+  const { repo, status, branches, commits, addRemote, publishRepository } = useGitOperationsContext();
   const { account } = useAppContext().github;
   const { signInModal, prompt } = useSignInPrompt();
-  const [mode, setMode] = useState<Mode>("github");
+  const [mode, setMode] = useState<Mode>(initialMode);
+  // Publishing pushes the current branch; on another branch than main, warn.
+  const trunk = publishWarning(status?.branch, branches, null, commits);
   const [name, setName] = useState(baseName(repo ?? "") ?? "");
   const [description, setDescription] = useState("");
   const [isPrivate, setIsPrivate] = useState(true);
@@ -85,6 +95,13 @@ export default function PublishModal({ onDismiss }: PublishModalProps): React.JS
             </p>
           ) : (
             prompt("Sign in to GitHub to create the repository there.")
+          )}
+          {trunk && (
+            <p className="hint publish-warning">
+              &#9888; You are on <code>{status?.branch}</code>, not <code>{trunk}</code>. Only{" "}
+              {status?.branch} is pushed, and it becomes the repository&apos;s default branch on
+              GitHub. Check out {trunk} first to publish that instead.
+            </p>
           )}
         </>
       ) : (

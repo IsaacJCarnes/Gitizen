@@ -4,24 +4,24 @@ import { useGitOperationsContext } from "../../context/GitOperationsContext";
 import FileListItem from "../common/FileListItem";
 
 /**
- * Sidebar content while the stash is selected in the history: its message
- * and the files it changes. Clicking a file shows what the stash changes
- * in it.
+ * Sidebar content while a stash is selected in the history: its message,
+ * its branch and the files it changes. Clicking a file shows what the
+ * stash changes in it.
  */
 export default function StashFileList(): React.JSX.Element | null {
-  const { branchStash, status, selectedStashFile, selectStashFile } = useGitOperationsContext();
+  const { selectedStash, selectedStashFile, selectStashFile } = useGitOperationsContext();
   const { view, setView } = useAppContext();
-  if (!branchStash) return null;
+  if (!selectedStash) return null;
 
   return (
     <>
       <div className="commit-summary">
-        <b>{branchStash.message}</b>
-        <small>Stash on {status?.branch ?? "this branch"}</small>
+        <b>{selectedStash.message}</b>
+        <small>Stash on {selectedStash.branch}</small>
       </div>
-      <h2>Stashed files ({branchStash.files.length})</h2>
+      <h2>Stashed files ({selectedStash.files.length})</h2>
       <ul className="file-change-list">
-        {branchStash.files.map((file) => (
+        {selectedStash.files.map((file) => (
           <FileListItem
             key={file.path}
             path={file.path}

@@ -100,8 +100,7 @@ export interface ConflictState {
 /** What the conflict editor shows for one file. */
 export interface ConflictVersions {
   /**
-   * Both sides merged by git, each conflict between `<<<<<<< current`,
-   * `=======` and `>>>>>>> incoming` lines. Rebuilt from the index, so it is
+   * Both sides merged by git, each conflict between `   * `=======` and `>>>>>>> incoming` lines. Rebuilt from the index, so it is
    * still there after a resolution was saved.
    */
   merged: string;
@@ -124,12 +123,20 @@ export type Resolution = "ours" | "theirs" | "asIs";
  */
 export type SavedCommandKind = "aiCommit" | "aiResolve" | "editor";
 
-/** The current branch's stash (Gitizen keeps one per branch). */
+/** A branch's stash (Gitizen keeps one per branch). */
 export interface BranchStash {
   /** The stash commit's hash. */
   hash: string;
-  /** The commit it was made on, where the history graph attaches it. */
+  /** The branch it was made on. */
+  branch: string;
+  /** The commit it was made on. */
   base: string;
+  /**
+   * Where the history graph attaches it: `base` while the branch still has
+   * that commit, else the branch's tip (the commit was undone or amended),
+   * so the stash stays with its branch.
+   */
+  anchor: string;
   /** Its message, without git's "On <branch>: " prefix. */
   message: string;
   /** The files it changes, untracked ones included. */
@@ -173,6 +180,15 @@ export interface GitHubRepository {
  * throws them away along with any uncommitted changes.
  */
 export type ResetMode = "soft" | "mixed" | "hard";
+
+/**
+ * Both sides of an image's change as `data:` URLs, for the image diff
+ * viewer. A side is null when the file doesn't exist there.
+ */
+export interface ImageVersions {
+  old: string | null;
+  new: string | null;
+}
 
 /** A local branch. */
 export interface GitBranch {

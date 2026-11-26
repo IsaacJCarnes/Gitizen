@@ -1,19 +1,24 @@
 import "./CommitHistory.css";
 import { useMemo } from "react";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
-import type { GitCommit } from "../../../shared/gitTypes";
+import type { BranchStash, GitCommit } from "../../../shared/gitTypes";
 import { buildCommitGraph, laneColor, type GraphNode } from "../../utils/commitGraph";
 import { useContextMenu } from "../../hooks/useContextMenu";
 import { pluralize, renamePaths, shortHash } from "../../utils/format";
 import ContextMenu, { type MenuEntry } from "../common/ContextMenu";
 import { useDiscardConfirmation } from "../common/DiscardConfirm";
-import { discardStashRequest, OPERATION_IN_PROGRESS, POP_TITLE, stashItem } from "../Stash/stashMenu";
+import { discardStashRequest, OPERATION_IN_PROGRESS, popLabel, stashItem } from "../Stash/stashMenu";
 import CommitContextMenu from "./CommitContextMenu";
 import CommitGraphCell, { LANE_WIDTH } from "./CommitGraphCell";
 import RefBadge from "./RefBadge";
 
-/** Graph key for the branch's stash row, drawn as its own node. */
-const STASH = "stash" as const;
+/** A stash's row in the history, drawn as a node of its own. */
+interface StashRow {
+  stash: BranchStash;
+}
+
+/** Graph key for a branch's stash row. */
+const stashKey = (stash: BranchStash): string => `stash:${stash.branch}`;
 
 /** Graph key for the "Uncommitted changes" row, which has no real hash. */
 const PENDING = "pending";
@@ -47,9 +52,11 @@ function findTrunk(commits: GitCommit[]): string | undefined {
  * right-clicking "Uncommitted changes" offers to stash or discard them all,
  * and right-clicking the stash offers to pop or discard it.
  *
- * The branch's stash is a node of its own, attached to the commit it was
- * made on, in the next lane over (beside the uncommitted changes when
- * there are both). Clicking it shows its first file's changes.
+ * Every branch's stash is a node of its own, attached to the commit it was
+ * made on (or its branch's tip, once that commit was undone or amended), in
+ * a lane of its own. Clicking one shows its first file's changes.
+ *
+ * Double-clicking a local branch's badge checks that branch out.
  */
 export default function CommitHistory(): React.JSX.Element {
   const git = useGitOperationsContext();
@@ -59,41 +66,47 @@ export default function CommitHistory(): React.JSX.Element {
     selectedCommit,
     selectedCommits,
     selectCommit,
-    branchStash,
+    stashes,
     conflicts,
-    stashSelected,
+    selectedStash,
     selectStash,
     popStash,
     discardFiles,
+    checkoutBranch,
   } = git;
   const { confirmDiscard, discardDialog } = useDiscardConfirmation();
-  // A commit's menu, or the "Uncommitted changes" row's (null) or the stash's.
-  const { menu, openMenu, closeMenu } = useContextMenu<GitCommit | null | typeof STASH>();
+  // A commit's menu, or the "Uncommitted changes" row's (null) or a stash's.
+  const { menu, openMenu, closeMenu } = useContextMenu<GitCommit | null | StashRow>();
   const changeCount = status?.files.length ?? 0;
   const hasPending = changeCount > 0;
-  const stashBase = branchStash?.base;
 
   const graph = useMemo(() => {
     const nodes: GraphNode[] = commits.map(({ hash, parents }) => ({ hash, parents }));
+    const loaded = new Set(commits.map((commit) => commit.hash));
     let trunk = findTrunk(commits);
+    // Stashes go right after the uncommitted changes, each taking a lane over.
+    nodes.unshift(
+      ...stashes.map((stash) => ({
+        hash: stashKey(stash),
+        // A commit beyond the loaded history gets no line to nowhere.
+        parents: loaded.has(stash.anchor) ? [stash.anchor] : [],
+        dashed: true,
+      })),
+    );
     if (hasPending) {
       const head = commits.find((commit) => commit.refs.some((ref) => ref.current));
       nodes.unshift({ hash: PENDING, parents: head ? [head.hash] : [], dashed: true });
       // Changes on top of main stay in main's lane.
       if (head && head.hash === trunk) trunk = PENDING;
     }
-    if (stashBase) {
-      // After the uncommitted changes, so it takes the next lane over.
-      nodes.splice(hasPending ? 1 : 0, 0, { hash: STASH, parents: [stashBase], dashed: true });
-    }
     return buildCommitGraph(nodes, trunk);
-  }, [commits, hasPending, stashBase]);
+  }, [commits, hasPending, stashes]);
 
   const width = graph.laneCount * LANE_WIDTH;
-  // null stands for the "Uncommitted changes" row and STASH for the stash's.
-  const rows: (GitCommit | null | typeof STASH)[] = [
+  // null stands for the "Uncommitted changes" row.
+  const rows: (GitCommit | null | StashRow)[] = [
     ...(hasPending ? [null] : []),
-    ...(stashBase ? [STASH] : []),
+    ...stashes.map((stash) => ({ stash })),
     ...commits,
   ];
 
@@ -104,25 +117,28 @@ export default function CommitHistory(): React.JSX.Element {
     if (commit && (event.ctrlKey || event.metaKey)) return selectCommit(commit, "toggle");
     if (commit && event.shiftKey) return selectCommit(commit, "range");
     const already = commit ? selectedCommits.length === 1 && selectedCommit?.hash === commit.hash : !selectedCommit;
-    if (!already || stashSelected) selectCommit(commit);
+    if (!already || selectedStash) selectCommit(commit);
   };
 
   // Popping, dropping or discarding needs nothing else in progress.
   const busy = conflicts.operation !== null ? OPERATION_IN_PROGRESS : undefined;
-  const stashEntries: MenuEntry[] = [
-    {
-      label: "Pop stash",
-      disabled: Boolean(busy),
-      title: busy ?? POP_TITLE,
-      onSelect: () => void popStash(),
-    },
-    {
-      label: "Discard stash…",
-      disabled: Boolean(busy),
-      title: busy ?? "Delete the stash for good",
-      onSelect: () => confirmDiscard(discardStashRequest(git)),
-    },
-  ];
+  const stashEntries = (stash: BranchStash): MenuEntry[] => {
+    const pop = popLabel(stash, status?.branch);
+    return [
+      {
+        label: pop.label,
+        disabled: Boolean(busy),
+        title: busy ?? pop.title,
+        onSelect: () => void popStash(stash.branch),
+      },
+      {
+        label: "Discard stash…",
+        disabled: Boolean(busy),
+        title: busy ?? "Delete the stash for good",
+        onSelect: () => confirmDiscard(discardStashRequest(git, stash)),
+      },
+    ];
+  };
   const pendingEntries: MenuEntry[] = [
     stashItem(git, [], "all changes"),
     "separator",
@@ -150,20 +166,25 @@ export default function CommitHistory(): React.JSX.Element {
         {rows.map((entry, index) => {
           const row = graph.rows[index];
           const color = laneColor(row.lane);
-          if (entry === STASH) {
+          if (entry && "stash" in entry) {
+            const { stash } = entry;
+            const own = stash.branch === status?.branch;
             return (
-              <li key={STASH} className={`pending stash${stashSelected ? " on" : ""}`}>
+              <li
+                key={stashKey(stash)}
+                className={`pending stash${selectedStash?.branch === stash.branch ? " on" : ""}`}
+              >
                 <button
-                  onClick={selectStash}
-                  title="Show the stash's changes"
-                  onContextMenu={(event) => openMenu(event, STASH)}
+                  onClick={() => selectStash(stash)}
+                  title={`Show the changes stashed on ${stash.branch}`}
+                  onContextMenu={(event) => openMenu(event, entry)}
                 >
                   <span className="refs" />
                   <CommitGraphCell row={row} width={width} pending />
                   <span className="info">
-                    <b>Stash</b>
+                    <b>{own ? "Stash" : `Stash on ${stash.branch}`}</b>
                     <small>
-                      {branchStash?.message} · {pluralize(branchStash?.files.length ?? 0, "file")}
+                      {stash.message} · {pluralize(stash.files.length, "file")}
                     </small>
                   </span>
                 </button>
@@ -171,7 +192,7 @@ export default function CommitHistory(): React.JSX.Element {
             );
           }
           const commit = entry;
-          const selected = commit ? selectedHashes.has(commit.hash) : !selectedCommit && !stashSelected;
+          const selected = commit ? selectedHashes.has(commit.hash) : !selectedCommit && !selectedStash;
 
           return (
             <li
@@ -187,7 +208,16 @@ export default function CommitHistory(): React.JSX.Element {
                   title={commit?.refs.map((ref) => ref.name).join(", ")}
                 >
                   {commit?.refs.map((ref) => (
-                    <RefBadge key={`${ref.type}:${ref.name}`} gitRef={ref} color={color} />
+                    <RefBadge
+                      key={`${ref.type}:${ref.name}`}
+                      gitRef={ref}
+                      color={color}
+                      onCheckout={
+                        ref.type === "branch" && !ref.current
+                          ? () => void checkoutBranch(ref.name)
+                          : undefined
+                      }
+                    />
                   ))}
                 </span>
                 <CommitGraphCell row={row} width={width} pending={!commit} />
@@ -213,8 +243,13 @@ export default function CommitHistory(): React.JSX.Element {
         })}
       </ol>
       {menu?.target ? (
-        menu.target === STASH ? (
-          branchStash && <ContextMenu x={menu.x} y={menu.y} entries={stashEntries} onClose={closeMenu} />
+        "stash" in menu.target ? (
+          <ContextMenu
+            x={menu.x}
+            y={menu.y}
+            entries={stashEntries(menu.target.stash)}
+            onClose={closeMenu}
+          />
         ) : (
           <CommitContextMenu commit={menu.target} x={menu.x} y={menu.y} onClose={closeMenu} />
         )

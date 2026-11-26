@@ -12,6 +12,7 @@ mod edit_file;
 mod git;
 mod github;
 mod history;
+mod image_diff;
 mod recent_repos;
 mod remote;
 mod settings;
@@ -34,10 +35,24 @@ pub fn run() {
         .manage(AppSettings::default())
         .manage(GitHubSession::default())
         .manage(watcher::RepositoryWatcher::default())
+        .setup(|_app| {
+            // Debug builds (`npm run app:dev`) say so in the title bar, so they
+            // can't be mistaken for an installed release.
+            #[cfg(debug_assertions)]
+            {
+                use tauri::Manager;
+                for window in _app.webview_windows().values() {
+                    let _ = window.set_title("Gitizen (dev)");
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::open_repository,
             commands::init_repository,
             commands::open_repository_at,
+            commands::close_repository,
+            commands::repository_exists,
             recent_repos::recent_repositories,
             recent_repos::remember_repository,
             recent_repos::forget_repository,
@@ -54,10 +69,11 @@ pub fn run() {
             commands::commit,
             commands::undo_last_commit,
             stash::stash_changes,
-            stash::branch_stash,
+            stash::branch_stashes,
             stash::pop_stash,
             stash::drop_stash,
             stash::stash_diff,
+            image_diff::image_versions,
             commands::checkout,
             commands::set_staged_lines,
             discard::discard_files,

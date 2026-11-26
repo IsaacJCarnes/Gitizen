@@ -66,6 +66,12 @@ impl OpenRepository {
         Ok(())
     }
 
+    /// Forgets the open repository, e.g. once its folder was removed.
+    pub fn close(&self) -> Result<(), String> {
+        *self.slot()? = None;
+        Ok(())
+    }
+
     /// Returns the open repository's folder, or an error if none is open.
     pub fn require(&self) -> Result<PathBuf, String> {
         self.slot()?.clone().ok_or_else(|| "No repository open".to_string())

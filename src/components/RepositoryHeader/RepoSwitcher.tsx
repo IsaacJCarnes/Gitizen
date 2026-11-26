@@ -12,8 +12,8 @@ import CloneModal from "../Clone/CloneModal";
  * "Clone repository…".
  */
 export default function RepoSwitcher(): React.JSX.Element {
-  const { repo, openRepository, openRepositoryAt } = useGitOperationsContext();
-  const { recentRepos, forgetRepo } = useAppContext();
+  const { repo, openRepository, openRepositoryAt, closeRepository } = useGitOperationsContext();
+  const { recentRepos, forgetRepo, setView } = useAppContext();
   const [open, setOpen] = useState(false);
   const [cloning, setCloning] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -38,6 +38,16 @@ export default function RepoSwitcher(): React.JSX.Element {
   const switchTo = (path: string): void => {
     setOpen(false);
     if (path !== repo) void openRepositoryAt(path);
+  };
+
+  // Removing the open repository from the list closes it, back to the start screen.
+  const forget = (path: string): void => {
+    forgetRepo(path);
+    if (path === repo) {
+      setOpen(false);
+      setView("history");
+      void closeRepository();
+    }
   };
 
   const addNew = (): void => {
@@ -77,7 +87,7 @@ export default function RepoSwitcher(): React.JSX.Element {
                     className="repo-switcher-forget"
                     title="Remove from list"
                     aria-label={`Remove ${baseName(path)} from list`}
-                    onClick={() => forgetRepo(path)}
+                    onClick={() => forget(path)}
                   >
                     ×
                   </button>

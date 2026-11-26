@@ -27,12 +27,18 @@ export function AppProvider({ children }: PropsWithChildren): React.JSX.Element 
     gitizen.forgetRepo(path).then(setRecentRepos).catch(console.error);
   }, []);
 
-  const operations = useGitOperations({ onRepositoryOpened: rememberRepo });
+  // After committing everything there is nothing left to diff: show the history.
+  const showHistory = useCallback((): void => setView("history"), []);
+  const operations = useGitOperations({
+    onRepositoryOpened: rememberRepo,
+    onWorkingTreeClean: showHistory,
+  });
   const github = useGitHubAccount(operations.reportError);
   const appData = useMemo(
     () => ({ view, setView, recentRepos, forgetRepo, skipDiscardWarning, setSkipDiscardWarning, github }),
     [view, recentRepos, forgetRepo, skipDiscardWarning, github],
   );
+
 
   return (
     <AppContext.Provider value={appData}>

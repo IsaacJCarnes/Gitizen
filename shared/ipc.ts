@@ -23,6 +23,7 @@ import type {
   Resolution,
   SavedCommandKind,
   BranchStash,
+  ImageVersions,
   StashOutcome,
 } from "./gitTypes";
 
@@ -46,7 +47,10 @@ export const Command = {
   Commit: "commit",
   UndoLastCommit: "undo_last_commit",
   StashChanges: "stash_changes",
-  BranchStash: "branch_stash",
+  BranchStashes: "branch_stashes",
+  ImageVersions: "image_versions",
+  CloseRepository: "close_repository",
+  RepositoryExists: "repository_exists",
   PopStash: "pop_stash",
   DropStash: "drop_stash",
   StashDiff: "stash_diff",
@@ -212,15 +216,25 @@ export interface GitizenApi {
    * `continueOperation` or undo with `abortOperation`.
    */
   stashChanges(message: string, paths?: string[]): Promise<StashOutcome>;
-  /** The current branch's stash, or null if it has none. */
-  branchStash(): Promise<BranchStash | null>;
+  /** Every branch's stash (the newest made on each branch). */
+  branchStashes(): Promise<BranchStash[]>;
   /**
    * Applies the current branch's stash and drops it (needs nothing staged).
    * Stops on conflicts with the branch like `stashChanges`.
    */
   popStash(): Promise<StashOutcome>;
-  /** Deletes the current branch's stash for good. */
-  dropStash(): Promise<void>;
+  /** Deletes `branch`'s stash (the current branch's when left out) for good. */
+  dropStash(branch?: string): Promise<void>;
+  /**
+   * Both versions of image `path`: the working tree's against HEAD without
+   * `hash`, commit `hash`'s against its first parent, or with `stash`, stash
+   * `hash`'s against the commit it was made on.
+   */
+  imageVersions(path: string, oldPath?: string, hash?: string, stash?: boolean): Promise<ImageVersions>;
+  /** Forgets the open repository (back to the start screen). */
+  closeRepo(): Promise<void>;
+  /** True while `path` is still a git repository folder. */
+  repoExists(path: string): Promise<boolean>;
   /** Diff of one file in stash `hash` against the commit it was made on (untracked files show as new). */
   stashDiff(hash: string, path: string, ignoreWhitespace?: boolean): Promise<string>;
   checkout(branch: string): Promise<void>;

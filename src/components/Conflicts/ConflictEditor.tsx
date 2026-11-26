@@ -41,7 +41,9 @@ interface ConflictEditorProps {
  * checkbox; ticking adds it to the output below, in the order lines are
  * ticked (so an incoming line ticked first lands above a current one). The
  * output can also be edited by hand or filled by the AI command, and Save
- * writes it to the file. Marking the file resolved happens in the sidebar.
+ * writes it to the file. When the saved output has no conflict markers
+ * left, the file is marked resolved too (staged), and the next conflicted
+ * file opens; otherwise Mark resolved in the sidebar does that.
  */
 export default function ConflictEditor({
   path,
@@ -52,6 +54,7 @@ export default function ConflictEditor({
     saveConflictResolution,
     openInMergeTool,
     resolveConflict,
+    setSelectedConflict,
     reportError,
   } = useGitOperationsContext();
   const ai = useSavedCommand("aiResolve");
@@ -101,7 +104,16 @@ export default function ConflictEditor({
         saved ? toLf(working) : buildOutput(parseConflict(next.merged), new Set()),
       );
       setHandEdited(saved);
-    }, reportError);
+    }, (error) => {
+      // Saving and staging the file races the reload a refresh starts: by
+      // the time it runs the file may be resolved, which is no error.
+      void gitizen
+        .conflicts()
+        .then((state) => {
+          if (state.files.some((candidate) => candidate.path === path)) reportError(error);
+        })
+        .catch(() => undefined);
+    });
   }, [path, file, conflicts, reportError]);
 
   const pickLines = (next: ReadonlySet<string>): void => {
@@ -123,7 +135,31 @@ export default function ConflictEditor({
     // Remember what we wrote, so the reload after saving keeps the picks.
     const previous = syncedWorking.current;
     syncedWorking.current = output;
-    if (!(await saveConflictResolution(path, output))) syncedWorking.current = previous;
+    const resolved = !hasConflictMarkers(output);
+    let saved: boolean;
+    if (resolved) {
+      // Saved and staged in one go (one refresh, after staging), so nothing
+      // reloads the file in between.
+      saved = await gitizen.saveConflictResolution(path, output).then(
+        () => true,
+        (error: unknown) => {
+          reportError(error);
+          return false;
+        },
+      );
+    } else {
+      saved = await saveConflictResolution(path, output);
+    }
+    if (!saved) {
+      syncedWorking.current = previous;
+      setBusy(null);
+      return;
+    }
+    // Nothing left to resolve: stage it now, and go on to the next file.
+    if (resolved && (await resolveConflict(path, "asIs"))) {
+      const next = conflicts.files.find((candidate) => candidate.path !== path);
+      if (next) setSelectedConflict(next.path);
+    }
     setBusy(null);
   };
 
@@ -192,7 +228,7 @@ export default function ConflictEditor({
           <button
             className="primary"
             disabled={busy !== null}
-            title="Write the output to the file (Mark resolved in the sidebar stages it)"
+            title="Write the output to the file, and mark it resolved once no conflict markers are left"
             onClick={() => void save()}
           >
             {busy === "save" ? "Saving…" : "Save"}
@@ -224,7 +260,9 @@ export default function ConflictEditor({
   if (!file) {
     return frame(
       <p className="placeholder">
-        This file is resolved. Pick another conflicted file in the sidebar.
+        {conflicts.files.length > 0
+          ? "This file is resolved. Pick another conflicted file in the sidebar."
+          : "This file is resolved, and so is every other one. Finish in the sidebar."}
       </p>,
     );
   }
