@@ -9,20 +9,15 @@
 import type {
   ChangesOnSwitch,
   CommitFile,
-  ConflictState,
   ConflictVersions,
   ExternalTool,
   FileDiff,
   GitHubAccount,
   GitHubRepository,
-  GitBranch,
-  GitCommit,
-  GitStatus,
-  Remote,
+  RepositoryState,
   ResetMode,
   Resolution,
   SavedCommandKind,
-  BranchStash,
   ImageVersions,
   StashOutcome,
 } from "./gitTypes";
@@ -35,9 +30,7 @@ export const Command = {
   RememberRepository: "remember_repository",
   ForgetRepository: "forget_repository",
   WatchRepository: "watch_repository",
-  Status: "status",
-  Log: "log",
-  Branches: "branches",
+  RepositoryState: "repository_state",
   FileDiff: "file_diff",
   FileText: "file_text",
   CommitFiles: "commit_files",
@@ -47,7 +40,6 @@ export const Command = {
   Commit: "commit",
   UndoLastCommit: "undo_last_commit",
   StashChanges: "stash_changes",
-  BranchStashes: "branch_stashes",
   ImageVersions: "image_versions",
   CloseRepository: "close_repository",
   RepositoryExists: "repository_exists",
@@ -71,7 +63,6 @@ export const Command = {
   GitHubRepositories: "github_repositories",
   ChooseFolder: "choose_folder",
   CloneRepository: "clone_repository",
-  Remotes: "remotes",
   AddRemote: "add_remote",
   PublishRepository: "publish_repository",
   Fetch: "fetch",
@@ -83,7 +74,6 @@ export const Command = {
   CherryPick: "cherry_pick",
   OpenInBrowser: "open_in_browser",
   SwitchBranch: "switch_branch",
-  RewritableCommits: "rewritable_commits",
   RevertCommit: "revert_commit",
   ResetToCommit: "reset_to_commit",
   SquashCommits: "squash_commits",
@@ -94,7 +84,6 @@ export const Command = {
   MergeBranch: "merge_branch",
   RebaseOntoBranch: "rebase_onto_branch",
   SquashMergeBranch: "squash_merge_branch",
-  Conflicts: "conflicts",
   ResolveConflict: "resolve_conflict",
   ContinueOperation: "continue_operation",
   AbortOperation: "abort_operation",
@@ -104,8 +93,20 @@ export const Command = {
   OpenInMergeTool: "open_in_merge_tool",
 } as const;
 
-/** The event the backend sends when the watched repository changed on disk. */
+/**
+ * The event the backend sends when the watched repository changed on disk,
+ * carrying a `RepositoryChanged`.
+ */
 export const REPOSITORY_CHANGED = "repository-changed";
+
+/** What `REPOSITORY_CHANGED` carries. */
+export interface RepositoryChanged {
+  /**
+   * When the last change of the burst was noticed (milliseconds since
+   * 1970), so a refresh that started later already shows it.
+   */
+  changedAt: number;
+}
 
 export type CommandName = (typeof Command)[keyof typeof Command];
 
@@ -144,10 +145,8 @@ export interface GitizenApi {
    * git's object store) the window gets the `REPOSITORY_CHANGED` event.
    */
   watchRepository(): Promise<void>;
-  status(): Promise<GitStatus>;
-  /** Up to 500 commits across all branches, remotes and tags, children before parents. */
-  log(): Promise<GitCommit[]>;
-  branches(): Promise<GitBranch[]>;
+  /** Everything the window shows about the open repository, in one call for each refresh. */
+  repositoryState(): Promise<RepositoryState>;
   /**
    * Every uncommitted change to one file (staged and unstaged together)
    * against HEAD, so it reads the same whether or not the file is staged,
@@ -216,8 +215,6 @@ export interface GitizenApi {
    * `continueOperation` or undo with `abortOperation`.
    */
   stashChanges(message: string, paths?: string[]): Promise<StashOutcome>;
-  /** Every branch's stash (the newest made on each branch). */
-  branchStashes(): Promise<BranchStash[]>;
   /**
    * Applies the current branch's stash and drops it (needs nothing staged).
    * Stops on conflicts with the branch like `stashChanges`.
@@ -276,8 +273,6 @@ export interface GitizenApi {
    * opens it like `openRepoAt`. Resolves to the clone's path.
    */
   cloneRepository(url: string, parent: string, name: string): Promise<string>;
-  /** Every configured remote with its URL. */
-  remotes(): Promise<Remote[]>;
   /** Adds a remote (normally `origin`) pointing at an existing repository URL. */
   addRemote(name: string, url: string): Promise<void>;
   /**
@@ -319,13 +314,6 @@ export interface GitizenApi {
    */
   switchBranch(name: string, changes: ChangesOnSwitch): Promise<StashOutcome>;
   /**
-   * The commits history may be rewritten for (squashed), newest
-   * first: the checked-out branch's own commits from its tip back to the
-   * first merge or the first commit another branch, a tag or a remote
-   * branch also has. Empty on a detached HEAD.
-   */
-  rewritableCommits(): Promise<string[]>;
-  /**
    * Adds a commit to the current branch that undoes `hash` (a merge against
    * its first parent). Needs a clean working tree; conflicts stop it for the
    * conflict editor.
@@ -359,8 +347,6 @@ export interface GitizenApi {
    * and the message kept for the commit that finishes it.
    */
   squashMergeBranch(name: string, message: string): Promise<void>;
-  /** The stopped merge, cherry-pick, rebase or revert (if any) and its unresolved files. */
-  conflicts(): Promise<ConflictState>;
   /** Settles one conflicted file (our version, theirs, or as it is now) and stages it. */
   resolveConflict(path: string, resolution: Resolution): Promise<void>;
   /** Finishes the stopped operation once every file is resolved. */

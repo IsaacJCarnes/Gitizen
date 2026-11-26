@@ -17,6 +17,7 @@ mod recent_repos;
 mod remote;
 mod settings;
 mod stash;
+mod state;
 mod util;
 mod watcher;
 
@@ -57,9 +58,7 @@ pub fn run() {
             recent_repos::remember_repository,
             recent_repos::forget_repository,
             watcher::watch_repository,
-            commands::status,
-            commands::log,
-            commands::branches,
+            state::repository_state,
             commands::file_diff,
             commands::file_text,
             commands::commit_files,
@@ -69,7 +68,6 @@ pub fn run() {
             commands::commit,
             commands::undo_last_commit,
             stash::stash_changes,
-            stash::branch_stashes,
             stash::pop_stash,
             stash::drop_stash,
             stash::stash_diff,
@@ -91,7 +89,6 @@ pub fn run() {
             clone::github_repositories,
             clone::choose_folder,
             clone::clone_repository,
-            remote::remotes,
             remote::add_remote,
             remote::publish_repository,
             remote::fetch,
@@ -102,7 +99,6 @@ pub fn run() {
             commit_actions::create_tag,
             commit_actions::cherry_pick,
             commit_actions::open_in_browser,
-            history::rewritable_commits,
             history::revert_commit,
             history::reset_to_commit,
             history::squash_commits,
@@ -114,7 +110,6 @@ pub fn run() {
             branches::merge_branch,
             branches::rebase_onto_branch,
             branches::squash_merge_branch,
-            conflicts::conflicts,
             conflicts::resolve_conflict,
             conflicts::continue_operation,
             conflicts::abort_operation,

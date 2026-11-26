@@ -14,6 +14,7 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 - The start screen lists recent repositories under **Open repository** so you can reopen one with a click.
 - **Clone repository** (on the start screen, and **Clone repo...** in the repository dropdown) clones into a new folder and opens it. Pick the repository from your GitHub repositories (yours, collaborations and your organizations', most recently updated first, with a filter box; needs the GitHub sign-in), or paste any URL. Choose the folder to clone into (**Browse…**, remembered for next time) and the new folder's name, which follows the repository's name until you type your own. A folder that already exists must be empty. Private repositories sign in through git's credential helper like any other git command.
 - No refresh button: Gitizen watches the repository's files and refreshes by itself (status, history, branches, remotes, the branch's stash, any stopped operation and the open diff) a moment after anything changes, whether in Gitizen, an editor, a terminal or another git tool, even while its window isn't focused. Bursts of changes are gathered into one refresh. Changes to files `.gitignore` ignores (build output, `node_modules`) and git's own object store and lock files are left out. Coming back to the window refreshes too.
+- Each refresh is one backend call (`repository_state`) that runs its git commands side by side and shares what several parts need (one `git status` gives the changes, the branch, the conflicted files and whether there are commits yet). A Gitizen action refreshes once when it finishes: the watcher's report of the changes it made is skipped, since that refresh already shows them.
 
 ### GitHub account
 - **Sign in to GitHub** in the header (and on the start screen) signs in through git's credential helper: Git Credential Manager, which comes with Git for Windows, opens GitHub's sign-in in the browser. Without it, paste a personal access token instead (a classic token needs the `repo` scope). Either way the sign-in is checked with GitHub and saved in the credential helper, so git's own pushes and pulls to github.com use it too, and Gitizen picks it up again at the next start.
@@ -156,7 +157,9 @@ src-tauri/               Rust backend (Tauri 2)
   icons/                 App icons, generated from app-icon.png with `npm run tauri icon`
   src/
     main.rs, lib.rs      App entry point: builds the window, registers commands
-    commands.rs          Core git commands: open, status, log, branches, diffs, staging, commit, undo, checkout
+    commands.rs          Core git commands: open, diffs, staging, commit, undo, checkout
+    state.rs             `repository_state`: status, history, branches, remotes, conflicts, stashes and
+                         rewritable commits for each refresh, in one call
     branches.rs          Switch (leaving or bringing changes), rename, delete, merge, rebase onto and squash merge local branches
     commit_actions.rs    Commit menu actions: checkout commit, create branch or tag, cherry-pick, open on GitHub
     history.rs           Revert, reset, squash (only the branch's own commits), delete and push tags
@@ -170,13 +173,14 @@ src-tauri/               Rust backend (Tauri 2)
     ai_commit.rs         AI commit messages, and running a user's shell command with a timeout
     settings.rs          settings.json: the saved AI and merge tool commands
     recent_repos.rs      Saved list of recently opened repositories, and its commands
-    watcher.rs           Watches the open repository's files and tells the window when it changed
+    watcher.rs           Watches the open repository's files and tells the window when (and at what time) it changed
     util.rs              Shared helpers: config files, the folder picker, blocking threads, temp folders, safe paths,
                          test repositories
     git/
       runner.rs          Runs the git CLI (no shell, no console window, never prompts); `run_command` and
                          `run_command_with_input` run a prepared `git_command` (extra environment, stdin)
       repository.rs      Holds the open repository (and `git init`); input validation, branch and git-folder helpers
+                         (the git folder is looked up once per repository and remembered)
       parsers.rs         Pure functions that parse raw git output (unit tested)
       patch.rs           Tidies diffs, works out which diff lines are staged and builds index content for line staging (unit tested)
       types.rs           Rust mirrors of shared/gitTypes.ts
@@ -190,8 +194,10 @@ src/                     UI (React)
   hooks/
     useGitOperations.ts  All git state and actions for the app, built from the hooks below
     useCommitSelection.ts  The selected commits (multi-select), their files and the picked file's diff
+    useStashSelection.ts   The stash selected in the history, its picked file and that file's diff
     useSync.ts           Fetch, pull, push and publish, the background fetch, and force-push tracking
-    useAutoRefresh.ts    Refreshes when the backend's file watcher reports a change, or the window regains focus
+    useAutoRefresh.ts    Refreshes when the backend's file watcher reports a change no refresh has shown yet, or the
+                         window regains focus
     useGitHubAccount.ts  The GitHub sign-in (account, sign in with the credential helper or a token, sign out)
     useDiffSettings.ts   Diff layout and whitespace settings, saved in localStorage
     useSavedCommand.ts   Loads and saves one of the commands kept in settings.json
@@ -199,11 +205,13 @@ src/                     UI (React)
   utils/                 Pure helpers: commit graph layout, history ranges and squash/reset checks
                          (history.ts), diff line parsing, conflict text, GitHub links, tri-state checkbox logic,
                          formatting, loading in effects (`loadUnlessCancelled`, `loadOrReset`, `attempt`),
-                         localStorage (storage.ts), error normalising
+                         localStorage (storage.ts, and the per-repository commit drafts in commitDrafts.ts),
+                         error normalising
   pages/GitizenView/     Top-level page layout
   components/
-    common/              Reusable pieces: DiffView, FileListItem, TriStateCheckbox, ContextMenu, and the
-                         modals (ActionModal, ConfirmModal, FormModal, CommandModal, DiscardConfirm)
+    common/              Reusable pieces: DiffView, FileListItem, TriStateCheckbox, ContextMenu, the
+                         modals (ActionModal, ConfirmModal, FormModal, CommandModal, DiscardConfirm), and
+                         `useMessageFields` (summary and description fields for dialogs that write a commit message)
     Branches/            Branch menu entries and the rename, delete and squash dialogs
     Conflicts/           Conflict banner, conflict editor, Mark resolved and Abort buttons
     Stash/               Stash file list, Pop/Discard, finish button, conflict warning, shared stash menu items
@@ -223,7 +231,8 @@ src/                     UI (React)
 - Anything returned by the backend is typed in `shared/gitTypes.ts` and mirrored in `src-tauri/src/git/types.rs` (or next to the command in its module). A new git operation gets a name in `Command` (`shared/ipc.ts`), a method in `GitizenApi`, a call in `src/api/gitizen.ts` (TypeScript checks it matches `GitizenApi`), and a `#[tauri::command]` in one of the backend modules, registered in `lib.rs`.
 - A backend command is a thin `async` wrapper that gets the open repository and calls a plain `*_in(dir, …)` function, which is what the Rust tests call. Slow commands (network, AI, an external merge tool) run through `util::blocking` so other commands keep answering.
 - Commands reject with git's message as a plain string. The exception is opening a repository, which rejects with an `OpenRepositoryError` object (`{ kind: "notARepository", path, message }` or `{ kind: "failed", message }`, `OpenError` in Rust) so the UI can offer to create one. `useGitOperations` normalises every failure into that shape for the error modal.
-- Actions in `useGitOperations` resolve to true or false and never reject: on failure the error modal already shows git's message. Each one refreshes the git state after it runs. `attempt` (utils/load.ts) is the shared "run it, report a failure, resolve to a boolean" helper.
+- Actions in `useGitOperations` resolve to true or false and never reject: on failure the error modal already shows git's message. Each one refreshes the git state after it runs (and only once: see `useAutoRefresh`).
+- Keep git calls few: anything every refresh needs goes into `repository_state` (sharing its `git status` output where it can) rather than a command of its own, loops over files or branches use one git call for all of them where git allows it, and git-folder files are found with `git_path` (no git call once the folder is known). `attempt` (utils/load.ts) is the shared "run it, report a failure, resolve to a boolean" helper.
 - Operations that can stop on conflicts (merge, pull, cherry-pick, rebase, continue, stash) treat stopping with unmerged files as success, and the conflict editor takes over.
 - Tauri maps camelCase argument names from the UI to snake_case Rust parameters (`oldPath` becomes `old_path`).
 - Parsing logic is kept in pure functions (`src-tauri/src/git/parsers.rs`, `src/utils/`) so it can be unit tested without Tauri or React.
@@ -231,6 +240,7 @@ src/                     UI (React)
 
 ## Requirements
 - Node.js, Git, and the Rust toolchain (rustup) with the Microsoft C++ Build Tools on Windows. See https://v2.tauri.app/start/prerequisites/.
+- Git 2.41 or newer counts every branch's ahead/behind in one command; older git works, with one command per branch (run side by side).
 - Optional: any command line AI tool that reads stdin (e.g. `claude -p`) for AI commit messages and conflict resolving.
 
 ## Scripts

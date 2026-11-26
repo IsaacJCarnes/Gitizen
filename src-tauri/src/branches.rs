@@ -5,6 +5,7 @@
 //! a single commit.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Deserialize;
 
@@ -14,6 +15,7 @@ use crate::git::repository::{
     require_current_branch, Repo,
 };
 use crate::git::runner::run_git;
+use crate::git::types::GitBranch;
 use crate::stash::{bring_in, has_changes, stash_in, StashOutcome};
 
 /// How many commits `branch` has that HEAD doesn't (ahead), and HEAD has
@@ -26,6 +28,61 @@ pub(crate) fn ahead_behind(dir: &Path, branch: &str) -> (u32, u32) {
     let behind = numbers.next().unwrap_or(0);
     let ahead = numbers.next().unwrap_or(0);
     (ahead, behind)
+}
+
+/// Whether this git can't do `%(ahead-behind:...)` (before 2.41), learnt
+/// the first time it refuses, so later refreshes go straight to the old way.
+static NO_AHEAD_BEHIND_FIELD: AtomicBool = AtomicBool::new(false);
+
+/// Local branches, each with how far it is ahead of and behind HEAD. git
+/// 2.41+ counts them all in one `for-each-ref`; older git needs a
+/// `rev-list` per branch, which then run side by side.
+pub(crate) fn branches_in(dir: &Path) -> Result<Vec<GitBranch>, String> {
+    if !NO_AHEAD_BEHIND_FIELD.load(Ordering::Relaxed) {
+        // "<*| >\0<name>\0<ahead> <behind>"; `ahead-behind:HEAD` counts the
+        // branch's own commits first. It fails before the first commit.
+        let format = "--format=%(HEAD)%00%(refname:short)%00%(ahead-behind:HEAD)";
+        match run_git(dir, ["for-each-ref", format, "refs/heads"]) {
+            Ok(output) => return Ok(parse_branches(&output)),
+            Err(error) if error.contains("unknown field name") => {
+                NO_AHEAD_BEHIND_FIELD.store(true, Ordering::Relaxed);
+            }
+            Err(_) => {}
+        }
+    }
+    let output = run_git(dir, ["for-each-ref", "--format=%(HEAD)%(refname:short)", "refs/heads"])?;
+    let names: Vec<&str> = output.lines().filter(|line| !line.is_empty()).collect();
+    Ok(std::thread::scope(|scope| {
+        let counting: Vec<_> = names
+            .iter()
+            .map(|line| {
+                // %(HEAD) is "*" for the checked-out branch and " " otherwise.
+                let (marker, name) = line.split_at(1);
+                (marker == "*", name, scope.spawn(move || ahead_behind(dir, name)))
+            })
+            .collect();
+        counting
+            .into_iter()
+            .map(|(current, name, counts)| {
+                let (ahead, behind) = counts.join().unwrap_or_default();
+                GitBranch { name: name.to_string(), current, ahead, behind }
+            })
+            .collect()
+    }))
+}
+
+/// Parses the `for-each-ref` output `branches_in` asks git 2.41+ for.
+fn parse_branches(output: &str) -> Vec<GitBranch> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\0');
+            let (marker, name, counts) = (fields.next()?, fields.next()?, fields.next().unwrap_or_default());
+            let mut numbers = counts.split_whitespace().map(|n| n.parse().unwrap_or(0));
+            let (ahead, behind) = (numbers.next().unwrap_or(0), numbers.next().unwrap_or(0));
+            Some(GitBranch { name: name.to_string(), current: marker == "*", ahead, behind })
+        })
+        .collect()
 }
 
 /// Fails unless `name` is an existing local branch.
@@ -265,6 +322,18 @@ mod tests {
         let dir = diverged();
         assert_eq!(ahead_behind(&dir, "side"), (2, 1));
         assert_eq!(ahead_behind(&dir, "main"), (0, 0));
+        // One for-each-ref (git 2.41+) counts the same as a rev-list per branch.
+        let counts = |branches: Vec<GitBranch>| -> Vec<(String, bool, u32, u32)> {
+            branches.into_iter().map(|b| (b.name, b.current, b.ahead, b.behind)).collect()
+        };
+        let expected = vec![("main".to_string(), true, 0, 0), ("side".to_string(), false, 2, 1)];
+        assert_eq!(counts(branches_in(&dir).unwrap()), expected);
+        let output = git(&dir, &["for-each-ref", "--format=%(HEAD)%00%(refname:short)%00%(ahead-behind:HEAD)", "refs/heads"]);
+        assert_eq!(counts(parse_branches(&output)), expected);
+        NO_AHEAD_BEHIND_FIELD.store(true, Ordering::Relaxed);
+        let old_way = branches_in(&dir).unwrap();
+        NO_AHEAD_BEHIND_FIELD.store(false, Ordering::Relaxed);
+        assert_eq!(counts(old_way), expected);
 
         rename_in(&dir, "side", "feature/side").unwrap();
         assert!(require_branch(&dir, "feature/side").is_ok() && require_branch(&dir, "side").is_err());

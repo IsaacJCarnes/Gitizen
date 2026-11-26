@@ -11,18 +11,17 @@ use tauri::AppHandle;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::git::parsers::{parse_log, parse_name_status, parse_status, LOG_FORMAT};
+use crate::git::parsers::{head_is_unborn, parse_name_status};
 use crate::git::patch::{
     changed_line_numbers, index_content, stages_any_addition, staged_line_indices, tidy_change_runs,
     STALE,
 };
 use crate::git::repository::{
-    assert_branch_name, assert_hash, first_parent_of, has_commits, init_repository as git_init,
+    assert_branch_name, assert_hash, first_parent_of, init_repository as git_init,
     OpenError, Repo, EMPTY_TREE,
 };
 use crate::git::runner::{run_git, run_git_bytes, run_git_with_input};
-use crate::git::types::{CommitFile, FileDiff, GitBranch, GitCommit, GitStatus};
-use crate::branches::ahead_behind;
+use crate::git::types::{CommitFile, FileDiff};
 use crate::util::{file_in_repo, pick_folder};
 
 /// Shows a folder picker and opens the chosen repository. Returns its path,
@@ -79,53 +78,6 @@ pub async fn init_repository(repo: Repo<'_>, path: String) -> Result<String, Str
     Ok(path)
 }
 
-#[tauri::command]
-pub async fn status(repo: Repo<'_>) -> Result<GitStatus, String> {
-    // -z: NUL-separated entries, so paths with spaces or quotes come through as is.
-    let output = run_git(
-        &repo.require()?,
-        ["status", "--porcelain=v1", "--branch", "-z", "--untracked-files=all"],
-    )?;
-    Ok(parse_status(&output))
-}
-
-/// Every branch, remote and tag (stashes excluded), newest first with
-/// children always before parents, which is what the commit graph needs.
-#[tauri::command]
-pub async fn log(repo: Repo<'_>) -> Result<Vec<GitCommit>, String> {
-    let format = format!("--format={LOG_FORMAT}");
-    let output = run_git(
-        &repo.require()?,
-        [
-            "log",
-            "--decorate=full",
-            "--exclude=refs/stash",
-            "--all",
-            "--date-order",
-            "--max-count=500",
-            &format,
-        ],
-    )?;
-    Ok(parse_log(&output))
-}
-
-/// Local branches, each with how far it is ahead of and behind HEAD.
-#[tauri::command]
-pub async fn branches(repo: Repo<'_>) -> Result<Vec<GitBranch>, String> {
-    let dir = repo.require()?;
-    let output = run_git(&dir, ["for-each-ref", "--format=%(HEAD)%(refname:short)", "refs/heads"])?;
-    Ok(output
-        .lines()
-        .filter(|line| !line.is_empty())
-        .map(|line| {
-            // %(HEAD) is "*" for the checked-out branch and " " otherwise.
-            let (marker, name) = line.split_at(1);
-            let (ahead, behind) = ahead_behind(&dir, name);
-            GitBranch { name: name.to_string(), current: marker == "*", ahead, behind }
-        })
-        .collect())
-}
-
 /// `git diff` options shared by every diff the UI shows: plain text, git's
 /// own diff (no external tools) and the usual a/ b/ prefixes, so the output
 /// can be parsed and turned back into a patch. `-w` hides whitespace changes.
@@ -151,41 +103,36 @@ pub async fn file_diff(
 }
 
 pub(crate) fn file_diff_in(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Result<FileDiff, String> {
-    let diff = combined_diff(dir, path, ignore_whitespace)?;
-    let staged_lines = staged_lines_of(dir, path, &diff)?;
-    Ok(FileDiff { diff, staged_lines })
+    let combined = combined_diff(dir, path, ignore_whitespace)?;
+    let staged_lines = staged_lines_of(dir, path, &combined)?;
+    Ok(FileDiff { diff: combined.diff, staged_lines })
 }
 
-/// True if git reports `path` as untracked. git refuses paths outside the
-/// repository here, so a file read after this can't leave the repository.
-pub(crate) fn is_untracked(dir: &Path, path: &str) -> Result<bool, String> {
-    let entry = run_git(
-        dir,
-        ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", path],
-    )?;
-    Ok(entry.starts_with("??"))
-}
-
-/// HEAD, or git's empty tree before the first commit.
-fn head_or_empty_tree(dir: &Path) -> &'static str {
-    if has_commits(dir) {
-        "HEAD"
-    } else {
-        EMPTY_TREE
-    }
+/// The diff `file_diff` shows for one file, and whether the file is
+/// untracked (known once, so the staged lines needn't ask git again).
+pub(crate) struct CombinedDiff {
+    pub diff: String,
+    untracked: bool,
 }
 
 /// The diff `file_diff` shows: HEAD to working tree for one file.
-pub(crate) fn combined_diff(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Result<String, String> {
-    if is_untracked(dir, path)? {
+pub(crate) fn combined_diff(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Result<CombinedDiff, String> {
+    // One `git status` of the path says both whether it is untracked and
+    // whether HEAD has commits yet. git refuses paths outside the
+    // repository here, so a file read after this can't leave the repository.
+    let output = run_git(dir, ["status", "--porcelain=v1", "--branch", "-z", "--untracked-files=all", "--", path])?;
+    let untracked = output.split('\0').nth(1).is_some_and(|entry| entry.starts_with("??"));
+    if untracked {
         // Store the file as git would (line endings normalised), so the diff
         // matches what `git diff HEAD` prints once the file is staged.
         let (hash, contents) = worktree_blob(dir, path)?;
-        return Ok(new_file_diff(path, &hash, &contents));
+        return Ok(CombinedDiff { diff: new_file_diff(path, &hash, &contents), untracked });
     }
+    // HEAD, or git's empty tree before the first commit.
+    let base = if head_is_unborn(&output) { EMPTY_TREE } else { "HEAD" };
     let mut args = diff_options(ignore_whitespace);
-    args.extend([head_or_empty_tree(dir), "--", path]);
-    run_diff(dir, args)
+    args.extend([base, "--", path]);
+    Ok(CombinedDiff { diff: run_diff(dir, args)?, untracked })
 }
 
 /// Runs a `git diff` (built on `diff_options`) for the UI to show, with
@@ -195,10 +142,10 @@ pub(crate) fn run_diff<'a>(dir: &Path, args: impl IntoIterator<Item = &'a str>) 
     run_git(dir, args).map(|diff| tidy_change_runs(&diff))
 }
 
-/// Indices of the changed lines of `diff` (from `combined_diff`, whitespace
-/// shown or hidden) that are in the index.
-pub(crate) fn staged_lines_of(dir: &Path, path: &str, diff: &str) -> Result<Vec<usize>, String> {
-    if is_untracked(dir, path)? {
+/// Indices of the changed lines of `combined` (whitespace shown or hidden)
+/// that are in the index.
+pub(crate) fn staged_lines_of(dir: &Path, path: &str, combined: &CombinedDiff) -> Result<Vec<usize>, String> {
+    if combined.untracked {
         return Ok(Vec::new());
     }
     // -U0 diffs list only changed lines, with their line numbers in the hunk
@@ -214,7 +161,7 @@ pub(crate) fn staged_lines_of(dir: &Path, path: &str, diff: &str) -> Result<Vec<
     };
     let (removed_in_index, _) = changed_line_numbers(&zero_context(true)?);
     let (_, added_in_worktree) = changed_line_numbers(&zero_context(false)?);
-    Ok(staged_line_indices(diff, &removed_in_index, &added_in_worktree))
+    Ok(staged_line_indices(&combined.diff, &removed_in_index, &added_in_worktree))
 }
 
 /// Unified diff that adds `contents` (whose blob hash is `hash`) as a new
@@ -389,11 +336,11 @@ fn set_staged_lines_in(
     lines: &[usize],
     staged: bool,
 ) -> Result<(), String> {
-    let current = combined_diff(dir, path, None)?;
-    if current != diff {
+    let combined = combined_diff(dir, path, None)?;
+    if combined.diff != diff {
         return Err(STALE.into());
     }
-    let mut selected: HashSet<usize> = staged_lines_of(dir, path, &current)?.into_iter().collect();
+    let mut selected: HashSet<usize> = staged_lines_of(dir, path, &combined)?.into_iter().collect();
     for line in lines {
         if staged {
             selected.insert(*line);
@@ -402,7 +349,7 @@ fn set_staged_lines_in(
         }
     }
 
-    write_index_lines(dir, path, &current, &selected)
+    write_index_lines(dir, path, &combined.diff, &selected)
 }
 
 /// The file's text in HEAD, or None when HEAD doesn't have it.
@@ -515,6 +462,7 @@ mod tests {
     use tauri::{WebviewWindow, WebviewWindowBuilder};
 
     use super::*;
+    use crate::git::parsers::parse_status;
     use crate::git::repository::OpenRepository;
 
     /// Commits "First" (a.txt) and "Rename" (a.txt moved to b.txt) on main,
@@ -535,7 +483,7 @@ mod tests {
         let app = mock_builder()
             .manage(OpenRepository::default())
             .invoke_handler(tauri::generate_handler![
-                status, log, branches, file_diff, commit_files, commit_diff, stage, unstage, commit,
+                crate::state::repository_state, file_diff, commit_files, commit_diff, stage, unstage, commit,
                 checkout, set_staged_lines, undo_last_commit, crate::stash::stash_changes,
             ])
             .build(mock_context(noop_assets()))
@@ -558,6 +506,11 @@ mod tests {
             },
         )
         .map(|body| body.deserialize::<Value>().unwrap())
+    }
+
+    /// One part of what `repository_state` returns, e.g. "status".
+    fn part(window: &WebviewWindow<MockRuntime>, name: &str) -> Value {
+        call(window, "repository_state", json!({})).unwrap()[name].clone()
     }
 
     /// The header checkbox over a staged rename: unstaging passes both
@@ -630,7 +583,7 @@ mod tests {
         let partly = file_diff_in(&repo, "new.txt", None).unwrap();
         assert_eq!((partly.diff.as_str(), partly.staged_lines.clone()), (new.diff.as_str(), vec![b]));
         set_staged_lines_in(&repo, "new.txt", &new.diff, &[b], false).unwrap();
-        assert!(is_untracked(&repo, "new.txt").unwrap());
+        assert!(combined_diff(&repo, "new.txt", None).unwrap().untracked);
 
         // Deleted file: staging every removed line stages the deletion.
         std::fs::remove_file(repo.join("b.txt")).unwrap();
@@ -721,7 +674,7 @@ mod tests {
         let repo = temp_repo();
         let app = mock_builder()
             .manage(OpenRepository::default())
-            .invoke_handler(tauri::generate_handler![open_repository_at, status])
+            .invoke_handler(tauri::generate_handler![open_repository_at, crate::state::repository_state])
             .build(mock_context(noop_assets()))
             .unwrap();
         let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();
@@ -734,11 +687,11 @@ mod tests {
         let not_repo = std::env::temp_dir().to_string_lossy().into_owned();
         let error = call(&window, "open_repository_at", json!({ "path": not_repo })).unwrap_err();
         assert_eq!(error["kind"], "notARepository");
-        assert!(call(&window, "status", json!({})).is_err());
+        assert!(call(&window, "repository_state", json!({})).is_err());
 
         let opened = call(&window, "open_repository_at", json!({ "path": path })).unwrap();
         assert_eq!(opened, json!(path));
-        assert_eq!(call(&window, "status", json!({})).unwrap()["branch"], "main");
+        assert_eq!(part(&window, "status")["branch"], "main");
 
         let _ = std::fs::remove_dir_all(&repo);
     }
@@ -749,7 +702,7 @@ mod tests {
         let window = app_for(&repo);
 
         // History, refs and commit details.
-        let log = call(&window, "log", json!({})).unwrap();
+        let log = part(&window, "commits");
         assert_eq!(log[0]["message"], "Rename");
         assert_eq!(log[0]["body"], "Body line");
         assert_eq!(log[0]["refs"][0], json!({ "name": "main", "type": "branch", "current": true }));
@@ -788,7 +741,7 @@ mod tests {
         // Working tree: edit, stage, unstage, commit.
         std::fs::write(repo.join("b.txt"), "one\ntwo\n").unwrap();
         std::fs::write(repo.join("new file.txt"), "hi\n").unwrap();
-        let status = call(&window, "status", json!({})).unwrap();
+        let status = part(&window, "status");
         assert_eq!(
             status,
             json!({ "branch": "main", "ahead": 0, "behind": 0, "files": [
@@ -809,17 +762,17 @@ mod tests {
         let staged = call(&window, "file_diff", json!({ "path": "b.txt" })).unwrap();
         assert_eq!(staged["stagedLines"].as_array().unwrap().len(), 1);
         call(&window, "unstage", json!({ "paths": ["b.txt"] })).unwrap();
-        let status = call(&window, "status", json!({})).unwrap();
+        let status = part(&window, "status");
         assert_eq!(status["files"][0]["staged"], false);
 
         call(&window, "stage", json!({ "paths": ["b.txt", "new file.txt"] })).unwrap();
         call(&window, "commit", json!({ "message": "Second" })).unwrap();
-        assert_eq!(call(&window, "status", json!({})).unwrap()["files"], json!([]));
+        assert_eq!(part(&window, "status")["files"], json!([]));
         let error = call(&window, "commit", json!({ "message": "Nothing" })).unwrap_err();
         assert!(error.as_str().unwrap().contains("nothing"));
 
         // Branches and checkout.
-        let branches = call(&window, "branches", json!({})).unwrap();
+        let branches = part(&window, "branches");
         assert_eq!(
             branches,
             json!([
@@ -828,7 +781,7 @@ mod tests {
             ])
         );
         call(&window, "checkout", json!({ "branch": "other" })).unwrap();
-        assert_eq!(call(&window, "status", json!({})).unwrap()["branch"], "other");
+        assert_eq!(part(&window, "status")["branch"], "other");
         assert!(call(&window, "checkout", json!({ "branch": "--orphan" })).is_err());
 
         let _ = std::fs::remove_dir_all(&repo);

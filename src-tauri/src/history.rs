@@ -25,14 +25,15 @@ use crate::util::blocking;
 /// branch's own commits, from its tip back along first parents until the
 /// first one another branch, a tag or a remote branch also has, or the first
 /// merge. Empty on a detached HEAD.
-#[tauri::command]
-pub async fn rewritable_commits(repo: Repo<'_>) -> Result<Vec<String>, String> {
-    rewritable_in(&repo.require()?)
+pub(crate) fn rewritable_in(dir: &Path) -> Result<Vec<String>, String> {
+    rewritable_on(dir, current_branch(dir).as_deref(), has_commits(dir))
 }
 
-pub(crate) fn rewritable_in(dir: &Path) -> Result<Vec<String>, String> {
-    let Some(branch) = current_branch(dir) else { return Ok(Vec::new()) };
-    if !has_commits(dir) {
+/// `rewritable_in`, given the checked-out branch (None when detached) and
+/// whether it has commits, as a refresh already knows them from `git status`.
+pub(crate) fn rewritable_on(dir: &Path, branch: Option<&str>, has_commits: bool) -> Result<Vec<String>, String> {
+    let Some(branch) = branch else { return Ok(Vec::new()) };
+    if !has_commits {
         return Ok(Vec::new());
     }
     // Every commit of HEAD's first-parent line that no other ref reaches.

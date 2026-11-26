@@ -102,13 +102,17 @@ fn rebase_step(dir: &Path) -> Option<RebaseStep> {
     Some(RebaseStep { current, total })
 }
 
-#[tauri::command]
-pub async fn conflicts(repo: Repo<'_>) -> Result<ConflictState, String> {
-    conflicts_in(&repo.require()?)
+/// The conflict state on its own (the UI gets it with the rest of
+/// `repository_state`).
+#[cfg(test)]
+pub(crate) fn conflicts_in(dir: &Path) -> Result<ConflictState, String> {
+    Ok(conflict_state(dir, conflicted_files(dir)?))
 }
 
-pub(crate) fn conflicts_in(dir: &Path) -> Result<ConflictState, String> {
-    let files = conflicted_files(dir)?
+/// The conflict state, given the unmerged files (from `parse_unmerged`),
+/// so a refresh that already ran `git status` needn't run it again.
+pub(crate) fn conflict_state(dir: &Path, unmerged: Vec<(String, String)>) -> ConflictState {
+    let files = unmerged
         .into_iter()
         .map(|(path, code)| {
             let has_markers = std::fs::read(dir.join(&path))
@@ -124,7 +128,7 @@ pub(crate) fn conflicts_in(dir: &Path) -> Result<ConflictState, String> {
         None => (None, None),
     };
     let step = (operation == Some(Operation::Rebase)).then(|| rebase_step(dir)).flatten();
-    Ok(ConflictState { operation, files, message, incoming, current, step })
+    ConflictState { operation, files, message, incoming, current, step }
 }
 
 /// Names the incoming and current sides of a stopped operation.
@@ -220,8 +224,9 @@ pub(crate) fn conflicted_files(dir: &Path) -> Result<Vec<(String, String)>, Stri
     Ok(parse_unmerged(&output))
 }
 
-/// Picks the unmerged entries out of `git status --porcelain=v1 -z` output.
-fn parse_unmerged(output: &str) -> Vec<(String, String)> {
+/// Picks the unmerged entries out of `git status --porcelain=v1 -z` output
+/// (with or without `--branch` and untracked files).
+pub(crate) fn parse_unmerged(output: &str) -> Vec<(String, String)> {
     const UNMERGED: [&str; 7] = ["DD", "AU", "UD", "UA", "DU", "AA", "UU"];
     let mut entries = output.split('\0').filter(|entry| !entry.is_empty());
     let mut files = Vec::new();

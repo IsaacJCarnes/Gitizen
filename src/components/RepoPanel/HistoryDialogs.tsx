@@ -2,9 +2,11 @@ import { useState } from "react";
 import type { GitCommit, ResetMode } from "../../../shared/gitTypes";
 import { commitsAfter, RESET_MODES } from "../../utils/history";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
-import { joinMessage, pluralize, shortHash } from "../../utils/format";
+import { pluralize, shortHash } from "../../utils/format";
 import ConfirmModal from "../common/ConfirmModal";
 import FormModal from "../common/FormModal";
+import { useMessageFields } from "../common/MessageFields";
+import { pushRemote } from "../RepositoryHeader/publishTarget";
 
 interface ResetDialogProps {
   commit: GitCommit;
@@ -64,13 +66,11 @@ interface SquashDialogProps {
  */
 export function SquashDialog({ commits, onDismiss }: SquashDialogProps): React.JSX.Element {
   const { squashCommits } = useGitOperationsContext();
-  const oldestFirst = [...commits].reverse();
-  const [summary, setSummary] = useState(oldestFirst[0]?.message ?? "");
-  const [description, setDescription] = useState(
-    oldestFirst
-      .slice(1)
-      .map((commit) => `- ${commit.message}`)
-      .join("\n"),
+  const [oldest, ...newer] = [...commits].reverse();
+  const { fields, message, ready } = useMessageFields(
+    oldest?.message ?? "",
+    newer.map((commit) => `- ${commit.message}`).join("\n"),
+    { descriptionLabel: "Description", rows: 5 },
   );
 
   return (
@@ -78,11 +78,11 @@ export function SquashDialog({ commits, onDismiss }: SquashDialogProps): React.J
       title={`Squash ${pluralize(commits.length, "commit")}`}
       submitLabel="Squash"
       workingLabel="Squashing…"
-      ready={summary.trim() !== ""}
+      ready={ready}
       onSubmit={() =>
         squashCommits(
           commits.map((commit) => commit.hash),
-          joinMessage(summary, description),
+          message,
         )
       }
       onDismiss={onDismiss}
@@ -92,18 +92,7 @@ export function SquashDialog({ commits, onDismiss }: SquashDialogProps): React.J
         {pluralize(commits.length, "commit")} become one, with all of their changes. Commits after
         them are replayed on top.
       </p>
-      <label>
-        Summary
-        <input value={summary} autoFocus onChange={(event) => setSummary(event.target.value)} />
-      </label>
-      <label>
-        Description
-        <textarea
-          rows={5}
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-        />
-      </label>
+      {fields}
     </FormModal>
   );
 }
@@ -116,7 +105,7 @@ interface DeleteTagDialogProps {
 /** Confirms deleting a tag, optionally from the remote too. */
 export function DeleteTagDialog({ tag, onDismiss }: DeleteTagDialogProps): React.JSX.Element {
   const { deleteTag, remotes } = useGitOperationsContext();
-  const remote = remotes.find((each) => each.name === "origin") ?? (remotes.length === 1 ? remotes[0] : undefined);
+  const remote = pushRemote(remotes);
   const [fromRemote, setFromRemote] = useState(false);
 
   return (
@@ -134,7 +123,7 @@ export function DeleteTagDialog({ tag, onDismiss }: DeleteTagDialogProps): React
             checked={fromRemote}
             onChange={(event) => setFromRemote(event.target.checked)}
           />
-          Also delete it from {remote.name}, for everyone
+          Also delete it from {remote}, for everyone
         </label>
       )}
     </ConfirmModal>

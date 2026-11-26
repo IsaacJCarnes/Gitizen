@@ -16,11 +16,13 @@ import type {
 } from "../../shared/gitTypes";
 import { gitizen } from "../api/gitizen";
 import { toAppError, type AppError } from "../utils/errors";
+import { loadDraft, saveDraft } from "../utils/commitDrafts";
 import { joinMessage, splitMessage } from "../utils/format";
 import { attempt, loadOrReset } from "../utils/load";
 import { useAutoRefresh } from "./useAutoRefresh";
 import { useCommitSelection } from "./useCommitSelection";
 import { useDiffSettings } from "./useDiffSettings";
+import { useStashSelection } from "./useStashSelection";
 import { useSync, type SyncAction } from "./useSync";
 
 export { BACKGROUND_FETCH_MS, type SyncAction } from "./useSync";
@@ -269,31 +271,6 @@ export interface GitOperationsOptions {
   onWorkingTreeClean?: () => void;
 }
 
-/** Unfinished commit messages, per repository path, saved in localStorage. */
-type Drafts = Record<string, { summary: string; description: string }>;
-const DRAFTS_KEY = "gitizen.commitDrafts";
-
-function loadDrafts(): Drafts {
-  try {
-    const saved: unknown = JSON.parse(localStorage.getItem(DRAFTS_KEY) ?? "null");
-    return typeof saved === "object" && saved !== null ? (saved as Drafts) : {};
-  } catch {
-    return {};
-  }
-}
-
-/** Saves `repo`'s draft (removing it when both fields are empty). */
-function saveDraft(repo: string, summary: string, description: string): void {
-  const drafts = loadDrafts();
-  if (summary.trim() || description.trim()) drafts[repo] = { summary, description };
-  else delete drafts[repo];
-  try {
-    localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
-  } catch {
-    // Storage can be full or disabled; the draft still lives this session.
-  }
-}
-
 const NO_DIFF: FileDiff = { diff: "", stagedLines: [] };
 const NO_CONFLICTS: ConflictState = {
   operation: null,
@@ -327,10 +304,6 @@ export function useGitOperations({
   const [rewritable, setRewritable] = useState<string[]>([]);
   const [conflicts, setConflicts] = useState<ConflictState>(NO_CONFLICTS);
   const [stashes, setStashes] = useState<BranchStash[]>([]);
-  const [selectedStashFile, setSelectedStashFile] = useState<CommitFile | null>(null);
-  // The branch whose stash is selected, so a refresh keeps it selected.
-  const [selectedStashBranch, setSelectedStashBranch] = useState<string | null>(null);
-  const [stashDiff, setStashDiff] = useState("");
   const [stashConflict, setStashConflict] = useState<StashConflictKind | null>(null);
   const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
   // Settles the `checkoutBranch` call waiting on `pendingSwitch`.
@@ -367,34 +340,37 @@ export function useGitOperations({
 
   const dismissError = useCallback((): void => setError(null), []);
 
+  const { selectStashOf, leaveStash, setSelectedStashFile, ...stashSelection } = useStashSelection({
+    stashes,
+    hideWhitespace,
+    reportError,
+  });
   // Selecting a commit (or "Uncommitted changes") leaves the stash.
-  const leaveStash = useCallback((): void => {
-    setSelectedStashBranch(null);
-    setSelectedStashFile(null);
-  }, []);
   const commitSelection = useCommitSelection({ commits, hideWhitespace, reportError, onSelect: leaveStash });
   const { selectCommit } = commitSelection;
 
   // ---- Actions -------------------------------------------------------------
 
-
   // Closes the repository; set once `closeRepository` is defined below,
   // since `refresh` (defined first) needs it.
   const closeRef = useRef<((reason?: string) => void) | null>(null);
+  // When the last refresh started (milliseconds since 1970): it shows every
+  // change made before then, so the file watcher's report of one is skipped.
+  const refreshStarted = useRef(0);
 
-  /** Reloads status, history, branches, remotes and conflicts together. */
+  /** Reloads everything shown about the repository, in one backend call. */
   const refresh = useCallback(async (): Promise<void> => {
+    refreshStarted.current = Date.now();
     try {
-      const [nextStatus, nextCommits, nextBranches, nextRemotes, nextConflicts, nextStash, nextRewritable] =
-        await Promise.all([
-          gitizen.status(),
-          gitizen.log(),
-          gitizen.branches(),
-          gitizen.remotes(),
-          gitizen.conflicts(),
-          gitizen.branchStashes(),
-          gitizen.rewritableCommits(),
-        ]);
+      const {
+        status: nextStatus,
+        commits: nextCommits,
+        branches: nextBranches,
+        remotes: nextRemotes,
+        conflicts: nextConflicts,
+        stashes: nextStash,
+        rewritable: nextRewritable,
+      } = await gitizen.repositoryState();
       setRewritable(nextRewritable);
       // The current branch's stash first, so it sits next to the commits.
       setStashes(
@@ -437,7 +413,7 @@ export function useGitOperations({
     }
   }, [reportError, selectCommit, setMessage]);
 
-  useAutoRefresh(repo, refresh);
+  useAutoRefresh(repo, refresh, refreshStarted);
 
   /**
    * Runs a git command, then refreshes. Resolves to false (with the error
@@ -467,7 +443,7 @@ export function useGitOperations({
   const showRepository = useCallback(
     async (directory: string): Promise<void> => {
       // Each repository keeps its own unfinished commit message.
-      const draft = loadDrafts()[directory];
+      const draft = loadDraft(directory);
       setMessage(draft?.summary, draft?.description);
       setRepo(directory);
       lastOperation.current = null;
@@ -799,15 +775,18 @@ export function useGitOperations({
     });
   }, [status]);
 
-  const selectStashFile = useCallback((file: CommitFile | null): void => {
-    setSelectedStashFile(file);
-    if (file) setSelectedFile(null);
-  }, []);
+  const selectStashFile = useCallback(
+    (file: CommitFile | null): void => {
+      setSelectedStashFile(file);
+      if (file) setSelectedFile(null);
+    },
+    [setSelectedStashFile],
+  );
 
   // Picking a changed file takes over from a stash file.
   useEffect(() => {
     if (selectedFile) setSelectedStashFile(null);
-  }, [selectedFile]);
+  }, [selectedFile, setSelectedStashFile]);
 
   const popStash = useCallback(
     async (branch?: string): Promise<boolean> => {
@@ -824,46 +803,20 @@ export function useGitOperations({
     () => stashes.find((stash) => stash.branch === status?.branch) ?? null,
     [stashes, status?.branch],
   );
-  const selectedStash = useMemo(
-    () => stashes.find((stash) => stash.branch === selectedStashBranch) ?? null,
-    [stashes, selectedStashBranch],
-  );
-
   const selectStash = useCallback(
     (stash: BranchStash): void => {
+      // Selecting "Uncommitted changes" leaves any stash first.
       selectCommit(null);
-      setSelectedStashBranch(stash.branch);
+      selectStashOf(stash.branch);
     },
-    [selectCommit],
-  );
-
-  // Keep the stash file picked while the stash still has it, and the stash
-  // selected while it exists.
-  useEffect(() => {
-    if (!selectedStash) setSelectedStashBranch(null);
-    setSelectedStashFile((current) =>
-      current && selectedStash?.files.find((file) => file.path === current.path) ? current : null,
-    );
-  }, [selectedStash]);
-
-  // Diff of the picked stash file, against the commit the stash was made on.
-  useEffect(
-    () =>
-      loadOrReset(
-        selectedStash &&
-          selectedStashFile &&
-          gitizen.stashDiff(selectedStash.hash, selectedStashFile.path, hideWhitespace),
-        setStashDiff,
-        "",
-        reportError,
-      ),
-    [selectedStash, selectedStashFile, hideWhitespace, reportError],
+    [selectCommit, selectStashOf],
   );
 
   return {
     ...simpleActions,
     ...sync,
     ...commitSelection,
+    ...stashSelection,
     checkoutBranch,
     pendingSwitch,
     answerSwitch,
@@ -900,10 +853,7 @@ export function useGitOperations({
     stashes,
     branchStash,
     popStash,
-    selectedStashFile,
-    stashDiff,
     selectStashFile,
-    selectedStash,
     selectStash,
     closeRepository: () => closeRepository(),
     stashConflict,

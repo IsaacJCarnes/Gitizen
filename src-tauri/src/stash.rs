@@ -9,7 +9,9 @@
 //! what was going on, so it can be finished or undone later, even after a
 //! restart.
 
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -190,21 +192,24 @@ fn branch_for_stash(dir: &Path) -> Result<String, String> {
 
 /// Every branch's stash (the newest one made on each branch), so the
 /// history can show them all, not only the checked-out branch's.
-#[tauri::command]
-pub async fn branch_stashes(repo: Repo<'_>) -> Result<Vec<BranchStash>, String> {
-    stashes_in(&repo.require()?)
-}
-
-fn stashes_in(dir: &Path) -> Result<Vec<BranchStash>, String> {
+pub(crate) fn stashes_in(dir: &Path) -> Result<Vec<BranchStash>, String> {
+    // Like `stash_entries`, plus each stash's parents: the first is the
+    // commit it was made on.
+    let output = run_git(dir, ["stash", "list", "--format=%H%x00%P%x00%gs"])?;
     let mut seen = std::collections::HashSet::new();
     let mut stashes = Vec::new();
-    for (hash, subject) in stash_entries(dir)? {
-        let Some((branch, message)) = parse_subject(&subject) else {
+    for line in output.lines() {
+        let mut fields = line.splitn(3, '\0');
+        let (Some(hash), Some(parents), Some(subject)) = (fields.next(), fields.next(), fields.next()) else {
+            continue;
+        };
+        let Some((branch, message)) = parse_subject(subject) else {
             continue;
         };
         // Newest first, so the first one seen is the branch's stash.
         if seen.insert(branch.clone()) {
-            stashes.push(describe(dir, hash, branch, message)?);
+            let base = parents.split_whitespace().next().unwrap_or_default().to_string();
+            stashes.push(describe(dir, hash.to_string(), base, branch, message));
         }
     }
     Ok(stashes)
@@ -222,24 +227,40 @@ fn branch_stash_in(dir: &Path) -> Result<Option<BranchStash>, String> {
     Ok(stashes_in(dir)?.into_iter().find(|stash| stash.branch == branch))
 }
 
-fn describe(dir: &Path, hash: String, branch: String, message: String) -> Result<BranchStash, String> {
-    let output = run_git(dir, ["stash", "show", "--name-status", "-z", "--include-untracked", hash.as_str()])
-        .unwrap_or_default();
-    let base = run_git(dir, ["rev-parse", &format!("{hash}^1")])?.trim().to_string();
+fn describe(dir: &Path, hash: String, base: String, branch: String, message: String) -> BranchStash {
     let anchor = anchor_for(dir, &base, &branch);
-    Ok(BranchStash { hash, branch, base, anchor, message, files: parse_name_status(&output) })
+    BranchStash { files: stash_files(dir, &hash), hash, branch, base, anchor, message }
+}
+
+/// The files stash `hash` changes, untracked ones included. A stash commit
+/// never changes, so each one's list is asked of git once and remembered
+/// (every refresh shows every branch's stash).
+fn stash_files(dir: &Path, hash: &str) -> Vec<CommitFile> {
+    static KNOWN: OnceLock<Mutex<HashMap<String, Vec<CommitFile>>>> = OnceLock::new();
+    let known = KNOWN.get_or_init(Default::default);
+    if let Some(files) = known.lock().ok().and_then(|known| known.get(hash).cloned()) {
+        return files;
+    }
+    let output = run_git(dir, ["stash", "show", "--name-status", "-z", "--include-untracked", hash]);
+    let files = parse_name_status(output.as_deref().unwrap_or_default());
+    // A failure isn't remembered, so it is asked again next time.
+    if let (Ok(_), Ok(mut known)) = (output, known.lock()) {
+        known.insert(hash.to_string(), files.clone());
+    }
+    files
 }
 
 /// Where the graph attaches a stash made on `base` of `branch`: `base`
 /// while the branch still contains it, else the branch's tip. A branch
 /// that no longer exists leaves it on `base`.
 fn anchor_for(dir: &Path, base: &str, branch: &str) -> String {
-    let tip = run_git(dir, ["rev-parse", "--verify", "--quiet", &format!("refs/heads/{branch}^{{commit}}")])
-        .map(|tip| tip.trim().to_string());
-    match tip {
-        Ok(tip) if run_git(dir, ["merge-base", "--is-ancestor", base, tip.as_str()]).is_err() => tip,
-        _ => base.to_string(),
+    let tip = format!("refs/heads/{branch}");
+    // The usual case (the branch still has it) takes one git call.
+    if run_git(dir, ["merge-base", "--is-ancestor", base, tip.as_str()]).is_ok() {
+        return base.to_string();
     }
+    run_git(dir, ["rev-parse", "--verify", "--quiet", &format!("{tip}^{{commit}}")])
+        .map_or_else(|_| base.to_string(), |tip| tip.trim().to_string())
 }
 
 /// The diff of one file in stash `hash`: against the commit it was made on,

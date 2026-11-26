@@ -108,9 +108,9 @@ export default function ConflictEditor({
       // Saving and staging the file races the reload a refresh starts: by
       // the time it runs the file may be resolved, which is no error.
       void gitizen
-        .conflicts()
-        .then((state) => {
-          if (state.files.some((candidate) => candidate.path === path)) reportError(error);
+        .repositoryState()
+        .then(({ conflicts: now }) => {
+          if (now.files.some((candidate) => candidate.path === path)) reportError(error);
         })
         .catch(() => undefined);
     });

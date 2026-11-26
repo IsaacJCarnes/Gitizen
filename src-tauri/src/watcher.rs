@@ -3,17 +3,19 @@
 //! tools. Changes arrive in bursts, so they are gathered until things go
 //! quiet for a moment, and changes nobody would see (git's object store and
 //! lock files, files `.gitignore` ignores) are left out. What is left is
-//! sent to the window as a `repository-changed` event.
+//! sent to the window as a `repository-changed` event, carrying when the
+//! last change of the burst happened, so the window can skip a refresh
+//! that one of its own refreshes (after a Gitizen action) already covered.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tauri::{AppHandle, Emitter};
 
-use crate::git::repository::Repo;
+use crate::git::repository::{git_dir, Repo};
 use crate::git::runner::{run_git, run_git_with_input};
 
 /// The event the window gets when the repository changed.
@@ -25,6 +27,19 @@ const QUIET: Duration = Duration::from_millis(300);
 const MAX_WAIT: Duration = Duration::from_secs(2);
 /// More changed paths than this in one burst are reported without checking `.gitignore`.
 const CHECK_LIMIT: usize = 500;
+
+/// The `repository-changed` payload: when the last change of the burst was
+/// noticed, in milliseconds since 1970 (like JavaScript's `Date.now()`).
+#[derive(Clone, Copy, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Changed {
+    changed_at: u64,
+}
+
+/// Milliseconds since 1970, now.
+fn now_millis() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_millis() as u64)
+}
 
 /// The watcher of the open repository, kept in Tauri's managed state.
 /// Replacing it (another repository opened) stops the old one.
@@ -40,8 +55,8 @@ pub async fn watch_repository(
     watcher: tauri::State<'_, RepositoryWatcher>,
 ) -> Result<(), String> {
     let dir = repo.require()?;
-    let watch = start(&dir, move || {
-        let _ = app.emit(CHANGED_EVENT, ());
+    let watch = start(&dir, move |changed_at| {
+        let _ = app.emit(CHANGED_EVENT, Changed { changed_at });
     })?;
     *watcher.0.lock().map_err(|_| "The file watcher is unavailable".to_string())? = Some(watch);
     Ok(())
@@ -64,14 +79,15 @@ struct Folders {
 
 impl Folders {
     fn of(dir: &Path) -> Result<Self, String> {
-        let path = |flag: &str| run_git(dir, ["rev-parse", flag]).map(|path| PathBuf::from(path.trim()));
-        Ok(Self { work_tree: path("--show-toplevel")?, git_dir: path("--absolute-git-dir")? })
+        let work_tree = run_git(dir, ["rev-parse", "--show-toplevel"])?;
+        Ok(Self { work_tree: PathBuf::from(work_tree.trim()), git_dir: git_dir(dir)? })
     }
 }
 
 /// Watches the repository at `dir`, calling `on_change` after each burst of
-/// changes that matters. Watching stops when the returned watcher is dropped.
-pub(crate) fn start(dir: &Path, on_change: impl Fn() + Send + 'static) -> Result<RecommendedWatcher, String> {
+/// changes that matters, passing when its last change was noticed (see
+/// `Changed`). Watching stops when the returned watcher is dropped.
+pub(crate) fn start(dir: &Path, on_change: impl Fn(u64) + Send + 'static) -> Result<RecommendedWatcher, String> {
     let folders = Folders::of(dir)?;
 
     let (sender, receiver) = channel::<PathBuf>();
@@ -98,13 +114,15 @@ pub(crate) fn start(dir: &Path, on_change: impl Fn() + Send + 'static) -> Result
 
 /// Gathers changed paths into bursts and reports those that matter. Ends
 /// when the watcher (the sending side) is dropped.
-fn report_bursts(receiver: &Receiver<PathBuf>, folders: &Folders, on_change: impl Fn()) {
+fn report_bursts(receiver: &Receiver<PathBuf>, folders: &Folders, on_change: impl Fn(u64)) {
     while let Ok(first) = receiver.recv() {
         let mut paths = vec![first];
         let started = Instant::now();
+        let mut last_change = now_millis();
         loop {
             match receiver.recv_timeout(QUIET) {
                 Ok(path) => {
+                    last_change = now_millis();
                     if paths.len() <= CHECK_LIMIT {
                         paths.push(path);
                     }
@@ -117,7 +135,7 @@ fn report_bursts(receiver: &Receiver<PathBuf>, folders: &Folders, on_change: imp
             }
         }
         if matters(folders, &paths) {
-            on_change();
+            on_change(last_change);
         }
     }
 }
@@ -192,7 +210,7 @@ mod tests {
         let dir = new_repo("watch-events");
         commit_file(&dir, "a.txt", "a\n");
         let (sender, receiver) = mpsc::channel();
-        let watcher = start(&dir, move || {
+        let watcher = start(&dir, move |_| {
             let _ = sender.send(());
         })
         .unwrap();

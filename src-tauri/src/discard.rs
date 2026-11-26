@@ -8,7 +8,7 @@ use std::path::Path;
 use crate::commands::{combined_diff, head_text, staged_lines_of, write_index_lines};
 use crate::git::patch::{changed_line_indices, index_content, STALE};
 use crate::git::repository::Repo;
-use crate::git::runner::run_git;
+use crate::git::runner::{run_git, run_git_with_input};
 use crate::util::{file_in_repo, write_keeping_line_endings};
 
 /// Puts each file back the way it is in HEAD, staged and unstaged changes
@@ -20,29 +20,48 @@ pub async fn discard_files(repo: Repo<'_>, paths: Vec<String>) -> Result<(), Str
 }
 
 pub(crate) fn discard_files_in(dir: &Path, paths: &[String]) -> Result<(), String> {
-    for path in paths {
-        if in_head(dir, path) {
-            // From HEAD, so the index entry is reset along with the file.
-            run_git(dir, ["checkout", "HEAD", "--", path])?;
+    let (mut committed, mut new) = (Vec::new(), Vec::new());
+    for (path, in_head) in paths.iter().zip(in_head(dir, paths)) {
+        if in_head {
+            committed.push(path.clone());
         } else {
-            let file = file_in_repo(dir, path)?;
-            // Only files git lists as changed are deleted, never anything else.
-            let status = run_git(dir, ["status", "--porcelain", "--untracked-files=all", "--", path])?;
-            if status.trim().is_empty() {
-                continue;
-            }
-            run_git(dir, ["rm", "-q", "--cached", "--ignore-unmatch", "--", path])?;
-            if file.is_file() {
-                std::fs::remove_file(&file).map_err(|error| error.to_string())?;
-            }
+            new.push(path);
+        }
+    }
+    if !committed.is_empty() {
+        // All in one checkout, from HEAD, so the index entries are reset
+        // along with the files.
+        let args = ["checkout", "HEAD", "--"].into_iter().map(String::from);
+        run_git(dir, args.chain(committed))?;
+    }
+    for path in new {
+        let file = file_in_repo(dir, path)?;
+        // Only files git lists as changed are deleted, never anything else.
+        let status = run_git(dir, ["status", "--porcelain", "--untracked-files=all", "--", path])?;
+        if status.trim().is_empty() {
+            continue;
+        }
+        run_git(dir, ["rm", "-q", "--cached", "--ignore-unmatch", "--", path])?;
+        if file.is_file() {
+            std::fs::remove_file(&file).map_err(|error| error.to_string())?;
         }
     }
     Ok(())
 }
 
-/// True if HEAD has `path`, also for files `git show` can't print as text.
-fn in_head(dir: &Path, path: &str) -> bool {
-    run_git(dir, ["cat-file", "-e", &format!("HEAD:./{path}")]).is_ok()
+/// For each of `paths`, whether HEAD has it (also for files `git show`
+/// can't print as text), asked of one `git cat-file --batch-check`.
+fn in_head(dir: &Path, paths: &[String]) -> Vec<bool> {
+    let spec = |path: &String| format!("HEAD:./{path}");
+    // The batch reads one name per line, so a path with a line break is asked on its own.
+    if paths.iter().any(|path| path.contains('\n')) {
+        return paths.iter().map(|path| run_git(dir, ["cat-file", "-e", &spec(path)]).is_ok()).collect();
+    }
+    let input: String = paths.iter().map(|path| spec(path) + "\n").collect();
+    let output = run_git_with_input(dir, ["cat-file", "--batch-check"], &input).unwrap_or_default();
+    // One line per name: "<hash> <type> <size>", or "<name> missing".
+    let mut lines = output.lines();
+    paths.iter().map(|_| lines.next().is_some_and(|line| !line.ends_with(" missing"))).collect()
 }
 
 /// Throws away single changed lines of one file: a removed line comes back
@@ -62,12 +81,13 @@ pub async fn discard_lines(
 }
 
 fn discard_lines_in(dir: &Path, path: &str, diff: &str, lines: &[usize]) -> Result<(), String> {
-    let current = combined_diff(dir, path, None)?;
-    if current != diff {
+    let combined = combined_diff(dir, path, None)?;
+    let current = &combined.diff;
+    if *current != diff {
         return Err(STALE.into());
     }
     let discarded: HashSet<usize> = lines.iter().copied().collect();
-    let changed = changed_line_indices(&current);
+    let changed = changed_line_indices(current);
     if changed.is_subset(&discarded) {
         return discard_files_in(dir, &[path.to_string()]);
     }
@@ -76,14 +96,14 @@ fn discard_lines_in(dir: &Path, path: &str, diff: &str, lines: &[usize]) -> Resu
     // The file keeps every change but the discarded ones.
     let head = head_text(dir, path).unwrap_or_default();
     let kept: HashSet<usize> = changed.difference(&discarded).copied().collect();
-    let text = index_content(&head, &current, &kept)?;
+    let text = index_content(&head, current, &kept)?;
 
     // A staged line that is discarded leaves the index too; the index is
     // written first, while the file still matches the diff.
-    let staged: HashSet<usize> = staged_lines_of(dir, path, &current)?.into_iter().collect();
+    let staged: HashSet<usize> = staged_lines_of(dir, path, &combined)?.into_iter().collect();
     if !staged.is_disjoint(&discarded) {
         let still_staged = staged.difference(&discarded).copied().collect();
-        write_index_lines(dir, path, &current, &still_staged)?;
+        write_index_lines(dir, path, current, &still_staged)?;
     }
     write_keeping_line_endings(&file, &text)
 }

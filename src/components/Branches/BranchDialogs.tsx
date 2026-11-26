@@ -2,8 +2,9 @@ import "../RepoPanel/CommitActionDialogs.css";
 import { useState } from "react";
 import type { GitBranch } from "../../../shared/gitTypes";
 import { useGitOperationsContext } from "../../context/GitOperationsContext";
-import { joinMessage, pluralize } from "../../utils/format";
+import { pluralize } from "../../utils/format";
 import FormModal from "../common/FormModal";
+import { useMessageFields } from "../common/MessageFields";
 
 interface BranchDialogProps {
   branch: GitBranch;
@@ -79,8 +80,7 @@ export function DeleteBranchDialog({ branch, onDismiss }: BranchDialogProps): Re
 /** Asks for the message of the single commit a squash merge makes. */
 export function SquashMergeDialog({ branch, onDismiss }: BranchDialogProps): React.JSX.Element {
   const { squashMergeBranch, status } = useGitOperationsContext();
-  const [summary, setSummary] = useState(`Squash merge branch '${branch.name}'`);
-  const [description, setDescription] = useState("");
+  const { fields, message, ready } = useMessageFields(`Squash merge branch '${branch.name}'`);
   const current = status?.branch ?? "the current branch";
 
   return (
@@ -88,8 +88,8 @@ export function SquashMergeDialog({ branch, onDismiss }: BranchDialogProps): Rea
       title={`Squash and merge ${branch.name}`}
       submitLabel="Squash and merge"
       workingLabel="Merging…"
-      ready={summary.trim() !== ""}
-      onSubmit={() => squashMergeBranch(branch.name, joinMessage(summary, description))}
+      ready={ready}
+      onSubmit={() => squashMergeBranch(branch.name, message)}
       onDismiss={onDismiss}
       className="modal-form"
     >
@@ -98,18 +98,7 @@ export function SquashMergeDialog({ branch, onDismiss }: BranchDialogProps): Rea
         on {current}. {branch.name} itself stays as it is. If they conflict, you resolve the conflicts and then
         commit.
       </p>
-      <label>
-        Summary
-        <input value={summary} autoFocus onChange={(event) => setSummary(event.target.value)} />
-      </label>
-      <label>
-        Description (optional)
-        <textarea
-          rows={4}
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-        />
-      </label>
+      {fields}
     </FormModal>
   );
 }

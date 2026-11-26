@@ -208,3 +208,28 @@ export interface CommitFile {
   /** Single-letter git status code, e.g. "M", "A", "D", "R" or "C". */
   code: string;
 }
+
+/**
+ * Everything the window shows about the open repository, loaded together
+ * for each refresh (mirrors `RepositoryState` in src-tauri/src/state.rs).
+ */
+export interface RepositoryState {
+  status: GitStatus;
+  /** Up to 500 commits across all branches, remotes and tags, children before parents. */
+  commits: GitCommit[];
+  /** Local branches, with how far each is ahead of and behind HEAD. */
+  branches: GitBranch[];
+  /** Configured remotes; empty until the repository is published or a remote is added. */
+  remotes: Remote[];
+  /** The stopped merge, cherry-pick, rebase, revert or stash operation (if any) and its unresolved files. */
+  conflicts: ConflictState;
+  /** Every branch's stash (the newest made on each branch). */
+  stashes: BranchStash[];
+  /**
+   * The commits history may be rewritten for (squashed), newest first: the
+   * checked-out branch's own commits from its tip back to the first merge or
+   * the first commit another branch, a tag or a remote branch also has.
+   * Empty on a detached HEAD.
+   */
+  rewritable: string[];
+}

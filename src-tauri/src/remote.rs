@@ -25,12 +25,7 @@ pub struct Remote {
 }
 
 /// Every remote with its URL, in the order git lists them.
-#[tauri::command]
-pub async fn remotes(repo: Repo<'_>) -> Result<Vec<Remote>, String> {
-    Ok(remotes_in(&repo.require()?))
-}
-
-fn remotes_in(dir: &Path) -> Vec<Remote> {
+pub(crate) fn remotes_in(dir: &Path) -> Vec<Remote> {
     // Prints "remote.<name>.url <url>" per remote; exits 1 when there are
     // none, which is just an empty list.
     let output = run_git(dir, ["config", "--get-regexp", r"^remote\..*\.url$"]).unwrap_or_default();

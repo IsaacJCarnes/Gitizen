@@ -142,6 +142,15 @@ pub fn parse_status(output: &str) -> GitStatus {
     status
 }
 
+/// True when `git status --porcelain --branch` output says the branch has no
+/// commits yet ("No commits yet on main"; "Initial commit on main" before
+/// git 2.15).
+pub fn head_is_unborn(status_output: &str) -> bool {
+    status_output
+        .strip_prefix("## ")
+        .is_some_and(|header| header.starts_with("No commits yet on ") || header.starts_with("Initial commit on "))
+}
+
 /// Parses the "## ..." line of `git status -b`, for example
 /// "main...origin/main [ahead 1, behind 2]", "No commits yet on main" or
 /// "HEAD (no branch)".

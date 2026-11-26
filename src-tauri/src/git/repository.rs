@@ -1,9 +1,10 @@
 //! The repository the window currently has open, plus small helpers for
 //! validating UI input and finding a commit's first parent.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use serde::Serialize;
 
@@ -115,12 +116,30 @@ pub fn has_commits(dir: &Path) -> bool {
     run_git(dir, ["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok()
 }
 
-/// Where `name` (e.g. "MERGE_HEAD") is in the git folder. `--git-path`
-/// resolves inside worktrees and custom git dirs too; the printed path is
-/// relative to `dir` (or absolute), so it is joined on.
+/// The repository's git folder (a linked worktree's own one, not the
+/// common one), as an absolute path. Asked of git once per folder and then
+/// remembered, since every refresh looks in it several times; asked again
+/// if the remembered folder is gone (the repository was deleted or moved).
+pub fn git_dir(dir: &Path) -> Result<PathBuf, String> {
+    static KNOWN: OnceLock<Mutex<HashMap<PathBuf, PathBuf>>> = OnceLock::new();
+    let known = KNOWN.get_or_init(Default::default);
+    let remembered = known.lock().ok().and_then(|known| known.get(dir).cloned());
+    if let Some(git_dir) = remembered.filter(|git_dir| git_dir.is_dir()) {
+        return Ok(git_dir);
+    }
+    let git_dir = PathBuf::from(run_git(dir, ["rev-parse", "--absolute-git-dir"])?.trim());
+    if let Ok(mut known) = known.lock() {
+        known.insert(dir.to_path_buf(), git_dir.clone());
+    }
+    Ok(git_dir)
+}
+
+/// Where `name` (e.g. "MERGE_HEAD") is in the git folder. Only for files
+/// each worktree keeps for itself (the state of a stopped operation,
+/// Gitizen's own notes), which is everything Gitizen reads there; shared
+/// ones such as refs would need `git rev-parse --git-path`.
 pub fn git_path(dir: &Path, name: &str) -> Result<PathBuf, String> {
-    let path = run_git(dir, ["rev-parse", "--git-path", name])?;
-    Ok(dir.join(path.trim()))
+    Ok(git_dir(dir)?.join(name))
 }
 
 /// The text of file `name` in the git folder, or None if it can't be read.
