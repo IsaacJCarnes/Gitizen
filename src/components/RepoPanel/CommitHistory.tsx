@@ -80,35 +80,41 @@ export default function CommitHistory(): React.JSX.Element {
   const changeCount = status?.files.length ?? 0;
   const hasPending = changeCount > 0;
 
-  const graph = useMemo(() => {
-    const nodes: GraphNode[] = commits.map(({ hash, parents }) => ({ hash, parents }));
+  const { rows, graph } = useMemo(() => {
+    // Each stash sits just above the commit it is attached to; one whose
+    // commit is beyond the loaded history goes at the top, with no line.
     const loaded = new Set(commits.map((commit) => commit.hash));
-    let trunk = findTrunk(commits);
-    // Stashes go right after the uncommitted changes, each taking a lane over.
-    nodes.unshift(
-      ...stashes.map((stash) => ({
-        hash: stashKey(stash),
-        // A commit beyond the loaded history gets no line to nowhere.
-        parents: loaded.has(stash.anchor) ? [stash.anchor] : [],
-        dashed: true,
-      })),
-    );
-    if (hasPending) {
-      const head = commits.find((commit) => commit.refs.some((ref) => ref.current));
-      nodes.unshift({ hash: PENDING, parents: head ? [head.hash] : [], dashed: true });
-      // Changes on top of main stay in main's lane.
-      if (head && head.hash === trunk) trunk = PENDING;
+    const stashesAt = new Map<string, BranchStash[]>();
+    for (const stash of stashes) {
+      const at = loaded.has(stash.anchor) ? stash.anchor : "";
+      stashesAt.set(at, [...(stashesAt.get(at) ?? []), stash]);
     }
-    return buildCommitGraph(nodes, trunk);
+    // null stands for the "Uncommitted changes" row.
+    const entries: (GitCommit | null | StashRow)[] = [
+      ...(hasPending ? [null] : []),
+      ...(stashesAt.get("") ?? []).map((stash) => ({ stash })),
+      ...commits.flatMap((commit) => [...(stashesAt.get(commit.hash) ?? []).map((stash) => ({ stash })), commit]),
+    ];
+
+    let trunk = findTrunk(commits);
+    const head = commits.find((commit) => commit.refs.some((ref) => ref.current));
+    const nodes = entries.map((entry): GraphNode => {
+      if (entry === null) return { hash: PENDING, parents: head ? [head.hash] : [], dashed: true };
+      if ("stash" in entry) {
+        const { anchor } = entry.stash;
+        // Pushed aside by the uncommitted changes, it keeps its commit's colour.
+        return { hash: stashKey(entry.stash), parents: loaded.has(anchor) ? [anchor] : [], dashed: true, parentColor: true };
+      }
+      return { hash: entry.hash, parents: entry.parents };
+    });
+    // Changes on top of main stay in main's lane, else a stash on main does.
+    const trunkStash = trunk === undefined ? undefined : stashesAt.get(trunk)?.[0];
+    if (hasPending && head && head.hash === trunk) trunk = PENDING;
+    else if (trunkStash) trunk = stashKey(trunkStash);
+    return { rows: entries, graph: buildCommitGraph(nodes, trunk) };
   }, [commits, hasPending, stashes]);
 
   const width = graph.laneCount * LANE_WIDTH;
-  // null stands for the "Uncommitted changes" row.
-  const rows: (GitCommit | null | StashRow)[] = [
-    ...(hasPending ? [null] : []),
-    ...stashes.map((stash) => ({ stash })),
-    ...commits,
-  ];
 
   const selectedHashes = new Set(selectedCommits.map((commit) => commit.hash));
 
@@ -165,7 +171,7 @@ export default function CommitHistory(): React.JSX.Element {
       <ol className="commit-graph">
         {rows.map((entry, index) => {
           const row = graph.rows[index];
-          const color = laneColor(row.lane);
+          const color = laneColor(row.color);
           if (entry && "stash" in entry) {
             const { stash } = entry;
             const own = stash.branch === status?.branch;

@@ -195,12 +195,28 @@ pub fn tidy_change_runs(diff: &str) -> String {
 }
 
 /// One run of changes with its common lines made context (see `tidy_change_runs`).
+///
+/// git's "\ No newline at end of file" note marks a side's last line as the
+/// file's last, with no line break. A removed line with that note that comes
+/// back with more lines added after it (lines were added at the end of a
+/// file that didn't end in a line break) only gained its line break, which
+/// the lines after it bring anyway, so it is unchanged too. A line whose
+/// only change is its line break (the note on one side alone, nothing after
+/// it) stays a change.
 fn tidy_run(run: &[&str]) -> Vec<String> {
     let as_is = || run.iter().map(|line| line.to_string()).collect();
-    // A note ties the line before it to the end of the file; leave such runs alone.
-    if run.iter().any(|line| line.starts_with('\\')) {
-        return as_is();
-    }
+    let note = run.iter().find(|line| line.starts_with('\\')).copied();
+    // Whether the side's last line has the note after it.
+    let noted = |marker: char| {
+        let mut last = None;
+        for (i, line) in run.iter().enumerate() {
+            if line.starts_with(marker) {
+                last = Some(i);
+            }
+        }
+        last.is_some_and(|i| run.get(i + 1).is_some_and(|next| next.starts_with('\\')))
+    };
+    let (removed_noted, added_noted) = (noted('-'), noted('+'));
     let side = |marker: char| -> Vec<&str> {
         run.iter().filter(|line| line.starts_with(marker)).map(|line| &line[1..]).collect()
     };
@@ -209,42 +225,70 @@ fn tidy_run(run: &[&str]) -> Vec<String> {
     if n == 0 || m == 0 || n * m > TIDY_LIMIT {
         return as_is();
     }
+    // Whether removed[r] and added[a] are the same line, line break included.
+    let same = |r: usize, a: usize| {
+        let removed_end = removed_noted && r == n - 1;
+        let added_end = added_noted && a == m - 1;
+        removed[r] == added[a]
+            && match (removed_end, added_end) {
+                (false, false) | (true, true) => true,
+                // Gained its line break, which the lines added after it need anyway.
+                (true, false) => a < m - 1,
+                (false, true) => false,
+            }
+    };
     // lcs[r][a]: longest common sequence of removed[r..] and added[a..].
     let mut lcs = vec![vec![0u32; m + 1]; n + 1];
     for r in (0..n).rev() {
         for a in (0..m).rev() {
-            lcs[r][a] = if removed[r] == added[a] {
-                lcs[r + 1][a + 1] + 1
-            } else {
-                lcs[r + 1][a].max(lcs[r][a + 1])
-            };
+            lcs[r][a] = if same(r, a) { lcs[r + 1][a + 1] + 1 } else { lcs[r + 1][a].max(lcs[r][a + 1]) };
         }
     }
     if lcs[0][0] == 0 {
         return as_is();
     }
     // Before each common line: the removals, then the additions, that come
-    // before it on each side; after the last one, whatever is left.
+    // before it on each side; after the last one, whatever is left. A side's
+    // note follows its last line wherever that ends up.
+    let note = note.unwrap_or_default().to_string();
+    let removal = |r: usize| {
+        let mut lines = vec![format!("-{}", removed[r])];
+        if removed_noted && r == n - 1 {
+            lines.push(note.clone());
+        }
+        lines
+    };
+    let addition = |a: usize| {
+        let mut lines = vec![format!("+{}", added[a])];
+        if added_noted && a == m - 1 {
+            lines.push(note.clone());
+        }
+        lines
+    };
     let mut out = Vec::with_capacity(run.len());
     let (mut minus, mut plus) = (Vec::new(), Vec::new());
     let (mut r, mut a) = (0, 0);
     while r < n && a < m {
-        if removed[r] == added[a] && lcs[r][a] == lcs[r + 1][a + 1] + 1 {
+        if same(r, a) && lcs[r][a] == lcs[r + 1][a + 1] + 1 {
             out.append(&mut minus);
             out.append(&mut plus);
             out.push(format!(" {}", removed[r]));
+            // Still the file's last line, without a line break, on both sides.
+            if added_noted && a == m - 1 {
+                out.push(note.clone());
+            }
             r += 1;
             a += 1;
         } else if lcs[r + 1][a] >= lcs[r][a + 1] {
-            minus.push(format!("-{}", removed[r]));
+            minus.extend(removal(r));
             r += 1;
         } else {
-            plus.push(format!("+{}", added[a]));
+            plus.extend(addition(a));
             a += 1;
         }
     }
-    minus.extend(removed[r..].iter().map(|text| format!("-{text}")));
-    plus.extend(added[a..].iter().map(|text| format!("+{text}")));
+    minus.extend((r..n).flat_map(removal));
+    plus.extend((a..m).flat_map(addition));
     out.append(&mut minus);
     out.append(&mut plus);
     out
@@ -410,6 +454,26 @@ mod tests {
         let note = "@@ -1 +1 @@\n-a\n\\ No newline at end of file\n+a\n";
         assert_eq!(tidy_change_runs(note), note);
         assert_eq!(tidy_change_runs(""), "");
+    }
+
+    #[test]
+    fn keeps_a_last_line_that_only_gains_its_line_break() {
+        // "new text" had no line break; two lines were added after it.
+        let diff = "@@ -1 +1,3 @@\n-new text\n\\ No newline at end of file\n+new text\n+\n+2\n\\ No newline at end of file";
+        let tidy = tidy_change_runs(diff);
+        assert_eq!(tidy, "@@ -1 +1,3 @@\n new text\n+\n+2\n\\ No newline at end of file");
+        // Staging works on it: nothing staged is HEAD, everything is the new file.
+        let head = "new text";
+        assert_eq!(index_content(head, &tidy, &set(&[])).unwrap(), head);
+        assert_eq!(index_content(head, &tidy, &changed_line_indices(&tidy)).unwrap(), "new text\n\n2");
+        assert_eq!(index_content(head, &tidy, &set(&[at(&tidy, "+")])).unwrap(), "new text\n\n");
+
+        // Lines added before and after a changed last line.
+        let around = "@@ -1,2 +1,3 @@\n-a\n-b\n\\ No newline at end of file\n+a\n+b\n+c\n";
+        assert_eq!(tidy_change_runs(around), "@@ -1,2 +1,3 @@\n a\n b\n+c\n");
+        // Taking the line break away is still shown as a change.
+        let lost = "@@ -1,2 +1 @@\n-a\n-b\n+a\n\\ No newline at end of file";
+        assert_eq!(tidy_change_runs(lost), "@@ -1,2 +1 @@\n-a\n-b\n+a\n\\ No newline at end of file");
     }
 
     #[test]

@@ -32,7 +32,7 @@ export default function CommitGraphCell({
   width,
   pending,
 }: CommitGraphCellProps): React.JSX.Element {
-  const color = laneColor(row.lane);
+  const color = laneColor(row.color);
 
   return (
     <svg className="graph" width={width} height={ROW_HEIGHT}>
