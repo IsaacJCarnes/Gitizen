@@ -30,3 +30,4 @@ export type { ResetMode } from "./generated/ResetMode";
 export type { Resolution } from "./generated/Resolution";
 export type { SavedCommandKind } from "./generated/SavedCommandKind";
 export type { StashOutcome } from "./generated/StashOutcome";
+export type { WorkingState } from "./generated/WorkingState";

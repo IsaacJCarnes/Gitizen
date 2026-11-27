@@ -7,6 +7,10 @@
 //! one of them needs (the `git status` output gives the checked-out branch,
 //! whether it has commits, and the conflicted files), and the independent
 //! git calls run side by side on their own threads.
+//!
+//! Staging, discarding and editing files change only the working state (the
+//! status, conflicted files and stamps), so after those the UI asks for
+//! `working_state` alone: one `git status`.
 
 use ts_rs::TS;
 use std::collections::HashMap;
@@ -29,14 +33,23 @@ use crate::stash::{stashes_in, BranchStash};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[ts(export)]
 pub struct RepositoryState {
-    pub status: GitStatus,
+    #[serde(flatten)]
+    pub working: WorkingState,
     pub commits: Vec<GitCommit>,
     pub branches: Vec<GitBranch>,
     pub remotes: Vec<Remote>,
-    pub conflicts: ConflictState,
     pub stashes: Vec<BranchStash>,
     /// Hashes of the commits that may be rewritten (see `history::rewritable_in`).
     pub rewritable: Vec<String>,
+}
+
+/// The part of `RepositoryState` that working on files changes: what
+/// `working_state` returns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
+pub struct WorkingState {
+    pub status: GitStatus,
+    pub conflicts: ConflictState,
     /// For each changed file's path, a stamp that changes whenever its
     /// combined diff might (the file or the index was written), so the UI
     /// reloads a file's diff only then. Together with HEAD's commit, which
@@ -65,6 +78,29 @@ fn stamps_of(dir: &Path, status: &GitStatus) -> HashMap<String, String> {
         .collect()
 }
 
+/// The working state from `git status --porcelain --branch -z` output.
+fn working_from(dir: &Path, output: &str) -> WorkingState {
+    let status = parse_status(output);
+    let stamps = stamps_of(dir, &status);
+    WorkingState { conflicts: conflict_state(dir, parse_unmerged(output)), status, stamps }
+}
+
+/// -z: NUL-separated entries, so paths with spaces or quotes come through as is.
+fn status_output(dir: &Path) -> Result<String, String> {
+    run_git(dir, ["status", "--porcelain=v1", "--branch", "-z", "--untracked-files=all"])
+}
+
+/// Just the working state, after an action that only changes files or the
+/// index (one `git status`).
+#[tauri::command]
+pub async fn working_state(repo: Repo<'_>) -> Result<WorkingState, String> {
+    working_in(&repo.require()?)
+}
+
+pub(crate) fn working_in(dir: &Path) -> Result<WorkingState, String> {
+    Ok(working_from(dir, &status_output(dir)?))
+}
+
 #[tauri::command]
 pub async fn repository_state(repo: Repo<'_>) -> Result<RepositoryState, String> {
     state_in(&repo.require()?)
@@ -77,14 +113,11 @@ pub(crate) fn state_in(dir: &Path) -> Result<RepositoryState, String> {
         let stashes = scope.spawn(|| stashes_in(dir));
         let remotes = scope.spawn(|| remotes_in(dir));
 
-        // Status first on this thread; the conflicts and the rewritable
-        // commits are worked out from it.
-        // -z: NUL-separated entries, so paths with spaces or quotes come through as is.
-        let output = run_git(dir, ["status", "--porcelain=v1", "--branch", "-z", "--untracked-files=all"])?;
-        let status = parse_status(&output);
-        let conflicts = conflict_state(dir, parse_unmerged(&output));
-        let rewritable = rewritable_on(dir, status.branch.as_deref(), !head_is_unborn(&output))?;
-        let stamps = stamps_of(dir, &status);
+        // Status first on this thread; the working state and the
+        // rewritable commits are worked out from it.
+        let output = status_output(dir)?;
+        let working = working_from(dir, &output);
+        let rewritable = rewritable_on(dir, working.status.branch.as_deref(), !head_is_unborn(&output))?;
 
         let joined = |name: &str| format!("Loading the {name} failed");
         Ok(RepositoryState {
@@ -92,10 +125,8 @@ pub(crate) fn state_in(dir: &Path) -> Result<RepositoryState, String> {
             branches: branches.join().map_err(|_| joined("branches"))??,
             stashes: stashes.join().map_err(|_| joined("stashes"))??,
             remotes: remotes.join().map_err(|_| joined("remotes"))?,
-            status,
-            conflicts,
+            working,
             rewritable,
-            stamps,
         })
     })
 }
@@ -120,7 +151,7 @@ mod tests {
     fn loads_every_part_together() {
         let dir = new_repo("state");
         let empty = state_in(&dir).unwrap();
-        assert_eq!(empty.status.branch.as_deref(), Some("main"));
+        assert_eq!(empty.working.status.branch.as_deref(), Some("main"));
         assert!(empty.commits.is_empty() && empty.branches.is_empty() && empty.rewritable.is_empty());
 
         commit_file(&dir, "a.txt", "a\n");
@@ -129,12 +160,12 @@ mod tests {
         std::fs::write(dir.join("b.txt"), "changed\n").unwrap();
         let state = state_in(&dir).unwrap();
         assert_eq!(state.commits.len(), 2);
-        assert_eq!(state.status.files.len(), 1);
+        assert_eq!(state.working.status.files.len(), 1);
         assert_eq!(state.rewritable, vec![state.commits[0].hash.clone()]);
-        assert_eq!(state.conflicts.operation, None);
+        assert_eq!(state.working.conflicts.operation, None);
         assert!(state.remotes.is_empty() && state.stashes.is_empty());
         // The stamp changes when the file is written, and when it is staged.
-        let stamp = |state: &RepositoryState| state.stamps["b.txt"].clone();
+        let stamp = |state: &RepositoryState| state.working.stamps["b.txt"].clone();
         let before = stamp(&state);
         assert_eq!(stamp(&state_in(&dir).unwrap()), before);
         std::fs::write(dir.join("b.txt"), "changed again\n").unwrap();

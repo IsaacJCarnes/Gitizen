@@ -13,15 +13,17 @@ import type {
   ResetMode,
   Resolution,
   StashOutcome,
+  WorkingState,
 } from "../../shared/gitTypes";
 import { gitizen } from "../api/gitizen";
 import { toAppError, type AppError } from "../utils/errors";
 import { attempt, loadOrReset } from "../utils/load";
-import { useAutoRefresh } from "./useAutoRefresh";
+import { useAutoRefresh, type RefreshTimes } from "./useAutoRefresh";
 import { useBranchSwitch } from "./useBranchSwitch";
 import { useCommitForm } from "./useCommitForm";
 import { useCommitSelection } from "./useCommitSelection";
 import { useDiffSettings } from "./useDiffSettings";
+import { useStaging } from "./useStaging";
 import { useStashSelection } from "./useStashSelection";
 import { useSync, type SyncAction } from "./useSync";
 
@@ -119,7 +121,15 @@ export interface GitOperations {
   /** Clones `url` into folder `name` inside `parent` and opens the clone. Resolves to true once open. */
   cloneRepository: (url: string, parent: string, name: string) => Promise<boolean>;
   refresh: () => Promise<void>;
-  /** Stages (`staged` true) or unstages every given path in one git call. */
+  /**
+   * Files ticked or unticked in the changes list whose staging git hasn't
+   * finished yet (path to staged), so their checkboxes show it at once.
+   */
+  pendingStage: ReadonlyMap<string, boolean>;
+  /**
+   * Stages (`staged` true) or unstages every given path in one git call,
+   * queued behind any staging still running (see `useStaging`).
+   */
   setFilesStaged: (paths: string[], staged: boolean) => Promise<boolean>;
   /**
    * Commits the staged files with the summary, plus the description as the
@@ -336,43 +346,25 @@ export function useGitOperations({
   // Closes the repository; set once `closeRepository` is defined below,
   // since `refresh` (defined first) needs it.
   const closeRef = useRef<((reason?: string) => void) | null>(null);
-  // When the last refresh started (milliseconds since 1970): it shows every
-  // change made before then, so the file watcher's report of one is skipped.
-  const refreshStarted = useRef(0);
+  // When the last full and working-state refreshes started (milliseconds
+  // since 1970): each shows every change made before then, so the file
+  // watcher's report of one is skipped (see `useAutoRefresh`).
+  const refreshStarted = useRef<RefreshTimes>({ full: 0, working: 0 });
   // Fills the commit form with git's prepared message; set once the commit
   // form exists below, since `refresh` (defined first) needs it.
   const prepareMessageRef = useRef<((message: string) => void) | null>(null);
 
-  /** Reloads everything shown about the repository, in one backend call. */
-  const refresh = useCallback(async (): Promise<void> => {
-    refreshStarted.current = Date.now();
-    try {
-      const {
-        status: nextStatus,
-        commits: nextCommits,
-        branches: nextBranches,
-        remotes: nextRemotes,
-        conflicts: nextConflicts,
-        stashes: nextStash,
-        rewritable: nextRewritable,
-        stamps: nextStamps,
-      } = await gitizen.repositoryState();
-      setRewritable(nextRewritable);
-      setStamps(nextStamps);
-      // The current branch's stash first, so it sits next to the commits.
-      setStashes(
-        [...nextStash].sort(
-          (a, b) => Number(b.branch === nextStatus.branch) - Number(a.branch === nextStatus.branch),
-        ),
-      );
+  /**
+   * Shows a working state from a refresh. Opens the first conflicted file
+   * when an operation has just stopped (or is found stopped on opening a
+   * repository), and closes it once finished.
+   */
+  const showWorking = useCallback(
+    ({ status: nextStatus, conflicts: nextConflicts, stamps: nextStamps }: WorkingState): void => {
       statusRef.current = nextStatus;
       setStatus(nextStatus);
-      setCommits(nextCommits);
-      setBranches(nextBranches);
-      setRemotes(nextRemotes);
+      setStamps(nextStamps);
       setConflicts(nextConflicts);
-      // Open the first conflicted file when an operation has just stopped (or
-      // is found stopped on opening a repository), and close it once finished.
       if (nextConflicts.operation !== lastOperation.current) {
         setSelectedConflict(nextConflicts.files[0]?.path ?? null);
         if (nextConflicts.operation) {
@@ -386,7 +378,13 @@ export function useGitOperations({
         }
         lastOperation.current = nextConflicts.operation;
       }
-    } catch (refreshError) {
+    },
+    [selectCommit],
+  );
+
+  /** Shows a failed refresh, or closes a repository whose folder is gone. */
+  const refreshFailed = useCallback(
+    async (refreshError: unknown): Promise<void> => {
       // A repository whose folder was deleted (or is no longer a
       // repository) is closed instead of failing on every refresh.
       const open = repoRef.current;
@@ -395,22 +393,69 @@ export function useGitOperations({
         return;
       }
       reportError(refreshError);
-    }
-  }, [reportError, selectCommit]);
+    },
+    [reportError],
+  );
 
-  useAutoRefresh(repo, refresh, refreshStarted);
+  /** Reloads everything shown about the repository, in one backend call. */
+  const refresh = useCallback(async (): Promise<void> => {
+    refreshStarted.current.full = Date.now();
+    try {
+      const next = await gitizen.repositoryState();
+      setRewritable(next.rewritable);
+      // The current branch's stash first, so it sits next to the commits.
+      setStashes(
+        [...next.stashes].sort(
+          (a, b) => Number(b.branch === next.status.branch) - Number(a.branch === next.status.branch),
+        ),
+      );
+      setCommits(next.commits);
+      setBranches(next.branches);
+      setRemotes(next.remotes);
+      showWorking(next);
+    } catch (refreshError) {
+      await refreshFailed(refreshError);
+    }
+  }, [showWorking, refreshFailed]);
 
   /**
-   * Runs a git command, then refreshes. Resolves to false (with the error
-   * shown) if it failed, so callers can tell without a try/catch of their own.
+   * Reloads only the working state (one `git status`), after something that
+   * changes files or the index and nothing else: staging, discarding, saving.
+   */
+  const refreshWorking = useCallback(async (): Promise<void> => {
+    refreshStarted.current.working = Date.now();
+    try {
+      showWorking(await gitizen.workingState());
+    } catch (refreshError) {
+      await refreshFailed(refreshError);
+    }
+  }, [showWorking, refreshFailed]);
+
+  useAutoRefresh(repo, refresh, refreshWorking, refreshStarted);
+
+  const staging = useStaging({
+    refreshWorking,
+    reportError,
+    selectedPath: selectedFile?.path ?? null,
+    diff,
+    hideWhitespace,
+  });
+  const { whenIdle } = staging;
+
+  /**
+   * Runs a git command (after any staging still queued), then refreshes:
+   * everything, or with `working` only the working state. Resolves to false
+   * (with the error shown) if it failed, so callers can tell without a
+   * try/catch of their own.
    */
   const runOperation = useCallback(
-    (operation: () => Promise<unknown>): Promise<boolean> =>
+    (operation: () => Promise<unknown>, working = false): Promise<boolean> =>
       attempt(async () => {
+        await whenIdle();
         await operation();
-        await refresh();
+        await (working ? refreshWorking() : refresh());
       }, reportError),
-    [refresh, reportError],
+    [refresh, refreshWorking, reportError, whenIdle],
   );
 
   const { setNeedsForcePush, resetSync, ...sync } = useSync({
@@ -514,16 +559,6 @@ export function useGitOperations({
     [openWith],
   );
 
-  const setFilesStaged = useCallback(
-    (paths: string[], staged: boolean): Promise<boolean> => {
-      if (paths.length === 0) return Promise.resolve(true);
-      return runOperation(() =>
-        staged ? gitizen.stage(paths) : gitizen.unstage(paths),
-      );
-    },
-    [runOperation],
-  );
-
   /**
    * Runs a stash call. Stopping on conflicts counts as not done, and
    * records `kind` so the UI can warn about them.
@@ -551,6 +586,11 @@ export function useGitOperations({
   const branchSwitch = useBranchSwitch({ status, runOperation, runStash });
   const { checkoutBranch } = branchSwitch;
 
+  const discardFiles = useCallback(
+    (paths: string[]): Promise<boolean> => runOperation(() => gitizen.discardFiles(paths), true),
+    [runOperation],
+  );
+
   // Actions that are a single backend call (taking the same arguments)
   // followed by a refresh.
   const simpleActions = useMemo(() => {
@@ -575,7 +615,6 @@ export function useGitOperations({
       rebaseOntoBranch: act(gitizen.rebaseOntoBranch),
       squashMergeBranch: act(gitizen.squashMergeBranch),
       dropStash: act(gitizen.dropStash),
-      discardFiles: act(gitizen.discardFiles),
       resolveConflict: act(gitizen.resolveConflict),
       saveConflictResolution: act(gitizen.saveConflictResolution),
       // A merge tool is waited for and may stage the file itself; an editor
@@ -586,32 +625,19 @@ export function useGitOperations({
     };
   }, [runOperation]);
 
-  /** Runs `call` on the selected file's path, for an action on some of its diff's lines. */
-  const runOnLines = useCallback(
-    (lines: number[], call: (path: string) => Promise<unknown>): Promise<boolean> => {
-      // Lines of a whitespace-hidden diff can't be mapped back onto the file.
-      if (!selectedFile || lines.length === 0 || hideWhitespace) {
-        return Promise.resolve(false);
-      }
-      return runOperation(() => call(selectedFile.path));
-    },
-    [selectedFile, hideWhitespace, runOperation],
-  );
-
-  const stageLines = useCallback(
-    (lines: number[], staged: boolean) =>
-      runOnLines(lines, (path) => gitizen.setStagedLines(path, diff, lines, staged)),
-    [runOnLines, diff],
-  );
-
   const discardLines = useCallback(
-    (lines: number[]) => runOnLines(lines, (path) => gitizen.discardLines(path, diff, lines)),
-    [runOnLines, diff],
+    (lines: number[]): Promise<boolean> => {
+      // Lines of a whitespace-hidden diff can't be mapped back onto the file.
+      if (!selectedFile || lines.length === 0 || hideWhitespace) return Promise.resolve(false);
+      const { path } = selectedFile;
+      return runOperation(() => gitizen.discardLines(path, diff, lines), true);
+    },
+    [selectedFile, hideWhitespace, diff, runOperation],
   );
 
   const saveWorkingFile = useCallback(
     async (path: string, text: string): Promise<boolean> => {
-      const saved = await runOperation(() => gitizen.saveWorkingFile(path, text));
+      const saved = await runOperation(() => gitizen.saveWorkingFile(path, text), true);
       if (saved) {
         // The file is now among the changes (unless the text was the same),
         // so show it there. The next refresh corrects the entry's details.
@@ -634,16 +660,28 @@ export function useGitOperations({
   const selectedPath = selectedFile?.path ?? null;
   const headHash = commits.find((commit) => commit.refs.some((ref) => ref.current))?.hash;
   const diffStamp = selectedPath === null ? "" : `${headHash}|${stamps[selectedPath]}`;
-  useEffect(
-    () =>
-      loadOrReset(
-        selectedPath === null ? null : gitizen.fileDiff(selectedPath, hideWhitespace),
-        setFileDiff,
-        NO_DIFF,
-        reportError,
-      ),
-    [selectedPath, diffStamp, hideWhitespace, reportError],
-  );
+  const { queued, diffLoaded, reloadToken } = staging;
+  useEffect(() => {
+    const started = queued();
+    return loadOrReset(
+      selectedPath === null ? null : gitizen.fileDiff(selectedPath, hideWhitespace),
+      (next: FileDiff) => {
+        setFileDiff(next);
+        diffLoaded(started);
+      },
+      NO_DIFF,
+      reportError,
+    );
+  }, [selectedPath, diffStamp, reloadToken, hideWhitespace, reportError, queued, diffLoaded]);
+
+  // The staged lines with any ticked or unticked but not yet staged.
+  const { pendingLines } = staging;
+  const shownStagedLines = useMemo(() => {
+    if (pendingLines.size === 0) return stagedLines;
+    const lines = new Set(stagedLines);
+    pendingLines.forEach((staged, line) => (staged ? lines.add(line) : lines.delete(line)));
+    return [...lines];
+  }, [stagedLines, pendingLines]);
 
   // Staging or unstaging moves a file between lists; keep it selected
   // in its new list, and drop the selection once the file has no changes.
@@ -707,7 +745,8 @@ export function useGitOperations({
     rewritable,
     selectedFile,
     diff,
-    stagedLines,
+    stagedLines: shownStagedLines,
+    pendingStage: staging.pendingFiles,
     error,
     reportError,
     dismissError,
@@ -717,7 +756,7 @@ export function useGitOperations({
     initRepository,
     cloneRepository,
     refresh,
-    setFilesStaged,
+    setFilesStaged: staging.setFilesStaged,
     stashChanges,
     stashes,
     branchStash,
@@ -730,7 +769,8 @@ export function useGitOperations({
     conflicts,
     selectedConflict,
     setSelectedConflict,
-    stageLines,
+    stageLines: staging.stageLines,
+    discardFiles,
     discardLines,
     saveWorkingFile,
   };

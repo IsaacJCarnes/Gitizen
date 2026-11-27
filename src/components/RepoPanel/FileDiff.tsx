@@ -97,11 +97,10 @@ export default function FileDiff(): React.JSX.Element {
   if (!shownHash && selectedFile && !settings.hideWhitespace) {
     lineStaging = {
       staged: new Set(stagedLines),
+      // Ticks show at once and the staging queues behind any still running,
+      // so the boxes stay usable; only discarding lines blocks them.
       disabled: applying,
-      onToggle: (lines, staged) => {
-        setApplying(true);
-        void stageLines(lines, staged).finally(() => setApplying(false));
-      },
+      onToggle: (lines, staged) => void stageLines(lines, staged),
     };
   }
 

@@ -60,6 +60,7 @@ pub fn run() {
             recent_repos::forget_repository,
             watcher::watch_repository,
             state::repository_state,
+            state::working_state,
             working_tree::file_diff,
             working_tree::file_text,
             working_tree::commit_files,

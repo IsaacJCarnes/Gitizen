@@ -15,6 +15,7 @@ import type {
   GitHubAccount,
   GitHubRepository,
   RepositoryState,
+  WorkingState,
   ResetMode,
   Resolution,
   SavedCommandKind,
@@ -32,6 +33,7 @@ export const Command = {
   ForgetRepository: "forget_repository",
   WatchRepository: "watch_repository",
   RepositoryState: "repository_state",
+  WorkingState: "working_state",
   FileDiff: "file_diff",
   FileText: "file_text",
   CommitFiles: "commit_files",
@@ -134,6 +136,8 @@ export interface GitizenApi {
   watchRepository(): Promise<void>;
   /** Everything the window shows about the open repository, in one call for each refresh. */
   repositoryState(): Promise<RepositoryState>;
+  /** Just the status, conflicted files and stamps, after staging, discarding or saving files. */
+  workingState(): Promise<WorkingState>;
   /**
    * Every uncommitted change to one file (staged and unstaged together)
    * against HEAD, so it reads the same whether or not the file is staged,

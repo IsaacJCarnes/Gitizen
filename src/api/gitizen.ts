@@ -19,6 +19,7 @@ export const gitizen: GitizenApi = {
   forgetRepo: (path) => invoke(Command.ForgetRepository, { path }),
   watchRepository: () => invoke(Command.WatchRepository),
   repositoryState: () => invoke(Command.RepositoryState),
+  workingState: () => invoke(Command.WorkingState),
   fileDiff: (path, ignoreWhitespace) =>
     invoke(Command.FileDiff, { path, ignoreWhitespace }),
   fileText: (path, hash) => invoke(Command.FileText, { path, hash }),

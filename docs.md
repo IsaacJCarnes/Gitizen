@@ -14,7 +14,7 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 - The start screen lists recent repositories under **Open repository** so you can reopen one with a click.
 - **Clone repository** (on the start screen, and **Clone repo...** in the repository dropdown) clones into a new folder and opens it. Pick the repository from your GitHub repositories (yours, collaborations and your organizations', most recently updated first, with a filter box; needs the GitHub sign-in), or paste any URL. Choose the folder to clone into (**Browse…**, remembered for next time) and the new folder's name, which follows the repository's name until you type your own. A folder that already exists must be empty. Private repositories sign in through git's credential helper like any other git command.
 - No refresh button: Gitizen watches the repository's files and refreshes by itself (status, history, branches, remotes, the branch's stash, any stopped operation and the open diff) a moment after anything changes, whether in Gitizen, an editor, a terminal or another git tool, even while its window isn't focused. Bursts of changes are gathered into one refresh. Changes to files `.gitignore` ignores (build output, `node_modules`) and git's own object store and lock files are left out. Coming back to the window refreshes too.
-- Each refresh is one backend call (`repository_state`) that runs its git commands side by side and shares what several parts need (one `git status` gives the changes, the branch, the conflicted files and whether there are commits yet). A Gitizen action refreshes once when it finishes: the watcher's report of the changes it made is skipped, since that refresh already shows them. The open file's diff is only loaded again when a refresh finds that the file, the index or HEAD changed (`stamps` in `repository_state`: when each changed file and the index were last written).
+- Each refresh is one backend call (`repository_state`) that runs its git commands side by side and shares what several parts need (one `git status` gives the changes, the branch, the conflicted files and whether there are commits yet). A Gitizen action refreshes once when it finishes: the watcher's report of the changes it made is skipped, since that refresh already shows them. Staging, discarding and saving files refresh only the working state (`working_state`: one `git status` for the changes, conflicted files and stamps), as does a change the watcher sees only in files and the index (an editor saving); anything else refreshes everything. The open file's diff is only loaded again when a refresh finds that the file, the index or HEAD changed (`stamps` in `repository_state`: when each changed file and the index were last written).
 
 ### GitHub account
 - **Sign in to GitHub** in the header (and on the start screen) signs in through git's credential helper: Git Credential Manager, which comes with Git for Windows, opens GitHub's sign-in in the browser. Without it, paste a personal access token instead (a classic token needs the `repo` scope). Either way the sign-in is checked with GitHub and saved in the credential helper, so git's own pushes and pulls to github.com use it too, and Gitizen picks it up again at the next start.
@@ -48,7 +48,7 @@ The goal is feature parity with tools like GitHub Desktop and GitKraken.
 - Sidebar shows every changed file in a single **Changes** list, each with its git status code (M, A, D, R, …) and a count of fully staged files.
 - A file's status code stays the same whether it is staged or not: new files show **A** both untracked and staged.
 - Opening a repository leaves git's index as it is, so the checkboxes show exactly what was already staged.
-- Each file has a checkbox: ticking it stages the file, unticking unstages it. A partially staged file shows a mixed (dash) checkbox, and clicking it stages the rest.
+- Each file has a checkbox: ticking it stages the file, unticking unstages it. The checkbox (and a line's, in the diff) changes at once; the staging runs in the background, one change after another, and anything else (a commit, say) waits for it. If git refuses one, the error shows and the checkbox goes back. A partially staged file shows a mixed (dash) checkbox, and clicking it stages the rest.
 - A checkbox in the list header stages every file at once, or unstages every file when all are already staged. It shows a mixed state when only some are staged.
 - A renamed file is staged and unstaged with both its old and new path, so the rename moves as one change. Paths git no longer has anywhere (e.g. the old half of a staged rename) are skipped instead of failing.
 - Files are sorted by path, so a file keeps its place in the list when it is staged or unstaged.
@@ -183,7 +183,8 @@ src-tauri/               Rust backend (Tauri 2)
     util.rs              Shared helpers: config files, the folder picker, blocking threads, temp folders, safe paths,
                          test repositories
     git/
-      runner.rs          Runs the git CLI (no shell, no console window, never prompts); `run_command` and
+      runner.rs          Runs the git CLI (no shell, no console window, never prompts; on Windows the real git.exe
+                         from `git --exec-path`, skipping Git for Windows' cmd\git.exe launcher); `run_command` and
                          `run_command_with_input` run a prepared `git_command` (extra environment, stdin)
       repository.rs      Holds the open repository (and `git init`); input validation, branch and git-folder helpers
                          (the git folder is looked up once per repository and remembered)
@@ -204,8 +205,9 @@ src/                     UI (React)
     useCommitSelection.ts  The selected commits (multi-select), their files and the picked file's diff
     useStashSelection.ts   The stash selected in the history, its picked file and that file's diff
     useSync.ts           Fetch, pull, push and publish, the background fetch, and force-push tracking
-    useAutoRefresh.ts    Refreshes when the backend's file watcher reports a change no refresh has shown yet, or the
-                         window regains focus
+    useAutoRefresh.ts    Refreshes (just the working state, or everything) when the backend's file watcher reports a
+                         change no refresh has shown yet, or the window regains focus
+    useStaging.ts        Staging files and lines in the background, with the checkboxes showing it at once
     useGitHubAccount.ts  The GitHub sign-in (account, sign in with the credential helper or a token, sign out)
     useDiffSettings.ts   Diff layout and whitespace settings, saved in localStorage
     useSavedCommand.ts   Loads and saves one of the commands kept in settings.json

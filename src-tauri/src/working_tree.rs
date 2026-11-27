@@ -44,8 +44,22 @@ pub async fn file_diff(
 }
 
 pub(crate) fn file_diff_in(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Result<FileDiff, String> {
-    let combined = combined_diff(dir, path, ignore_whitespace)?;
-    let staged_lines = staged_lines_of(dir, path, &combined)?;
+    // The two -U0 diffs behind the staged lines run alongside the combined diff.
+    let (combined, cached, worktree) = std::thread::scope(|scope| {
+        let cached = scope.spawn(|| zero_context_diff(dir, path, true));
+        let worktree = scope.spawn(|| zero_context_diff(dir, path, false));
+        let combined = combined_diff(dir, path, ignore_whitespace);
+        (combined, cached.join(), worktree.join())
+    });
+    let combined = combined?;
+    let joined = |result: std::thread::Result<Result<String, String>>| {
+        result.map_err(|_| "Loading the diff failed".to_string())?
+    };
+    let staged_lines = if combined.untracked {
+        Vec::new()
+    } else {
+        staged_lines_from(&combined, &joined(cached)?, &joined(worktree)?)
+    };
     Ok(FileDiff { diff: combined.diff, staged_lines })
 }
 
@@ -58,10 +72,21 @@ pub(crate) struct CombinedDiff {
 
 /// The diff `file_diff` shows: HEAD to working tree for one file.
 pub(crate) fn combined_diff(dir: &Path, path: &str, ignore_whitespace: Option<bool>) -> Result<CombinedDiff, String> {
+    let diff_against = |base: &str| {
+        let mut args = diff_options(ignore_whitespace);
+        args.extend([base, "--", path]);
+        run_diff(dir, args)
+    };
     // One `git status` of the path says both whether it is untracked and
-    // whether HEAD has commits yet. git refuses paths outside the
-    // repository here, so a file read after this can't leave the repository.
-    let output = run_git(dir, ["status", "--porcelain=v1", "--branch", "-z", "--untracked-files=all", "--", path])?;
+    // whether HEAD has commits yet. The diff against HEAD, which is what is
+    // nearly always needed, runs meanwhile. git refuses paths outside the
+    // repository in both, and the file itself is only read after the status.
+    let (output, against_head) = std::thread::scope(|scope| {
+        let against_head = scope.spawn(|| diff_against("HEAD"));
+        let output = run_git(dir, ["status", "--porcelain=v1", "--branch", "-z", "--untracked-files=all", "--", path]);
+        (output, against_head.join())
+    });
+    let output = output?;
     let untracked = output.split('\0').nth(1).is_some_and(|entry| entry.starts_with("??"));
     if untracked {
         // Store the file as git would (line endings normalised), so the diff
@@ -69,11 +94,13 @@ pub(crate) fn combined_diff(dir: &Path, path: &str, ignore_whitespace: Option<bo
         let (hash, contents) = worktree_blob(dir, path)?;
         return Ok(CombinedDiff { diff: new_file_diff(path, &hash, &contents), untracked });
     }
-    // HEAD, or git's empty tree before the first commit.
-    let base = if head_is_unborn(&output) { EMPTY_TREE } else { "HEAD" };
-    let mut args = diff_options(ignore_whitespace);
-    args.extend([base, "--", path]);
-    Ok(CombinedDiff { diff: run_diff(dir, args)?, untracked })
+    // Before the first commit there is no HEAD: compare with git's empty tree.
+    let diff = if head_is_unborn(&output) {
+        diff_against(EMPTY_TREE)?
+    } else {
+        against_head.map_err(|_| "Loading the diff failed".to_string())??
+    };
+    Ok(CombinedDiff { diff, untracked })
 }
 
 /// Runs a `git diff` (built on `diff_options`) for the UI to show, with
@@ -83,26 +110,35 @@ pub(crate) fn run_diff<'a>(dir: &Path, args: impl IntoIterator<Item = &'a str>) 
     run_git(dir, args).map(|diff| tidy_change_runs(&diff))
 }
 
+/// A -U0 diff of one file, which lists only changed lines with their line
+/// numbers in the hunk headers. `cached`: HEAD to index; else index to
+/// working tree.
+fn zero_context_diff(dir: &Path, path: &str, cached: bool) -> Result<String, String> {
+    let mut args = diff_options(None);
+    args.push("-U0");
+    if cached {
+        args.push("--cached");
+    }
+    args.extend(["--", path]);
+    run_git(dir, args)
+}
+
 /// Indices of the changed lines of `combined` (whitespace shown or hidden)
 /// that are in the index.
 pub(crate) fn staged_lines_of(dir: &Path, path: &str, combined: &CombinedDiff) -> Result<Vec<usize>, String> {
     if combined.untracked {
         return Ok(Vec::new());
     }
-    // -U0 diffs list only changed lines, with their line numbers in the hunk
-    // headers. `--cached` is HEAD to index; without it, index to working tree.
-    let zero_context = |cached: bool| {
-        let mut args = diff_options(None);
-        args.push("-U0");
-        if cached {
-            args.push("--cached");
-        }
-        args.extend(["--", path]);
-        run_git(dir, args)
-    };
-    let (removed_in_index, _) = changed_line_numbers(&zero_context(true)?);
-    let (_, added_in_worktree) = changed_line_numbers(&zero_context(false)?);
-    Ok(staged_line_indices(&combined.diff, &removed_in_index, &added_in_worktree))
+    let cached = zero_context_diff(dir, path, true)?;
+    let worktree = zero_context_diff(dir, path, false)?;
+    Ok(staged_lines_from(combined, &cached, &worktree))
+}
+
+/// `staged_lines_of`, given its two -U0 diffs.
+fn staged_lines_from(combined: &CombinedDiff, cached: &str, worktree: &str) -> Vec<usize> {
+    let (removed_in_index, _) = changed_line_numbers(cached);
+    let (_, added_in_worktree) = changed_line_numbers(worktree);
+    staged_line_indices(&combined.diff, &removed_in_index, &added_in_worktree)
 }
 
 /// Unified diff that adds `contents` (whose blob hash is `hash`) as a new
@@ -233,9 +269,16 @@ pub async fn stage(repo: Repo<'_>, paths: Vec<String>) -> Result<(), String> {
 }
 
 fn stage_in(dir: &Path, paths: Vec<String>) -> Result<(), String> {
-    // A path that is in neither the working tree nor the index (a staged
-    // deletion, or the old half of a staged rename) has nothing left to
-    // stage, and `git add` would fail on it with "pathspec did not match".
+    // "--" ends the options, so a path can never be read as one.
+    let add = |paths: Vec<String>| run_git(dir, ["add", "--"].map(String::from).into_iter().chain(paths)).map(drop);
+    // Usually one `git add` does it. A path that is in neither the working
+    // tree nor the index (a staged deletion, or the old half of a staged
+    // rename) has nothing left to stage, and makes `git add` fail with
+    // "pathspec did not match" before it adds anything; only after a failure
+    // are such paths found and left out (any other failure comes back again).
+    if add(paths.clone()).is_ok() {
+        return Ok(());
+    }
     let mut ls_files = vec!["ls-files".to_string(), "-z".into(), "--".into()];
     ls_files.extend(paths.iter().cloned());
     let output = run_git(dir, ls_files)?;
@@ -247,15 +290,17 @@ fn stage_in(dir: &Path, paths: Vec<String>) -> Result<(), String> {
     if paths.is_empty() {
         return Ok(());
     }
-    // "--" ends the options, so a path can never be read as one.
-    let args = ["add", "--"].map(String::from).into_iter().chain(paths);
-    run_git(dir, args).map(drop)
+    add(paths)
 }
 
 #[tauri::command]
 pub async fn unstage(repo: Repo<'_>, paths: Vec<String>) -> Result<(), String> {
+    unstage_in(&repo.require()?, paths)
+}
+
+fn unstage_in(dir: &Path, paths: Vec<String>) -> Result<(), String> {
     let args = ["reset", "HEAD", "--"].map(String::from).into_iter().chain(paths);
-    run_git(&repo.require()?, args).map(drop)
+    run_git(dir, args).map(drop)
 }
 
 /// Stages (`staged` true) or unstages (`staged` false) single changed lines
@@ -456,6 +501,35 @@ mod tests {
     /// One part of what `repository_state` returns, e.g. "status".
     fn part(window: &WebviewWindow<MockRuntime>, name: &str) -> Value {
         call(window, "repository_state", json!({})).unwrap()[name].clone()
+    }
+
+    /// How long one stage takes end to end, as the UI runs it: stage, the
+    /// refresh after it, and reloading the open file's diff. Run with
+    /// `cargo test --release time_a_stage -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn time_a_stage() {
+        let repo = temp_repo();
+        std::fs::write(repo.join("b.txt"), "one\ntwo\nthree\n").unwrap();
+        let mut times = Vec::new();
+        for round in 0..9 {
+            let path = vec!["b.txt".to_string()];
+            let start = std::time::Instant::now();
+            if round % 2 == 0 {
+                stage_in(&repo, path).unwrap();
+            } else {
+                unstage_in(&repo, path).unwrap();
+            }
+            let staged = start.elapsed();
+            crate::state::working_in(&repo).unwrap();
+            let refreshed = start.elapsed();
+            file_diff_in(&repo, "b.txt", None).unwrap();
+            times.push((staged, refreshed, start.elapsed()));
+        }
+        times.sort_by_key(|(_, _, total)| *total);
+        let (staged, refreshed, total) = times[times.len() / 2];
+        println!("median: staged {staged:?}, refreshed {refreshed:?}, diff loaded {total:?}");
+        let _ = std::fs::remove_dir_all(&repo);
     }
 
     /// The header checkbox over a staged rename: unstaging passes both

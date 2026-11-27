@@ -1,10 +1,11 @@
 //! Runs the `git` executable. Arguments go straight to the process (never
 //! through a shell), so paths and messages can't be read as shell syntax.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::OnceLock;
 
 /// Runs `git <args>` in `dir` and returns its stdout. A non-zero exit becomes
 /// an error carrying git's own message.
@@ -65,7 +66,11 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let mut command = Command::new("git");
+    let program = git_program();
+    let mut command = Command::new(&program.program);
+    if let Some(path) = &program.path {
+        command.env("PATH", path);
+    }
     command
         .current_dir(dir)
         .args(args)
@@ -77,6 +82,48 @@ where
         .env("GIT_OPTIONAL_LOCKS", "0");
     hide_console_window(&mut command);
     command
+}
+
+/// The git executable Gitizen starts, and the PATH to start it with.
+struct GitProgram {
+    program: PathBuf,
+    /// Set when `program` needs folders of its own on PATH (see `git_program`).
+    path: Option<OsString>,
+}
+
+/// The git to run, worked out once. On Windows the `git` on PATH is usually
+/// Git for Windows' `cmd\git.exe`, a small launcher that sets up PATH and
+/// then starts the real git, so every command pays for two process starts.
+/// Gitizen starts the real one (`git.exe` in `git --exec-path`) itself,
+/// with the launcher's folders (its `bin` and `usr\bin`, for the shell, ssh
+/// and credential helpers) put first on PATH, as GitHub Desktop does with
+/// its own git. Anywhere else, or if that git can't be found, plain `git`.
+fn git_program() -> &'static GitProgram {
+    static PROGRAM: OnceLock<GitProgram> = OnceLock::new();
+    PROGRAM.get_or_init(|| real_git().unwrap_or(GitProgram { program: PathBuf::from("git"), path: None }))
+}
+
+#[cfg(windows)]
+fn real_git() -> Option<GitProgram> {
+    let mut command = Command::new("git");
+    hide_console_window(command.arg("--exec-path").stdin(Stdio::null()));
+    let output = command.output().ok().filter(|output| output.status.success())?;
+    // e.g. "C:/Program Files/Git/ucrt64/libexec/git-core"
+    let exec_path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    let program = exec_path.join("git.exe");
+    let prefix = exec_path.parent()?.parent()?; // ...\Git\ucrt64 (or mingw64)
+    let root = prefix.parent()?; // ...\Git
+    if !program.is_file() {
+        return None;
+    }
+    let mut folders = vec![prefix.join("bin"), root.join("usr").join("bin")];
+    folders.extend(std::env::var_os("PATH").map(|path| std::env::split_paths(&path).collect::<Vec<_>>()).unwrap_or_default());
+    Some(GitProgram { program, path: std::env::join_paths(folders).ok() })
+}
+
+#[cfg(not(windows))]
+fn real_git() -> Option<GitProgram> {
+    None
 }
 
 fn could_not_run(error: std::io::Error) -> String {

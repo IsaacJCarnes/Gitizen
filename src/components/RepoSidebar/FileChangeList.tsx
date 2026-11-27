@@ -53,8 +53,14 @@ function displayCode(entry: ChangedPath): string {
   return entry.staged?.code ?? entry.unstaged?.code ?? "";
 }
 
-/** Checked when fully staged, mixed when only part of the file is staged. */
-function stageState(entry: ChangedPath): CheckState {
+/**
+ * Checked when fully staged, mixed when only part of the file is staged.
+ * A file just ticked or unticked shows that at once (pending), before
+ * git has finished staging it.
+ */
+function stageState(entry: ChangedPath, pending: ReadonlyMap<string, boolean>): CheckState {
+  const ticked = pending.get(entry.path);
+  if (ticked !== undefined) return ticked;
   if (entry.staged && entry.unstaged) return "mixed";
   return Boolean(entry.staged);
 }
@@ -78,6 +84,7 @@ export default function FileChangeList(): React.JSX.Element {
     selectedFile,
     setSelectedFile,
     setFilesStaged,
+    pendingStage,
     conflicts: { operation, files },
     selectedConflict,
     setSelectedConflict,
@@ -96,7 +103,7 @@ export default function FileChangeList(): React.JSX.Element {
   const entries = all.filter((entry) => !conflictByPath.has(entry.path));
   const conflicted = all.filter((entry) => conflictByPath.has(entry.path));
 
-  const states = entries.map(stageState);
+  const states = entries.map((entry) => stageState(entry, pendingStage));
   const fullyStaged = states.filter((state) => state === true).length;
   const allState = combineStates(states);
 
@@ -115,7 +122,7 @@ export default function FileChangeList(): React.JSX.Element {
   // A rename moves in the index as a deletion plus an addition, so both
   // paths are staged or unstaged together.
   const toggle = (entry: ChangedPath) =>
-    setFilesStaged(renamePaths(entry), stageState(entry) !== true);
+    setFilesStaged(renamePaths(entry), stageState(entry, pendingStage) !== true);
 
   const toggleAll = () =>
     setFilesStaged(entries.flatMap(renamePaths), allState !== true);

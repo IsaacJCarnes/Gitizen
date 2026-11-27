@@ -30,7 +30,9 @@ const MAX_WAIT: Duration = Duration::from_secs(2);
 const CHECK_LIMIT: usize = 500;
 
 /// The `repository-changed` payload: when the last change of the burst was
-/// noticed, in milliseconds since 1970 (like JavaScript's `Date.now()`).
+/// noticed, in milliseconds since 1970 (like JavaScript's `Date.now()`), and
+/// whether only working-tree files and the index changed (which the
+/// window's working-state refresh shows; anything else needs a full one).
 #[derive(Clone, Copy, serde::Serialize, TS)]
 #[ts(export, rename = "RepositoryChanged")]
 #[serde(rename_all = "camelCase")]
@@ -38,6 +40,7 @@ struct Changed {
     // A JavaScript number (as Date.now() gives), not a bigint.
     #[ts(type = "number")]
     changed_at: u64,
+    working_only: bool,
 }
 
 /// Milliseconds since 1970, now.
@@ -59,8 +62,8 @@ pub async fn watch_repository(
     watcher: tauri::State<'_, RepositoryWatcher>,
 ) -> Result<(), String> {
     let dir = repo.require()?;
-    let watch = start(&dir, move |changed_at| {
-        let _ = app.emit(CHANGED_EVENT, Changed { changed_at });
+    let watch = start(&dir, move |changed_at, working_only| {
+        let _ = app.emit(CHANGED_EVENT, Changed { changed_at, working_only });
     })?;
     *watcher.0.lock().map_err(|_| "The file watcher is unavailable".to_string())? = Some(watch);
     Ok(())
@@ -89,9 +92,10 @@ impl Folders {
 }
 
 /// Watches the repository at `dir`, calling `on_change` after each burst of
-/// changes that matters, passing when its last change was noticed (see
+/// changes that matters, passing when its last change was noticed and
+/// whether it only changed working-tree files and the index (see
 /// `Changed`). Watching stops when the returned watcher is dropped.
-pub(crate) fn start(dir: &Path, on_change: impl Fn(u64) + Send + 'static) -> Result<RecommendedWatcher, String> {
+pub(crate) fn start(dir: &Path, on_change: impl Fn(u64, bool) + Send + 'static) -> Result<RecommendedWatcher, String> {
     let folders = Folders::of(dir)?;
 
     let (sender, receiver) = channel::<PathBuf>();
@@ -118,7 +122,7 @@ pub(crate) fn start(dir: &Path, on_change: impl Fn(u64) + Send + 'static) -> Res
 
 /// Gathers changed paths into bursts and reports those that matter. Ends
 /// when the watcher (the sending side) is dropped.
-fn report_bursts(receiver: &Receiver<PathBuf>, folders: &Folders, on_change: impl Fn(u64)) {
+fn report_bursts(receiver: &Receiver<PathBuf>, folders: &Folders, on_change: impl Fn(u64, bool)) {
     while let Ok(first) = receiver.recv() {
         let mut paths = vec![first];
         let started = Instant::now();
@@ -138,23 +142,35 @@ fn report_bursts(receiver: &Receiver<PathBuf>, folders: &Folders, on_change: imp
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         }
-        if matters(folders, &paths) {
-            on_change(last_change);
+        if let Some(working_only) = classify(folders, &paths) {
+            on_change(last_change, working_only);
         }
     }
 }
 
 /// True if any of `paths` is a change the UI shows: a file git doesn't
 /// ignore, or git's own state (HEAD, the index, refs, a stopped merge...).
+#[cfg(test)]
 fn matters(folders: &Folders, paths: &[PathBuf]) -> bool {
+    classify(folders, paths).is_some()
+}
+
+/// Whether `paths` hold a change the UI shows (see `matters`): None if not,
+/// else whether only working-tree files and the index changed (true) or
+/// git's other state too (false).
+fn classify(folders: &Folders, paths: &[PathBuf]) -> Option<bool> {
     if paths.len() > CHECK_LIMIT {
-        return true;
+        return Some(false);
     }
+    let mut index = false;
     let mut work_files = Vec::new();
     for path in paths {
         if let Ok(inside) = path.strip_prefix(&folders.git_dir) {
             if git_state_changed(inside) {
-                return true;
+                if inside != Path::new("index") {
+                    return Some(false);
+                }
+                index = true;
             }
         } else if let Ok(inside) = path.strip_prefix(&folders.work_tree) {
             if !inside.as_os_str().is_empty() {
@@ -162,9 +178,9 @@ fn matters(folders: &Folders, paths: &[PathBuf]) -> bool {
             }
         }
     }
-    !work_files.is_empty() && !all_ignored(&folders.work_tree, &work_files)
+    let files = !work_files.is_empty() && !all_ignored(&folders.work_tree, &work_files);
+    (index || files).then_some(true)
 }
-
 /// Whether a change at `inside` (a path in the git folder) changes anything
 /// the UI shows. Objects and logs only change along with a ref, and lock
 /// files come and go around every git command.
@@ -204,6 +220,9 @@ mod tests {
         assert!(matters(&folders, &[git_dir("HEAD")]));
         assert!(matters(&folders, &[git_dir("refs/heads/main")]));
         assert!(matters(&folders, &[git_dir("index")]));
+        // Files and the index alone need only the working state; refs need everything.
+        assert_eq!(classify(&folders, &[work("src/main.rs"), git_dir("index")]), Some(true));
+        assert_eq!(classify(&folders, &[git_dir("index"), git_dir("refs/heads/main")]), Some(false));
         assert!(!matters(&folders, &[git_dir("objects/ab/cdef")]));
         assert!(!matters(&folders, &[git_dir("index.lock"), git_dir("logs/HEAD")]));
         let _ = std::fs::remove_dir_all(&dir);
@@ -214,7 +233,7 @@ mod tests {
         let dir = new_repo("watch-events");
         commit_file(&dir, "a.txt", "a\n");
         let (sender, receiver) = mpsc::channel();
-        let watcher = start(&dir, move |_| {
+        let watcher = start(&dir, move |_, _| {
             let _ = sender.send(());
         })
         .unwrap();
