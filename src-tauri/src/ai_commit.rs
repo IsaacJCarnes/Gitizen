@@ -7,6 +7,7 @@
 //! system shell (`cmd` on Windows, `sh` elsewhere) so it is written exactly
 //! as it would be in a terminal, and npm shims like `claude.cmd` are found.
 
+use ts_rs::TS;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -34,7 +35,8 @@ If the change needs explaining, add a blank line and then a short description \
 of what changed and why, wrapped at 72 characters.";
 
 /// A commit message split the way the commit form shows it.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export, rename = "GeneratedCommitMessage")]
 pub struct CommitMessage {
     pub summary: String,
     pub description: String,

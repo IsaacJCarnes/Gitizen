@@ -9,14 +9,15 @@
 //! what was going on, so it can be finished or undone later, even after a
 //! restart.
 
+use ts_rs::TS;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
-use crate::commands::{diff_options, run_diff};
-use crate::conflicts::{conflicted_files, operation_in, Operation};
+use crate::working_tree::{diff_options, run_diff};
+use crate::conflicts::{conflicted_files, require_no_operation, Operation};
 use crate::git::parsers::parse_name_status;
 use crate::git::repository::{
     assert_branch_name, assert_hash, git_path, read_git_file, require_current_branch, Repo, EMPTY_TREE,
@@ -55,7 +56,8 @@ enum Kind {
 
 /// What stashing or popping did: finished, or stopped on conflicts that
 /// the conflict editor now shows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub enum StashOutcome {
     Done,
@@ -63,7 +65,8 @@ pub enum StashOutcome {
 }
 
 /// A branch's stash, as the sidebar shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct BranchStash {
     pub hash: String,
     /// The branch it was made on.
@@ -184,9 +187,7 @@ fn apply(dir: &Path, hash: &str, index: bool) -> Result<(), String> {
 
 /// The checked-out branch, refusing while another operation is stopped.
 fn branch_for_stash(dir: &Path) -> Result<String, String> {
-    if let Some(operation) = operation_in(dir) {
-        return Err(format!("Finish or abort the {} in progress first.", operation.git_name()));
-    }
+    require_no_operation(dir, "using the stash")?;
     require_current_branch(dir, "using its stash")
 }
 
@@ -436,9 +437,7 @@ pub async fn drop_stash(repo: Repo<'_>, branch: Option<String>) -> Result<(), St
 fn drop_in(dir: &Path, branch: Option<&str>) -> Result<(), String> {
     let branch = match branch {
         Some(branch) => {
-            if let Some(operation) = operation_in(dir) {
-                return Err(format!("Finish or abort the {} in progress first.", operation.git_name()));
-            }
+            require_no_operation(dir, "discarding a stash")?;
             assert_branch_name(branch)?.to_string()
         }
         None => branch_for_stash(dir)?,
@@ -531,6 +530,7 @@ pub(crate) fn abort_in(dir: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::conflicts::operation_in;
 
     use crate::util::test_support::{commit_file, git, new_repo};
 

@@ -2,12 +2,13 @@
 //! and the new side of a working-tree change, a commit or a stash, each as
 //! a `data:` URL the webview can show directly.
 
+use ts_rs::TS;
 use std::path::Path;
 
 use serde::Serialize;
 
-use crate::git::repository::{assert_hash, first_parent_of, has_commits, Repo, EMPTY_TREE};
-use crate::git::runner::{run_git, run_git_bytes};
+use crate::git::repository::{assert_hash, Repo};
+use crate::git::runner::run_git_bytes;
 use crate::util::file_in_repo;
 
 /// Larger images aren't sent to the webview.
@@ -15,7 +16,8 @@ const MAX_BYTES: usize = 40 * 1024 * 1024;
 
 /// The two sides of an image's change. A side is None when the file
 /// doesn't exist there (added or deleted).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct ImageVersions {
     pub old: Option<String>,
     pub new: Option<String>,
@@ -46,7 +48,8 @@ fn image_versions_in(
     let old_path = old_path.unwrap_or(path);
     let (old, new) = match hash {
         None => {
-            let old = if has_commits(dir) { blob(dir, "HEAD", old_path) } else { None };
+            // Before the first commit there is no HEAD, so no old side.
+            let old = blob(dir, "HEAD", old_path);
             let file = file_in_repo(dir, path)?;
             let new = if file.is_file() {
                 Some(std::fs::read(&file).map_err(|error| error.to_string())?)
@@ -66,9 +69,8 @@ fn image_versions_in(
         }
         Some(hash) => {
             let hash = assert_hash(hash)?;
-            let parent = first_parent_of(dir, hash)?;
-            let old = if parent == EMPTY_TREE { None } else { blob(dir, &parent, old_path) };
-            (old, blob(dir, hash, path))
+            // A root commit has no parent, so no old side.
+            (blob(dir, &format!("{hash}^"), old_path), blob(dir, hash, path))
         }
     };
     Ok(ImageVersions { old: old.map(|bytes| data_url(path, &bytes)).transpose()?, new: new.map(|bytes| data_url(path, &bytes)).transpose()? })
@@ -76,9 +78,8 @@ fn image_versions_in(
 
 /// The file at `path` in `revision`, or None if it isn't there.
 fn blob(dir: &Path, revision: &str, path: &str) -> Option<Vec<u8>> {
-    // "<rev>:<path>" names the blob; the object must exist and be a file.
+    // "<rev>:<path>" names the blob; `cat-file blob` fails unless it exists and is a file.
     let spec = format!("{revision}:{path}");
-    run_git(dir, ["cat-file", "-e", spec.as_str()]).ok()?;
     run_git_bytes(dir, ["cat-file", "blob", spec.as_str()]).ok()
 }
 

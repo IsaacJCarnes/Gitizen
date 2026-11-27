@@ -4,7 +4,6 @@
 mod ai_commit;
 mod branches;
 mod clone;
-mod commands;
 mod commit_actions;
 mod conflicts;
 mod discard;
@@ -13,6 +12,7 @@ mod git;
 mod github;
 mod history;
 mod image_diff;
+mod open;
 mod recent_repos;
 mod remote;
 mod settings;
@@ -20,6 +20,7 @@ mod stash;
 mod state;
 mod util;
 mod watcher;
+mod working_tree;
 
 use git::repository::OpenRepository;
 use github::GitHubSession;
@@ -49,31 +50,31 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::open_repository,
-            commands::init_repository,
-            commands::open_repository_at,
-            commands::close_repository,
-            commands::repository_exists,
+            open::open_repository,
+            open::init_repository,
+            open::open_repository_at,
+            open::close_repository,
+            open::repository_exists,
             recent_repos::recent_repositories,
             recent_repos::remember_repository,
             recent_repos::forget_repository,
             watcher::watch_repository,
             state::repository_state,
-            commands::file_diff,
-            commands::file_text,
-            commands::commit_files,
-            commands::commit_diff,
-            commands::stage,
-            commands::unstage,
-            commands::commit,
-            commands::undo_last_commit,
+            working_tree::file_diff,
+            working_tree::file_text,
+            working_tree::commit_files,
+            working_tree::commit_diff,
+            working_tree::stage,
+            working_tree::unstage,
+            working_tree::commit,
+            working_tree::undo_last_commit,
             stash::stash_changes,
             stash::pop_stash,
             stash::drop_stash,
             stash::stash_diff,
             image_diff::image_versions,
-            commands::checkout,
-            commands::set_staged_lines,
+            working_tree::checkout,
+            working_tree::set_staged_lines,
             discard::discard_files,
             discard::discard_lines,
             edit_file::can_edit_file,

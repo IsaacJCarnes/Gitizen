@@ -6,6 +6,7 @@
 //! where git's own pushes and pulls to github.com find it too, and in
 //! memory while Gitizen runs.
 
+use ts_rs::TS;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -15,7 +16,8 @@ use crate::git::runner::{git_command, run_command_with_input};
 use crate::util::blocking;
 
 /// The signed-in GitHub user, as the UI shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubAccount {
     pub login: String,

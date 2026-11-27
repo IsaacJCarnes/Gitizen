@@ -8,11 +8,12 @@
 //! those changes this branch alone, so nothing else in the repository (or
 //! on the remote) is left pointing at history that no longer exists.
 
+use ts_rs::TS;
 use std::path::Path;
 
 use serde::Deserialize;
 
-use crate::conflicts::{operation_in, unless_conflicted};
+use crate::conflicts::{require_no_operation, unless_conflicted};
 use crate::git::repository::{
     assert_hash, current_branch, first_parent_of, has_commits, require_clean,
     require_current_branch, Repo, EMPTY_TREE,
@@ -55,14 +56,6 @@ pub(crate) fn rewritable_on(dir: &Path, branch: Option<&str>, has_commits: bool)
     Ok(hashes)
 }
 
-/// Fails while a merge, rebase or the like is stopped, which `doing` would get mixed into.
-fn require_no_operation(dir: &Path, doing: &str) -> Result<(), String> {
-    match operation_in(dir) {
-        Some(_) => Err(format!("Finish or abort the operation in progress before {doing}.")),
-        None => Ok(()),
-    }
-}
-
 /// The rewritable commits, failing with why when `wanted` aren't all among them.
 fn require_rewritable(dir: &Path, wanted: &[String], doing: &str) -> Result<Vec<String>, String> {
     let branch = require_current_branch(dir, doing)?;
@@ -102,7 +95,8 @@ fn revert_in(dir: &Path, hash: &str) -> Result<(), String> {
 /// How far `reset_to_commit` goes: "soft" keeps the changes of the commits
 /// it drops staged, "mixed" keeps them unstaged, "hard" throws them (and any
 /// uncommitted changes) away.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub enum ResetMode {
     Soft,

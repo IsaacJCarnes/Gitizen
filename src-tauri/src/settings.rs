@@ -3,6 +3,7 @@
 //! They are saved in `settings.json` in the app's config folder, beside the
 //! recent repositories list, so they survive restarts.
 
+use ts_rs::TS;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
@@ -26,8 +27,9 @@ pub(crate) struct Settings {
 }
 
 /// Which saved command line a command reads or writes
-/// (`SavedCommandKind` in `shared/gitTypes.ts`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+/// (`SavedCommandKind` in TypeScript).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[ts(export, rename = "SavedCommandKind")]
 #[serde(rename_all = "camelCase")]
 pub enum SavedCommand {
     AiCommit,

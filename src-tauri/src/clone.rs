@@ -2,6 +2,7 @@
 //! list of repositories, into a folder the user picks; the clone is then
 //! opened like any repository.
 
+use ts_rs::TS;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -14,7 +15,8 @@ use crate::util::{blocking, pick_folder};
 
 /// One of the signed-in account's GitHub repositories (its own, a
 /// collaborator's, or an organization's it belongs to).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubRepository {
     /// "owner/name".

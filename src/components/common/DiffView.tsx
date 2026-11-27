@@ -1,25 +1,11 @@
 import "./DiffView.css";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { DiffLayout } from "../../hooks/useDiffSettings";
-import TriStateCheckbox from "./TriStateCheckbox";
-import { combineStates } from "../../utils/checkState";
-import {
-  HUNK_HEADER,
-  isChange,
-  parseDiff,
-  toSplitRows,
-  type DiffLine,
-} from "../../utils/diffLines";
+import { gapLines, toGaps, toHunks, type Gap } from "../../utils/diffHunks";
+import { parseDiff } from "../../utils/diffLines";
+import DiffBlock, { type LineMenu, type LineStaging } from "./DiffBlock";
 
-/** Turns on a checkbox beside every added and removed line. */
-export interface LineStaging {
-  /** Lines (see `DiffLine.index`) that are staged; their checkboxes are ticked. */
-  staged: ReadonlySet<number>;
-  /** Disables the checkboxes, e.g. while a change is being applied. */
-  disabled?: boolean;
-  /** Called with the lines to stage (`staged` true) or unstage. */
-  onToggle: (lines: number[], staged: boolean) => void;
-}
+export type { LineStaging } from "./DiffBlock";
 
 interface DiffViewProps {
   /** Unified diff text as returned by git. */
@@ -39,13 +25,11 @@ interface DiffViewProps {
    * `DiffLine.index`) and every changed line of its group (the run of
    * changes it belongs to). Leave out for no menu.
    */
-  onLineMenu?: (event: React.MouseEvent, line: number, group: number[]) => void;
+  onLineMenu?: LineMenu;
 }
 
 /** Lines revealed per click of an expand button. */
 const EXPAND_STEP = 20;
-
-const MARKERS: Record<string, string> = { add: "+", del: "-", context: " " };
 
 /**
  * git's file header ("diff --git", "index", "---", "+++") only matters to
@@ -54,202 +38,83 @@ const MARKERS: Record<string, string> = { add: "+", del: "-", context: " " };
  */
 const FILE_HEADER = /^(diff --git |index |--- |\+\+\+ )/;
 
-/** One hunk: its header, body lines and where it sits in the new file. */
-interface Hunk {
-  header: DiffLine;
-  body: DiffLine[];
-  /** First and last new-file line the hunk covers (last < first when it covers none). */
-  newFirst: number;
-  newLast: number;
-  /** Old-file line number minus new-file line number for lines just before the hunk. */
-  offsetBefore: number;
-  /** The same, for lines just after it. */
-  offsetAfter: number;
-  /** The hunk is a whole file being added or deleted, so nothing lies outside it. */
-  wholeFile: boolean;
-}
-
-/**
- * git's hunks, each split wherever unchanged lines sit between two runs of
- * changes, so every run of changes is a hunk of its own. The unchanged lines
- * between them become a gap, folded away like the lines between git's hunks;
- * the context git shows before the first and after the last change stays.
- */
-function toHunks(lines: DiffLine[]): Hunk[] {
-  const hunks: Hunk[] = [];
-  let header: DiffLine | null = null;
-  let body: DiffLine[] = [];
-  const flush = (): void => {
-    if (header) hunks.push(...splitHunk(header, body));
-    body = [];
-  };
-  for (const line of lines) {
-    if (line.kind === "hunk") {
-      flush();
-      header = line;
-    } else if (header) {
-      body.push(line);
-    }
-  }
-  flush();
-  return hunks;
-}
-
-/** One of git's hunks, split at the unchanged lines between its runs of changes. */
-function splitHunk(header: DiffLine, body: DiffLine[]): Hunk[] {
-  const match = HUNK_HEADER.exec(header.text);
-  // A missing length group means a one-line range.
-  const [oldStart, oldLen, newStart, newLen] = [1, 2, 3, 4].map((group) =>
-    Number(match?.[group] ?? 1),
-  );
-  // "-0,0" is a new file and "+0,0" a deleted one.
-  const wholeFile = (oldStart === 0 && oldLen === 0) || (newStart === 0 && newLen === 0);
-  // With a zero length, the start is the line the hunk comes after.
-  let oldNext = oldLen === 0 ? oldStart + 1 : oldStart;
-  let newNext = newLen === 0 ? newStart + 1 : newStart;
-
-  // Where each piece starts in `body`: after each run of unchanged lines
-  // that has changes both before and after it.
-  const isChangeOrNote = (line: DiffLine): boolean => line.kind !== "context";
-  const pieces: { start: number; end: number }[] = [];
-  let start = 0;
-  for (let i = 0; i < body.length; i++) {
-    if (body[i].kind !== "context" || i === 0 || !isChangeOrNote(body[i - 1])) continue;
-    let end = i;
-    while (end < body.length && body[end].kind === "context") end++;
-    const changeAfter = end < body.length && (body[end].kind === "add" || body[end].kind === "del");
-    if (changeAfter && body.slice(0, i).some(isChangeOrNote)) {
-      pieces.push({ start, end: i });
-      pieces.push({ start: i, end }); // the unchanged lines between, dropped below
-      start = end;
-    }
-    i = end - 1;
-  }
-  pieces.push({ start, end: body.length });
-
-  const hunks: Hunk[] = [];
-  pieces.forEach(({ start: from, end: to }, index) => {
-    const part = body.slice(from, to);
-    const olds = part.filter((line) => line.oldNumber !== undefined).length;
-    const news = part.filter((line) => line.newNumber !== undefined).length;
-    // Odd pieces are the unchanged lines between two runs: skipped over.
-    if (index % 2 === 0) {
-      const range = `@@ -${olds ? oldNext : oldNext - 1},${olds} +${news ? newNext : newNext - 1},${news} @@`;
-      // git's hint naming the enclosing function or block stays on the first piece.
-      const text = pieces.length === 1 ? header.text : index === 0 ? header.text.replace(HUNK_HEADER, range) : range;
-      hunks.push({
-        // The first piece keeps git's header (and its index); the rest get
-        // one of their own, keyed by their first line.
-        header: index === 0 ? { ...header, text } : { index: -1e9 - part[0].index, kind: "hunk", text },
-        body: part,
-        newFirst: newNext,
-        newLast: newNext + news - 1,
-        offsetBefore: oldNext - newNext,
-        // The hunk shifts later lines by however many lines it added or removed.
-        offsetAfter: oldNext + olds - (newNext + news),
-        wholeFile,
-      });
-    }
-    oldNext += olds;
-    newNext += news;
-  });
-  return hunks;
-}
-
-/** Lines of the new file between two hunks (or before the first / after the last). */
-interface Gap {
-  /** First and last new-file line of the gap; `last` is unknown after the last hunk until the file loads. */
-  first: number;
-  last?: number;
-  /** Old-file line number minus new-file line number inside the gap. */
-  offset: number;
-  /** Whether a hunk sits above / below the gap. */
-  above: boolean;
-  below: boolean;
-}
-
-/** One gap before each hunk, plus one after the last. */
-function toGaps(hunks: Hunk[], fileLineCount?: number): Gap[] {
-  return [...hunks, undefined].map((hunk, index) => {
-    const previous = hunks[index - 1];
-    return {
-      first: previous ? previous.newLast + 1 : 1,
-      // After the last hunk the gap runs to the end of the file, which is only
-      // known once it loads (or at once when the hunk is the whole file).
-      last: hunk ? hunk.newFirst - 1 : previous?.wholeFile ? previous.newLast : fileLineCount,
-      offset: hunk ? hunk.offsetBefore : (previous?.offsetAfter ?? 0),
-      above: Boolean(previous),
-      below: Boolean(hunk),
-    };
-  });
-}
-
 /** How much of a gap is shown: lines from its top and from its bottom. */
 interface Revealed {
   top: number;
   bottom: number;
 }
 
-/** A line's checkbox, or an empty cell that keeps the columns aligned. */
-function LineCheck({
-  line,
-  staging,
-}: {
-  line?: DiffLine;
+interface DiffGapProps {
+  gap: Gap;
+  shown: Revealed;
+  fileLines: string[] | null;
+  loadFailed: boolean;
+  split: boolean;
+  /** The diff's line staging, so the gap's columns line up with the hunks'. */
   staging?: LineStaging;
-}): React.JSX.Element | null {
-  if (!staging) return null;
-  if (!line || !isChange(line)) return <span className="check" />;
-  const staged = staging.staged.has(line.index);
-  const action = staged ? "Unstage" : "Stage";
-  return (
-    <span className="check">
-      <input
-        type="checkbox"
-        checked={staged}
-        disabled={staging.disabled}
-        onChange={() => staging.onToggle([line.index], !staged)}
-        aria-label={`${action} line ${line.newNumber ?? line.oldNumber}`}
-        title={`${action} this line`}
-      />
-    </span>
-  );
+  /** Reveals more of the gap (loading the file first if needed). */
+  onExpand: (change: (gap: Revealed) => Revealed) => void;
 }
 
 /**
- * The checkbox for a group of changed lines (a run of + and - lines with no
- * unchanged line between them): ticked when all are staged, mixed when some
- * are. Clicking stages the rest, or unstages all when all are staged.
+ * The unchanged lines between two hunks (or before the first, after the
+ * last): those revealed so far, and a button to reveal more.
  */
-function GroupCheck({
-  changes,
-  staging,
-}: {
-  changes: number[];
-  staging: LineStaging;
-}): React.JSX.Element {
-  const state = combineStates(changes.map((index) => staging.staged.has(index)));
-  return (
-    <TriStateCheckbox
-      state={state}
-      disabled={staging.disabled}
-      onChange={() => staging.onToggle(changes, state !== true)}
-      label={state === true ? "Unstage these lines" : "Stage these lines"}
-    />
-  );
-}
+function DiffGap({ gap, shown, fileLines, loadFailed, split, staging, onExpand }: DiffGapProps): React.JSX.Element | null {
+  // Length (and so `hidden`) is unknown for the trailing gap until the file loads.
+  const length = gap.last === undefined ? undefined : Math.max(0, gap.last - gap.first + 1);
+  if (length === 0) return null;
+  const hidden = length === undefined ? undefined : length - shown.top - shown.bottom;
+  // Once the revealed top and bottom meet, show the gap whole with no button.
+  const allShown = hidden !== undefined && hidden <= 0;
+  const last = gap.last ?? gap.first - 1;
+  const top = allShown
+    ? gapLines(gap, gap.first, last, fileLines)
+    : gapLines(gap, gap.first, gap.first + shown.top - 1, fileLines);
+  const bottom = allShown ? [] : gapLines(gap, last - shown.bottom + 1, last, fileLines);
 
-/** The line's text, with its +/-/space marker in Unified. An empty line becomes a space so its row keeps its height. */
-function lineText(line: DiffLine, withMarker: boolean): string {
-  const marker = withMarker ? (MARKERS[line.kind] ?? "") : "";
-  return marker + line.text || " ";
+  // One button: up for lines above the first hunk, down for lines below
+  // the last, and out (both directions) between two hunks.
+  let label = "↕ Expand";
+  let title = `Show ${EXPAND_STEP} more lines on each side`;
+  let change = (g: Revealed): Revealed => ({ top: g.top + EXPAND_STEP, bottom: g.bottom + EXPAND_STEP });
+  if (!gap.above) {
+    label = "↑ Expand up";
+    title = `Show ${EXPAND_STEP} more lines above`;
+    change = (g) => ({ ...g, bottom: g.bottom + EXPAND_STEP });
+  } else if (!gap.below) {
+    label = "↓ Expand down";
+    title = `Show ${EXPAND_STEP} more lines below`;
+    change = (g) => ({ ...g, top: g.top + EXPAND_STEP });
+  }
+  return (
+    <div className="gap">
+      {top.length > 0 && <DiffBlock body={top} split={split} staging={staging} />}
+      {!allShown && (
+        <div className="diff-line expander">
+          <button className="expand" title={title} onClick={() => onExpand(change)}>
+            {label}
+          </button>
+          <span className="code">
+            {loadFailed
+              ? "Couldn't load the file"
+              : hidden !== undefined
+                ? `${hidden} unchanged line${hidden === 1 ? "" : "s"}`
+                : "Unchanged lines below"}
+          </span>
+        </div>
+      )}
+      {bottom.length > 0 && <DiffBlock body={bottom} split={split} staging={staging} />}
+    </div>
+  );
 }
 
 /**
  * Renders a unified diff with added, removed and hunk-header lines
  * highlighted, in one column or side by side, with optional per-line and
  * per-hunk checkboxes for staging and buttons to expand the unchanged
- * lines between hunks.
+ * lines between hunks. The hunks and gaps come from `utils/diffHunks.ts`
+ * and their lines are drawn by `DiffBlock`.
  */
 export default function DiffView({
   diff,
@@ -281,8 +146,6 @@ export default function DiffView({
   }
 
   const split = layout === "split";
-  // The hunk checkbox column: left of the lines, or between the two sides.
-  const gutter = Boolean(lineStaging);
 
   const expand = async (gapIndex: number, change: (gap: Revealed) => Revealed): Promise<void> => {
     let file = fileLines;
@@ -302,168 +165,19 @@ export default function DiffView({
     }));
   };
 
-  /**
-   * Unified rows or split cells for `body`. With line staging, a column
-   * beside them holds a checkbox for each group of changed lines (when
-   * `groupChecks` is set; expanded unchanged lines have none).
-   */
-  const block = (key: string, body: DiffLine[], groupChecks = false): React.JSX.Element => {
-    // Each row's changed lines: one line per row in Unified, up to two in Split.
-    const rows: (DiffLine | undefined)[][] = split
-      ? toSplitRows(body).map((row) => [row.left, row.right])
-      : body.map((line) => [line]);
-    const rowChanges = rows.map((row) =>
-      row.filter((line): line is DiffLine => Boolean(line && isChange(line))).map((line) => line.index),
-    );
-    // A row is in a group if it has a change. A note ("\ No newline at end
-    // of file") belongs to the group it follows.
-    const inGroup = rows.map((row, index) =>
-      rowChanges[index].length > 0 ||
-      (row.some((line) => line?.kind === "note") && index > 0 && rowChanges[index - 1].length > 0),
-    );
-    // Consecutive group rows merge into one group spanning them.
-    const groups: { start: number; span: number; changes: number[] }[] = [];
-    inGroup.forEach((member, index) => {
-      if (!member) return;
-      const last = groups[groups.length - 1];
-      if (last && last.start + last.span === index) {
-        last.span++;
-        last.changes.push(...rowChanges[index]);
-      } else {
-        groups.push({ start: index, span: 1, changes: [...rowChanges[index]] });
-      }
-    });
-
-    // Each changed line's group, for the line menu.
-    const groupOf = new Map<number, number[]>();
-    for (const group of groups) {
-      for (const change of group.changes) groupOf.set(change, group.changes);
-    }
-
-    const cell = (line: DiffLine | undefined, side: "left" | "right" | "", row: number, number?: number): React.JSX.Element => {
-      // Grid columns: Unified is [gutter] lines; Split is left [gutter] right.
-      let gridColumn = gutter ? 2 : 1;
-      if (side === "left") gridColumn = 1;
-      if (side === "right") gridColumn = gutter ? 3 : 2;
-      return (
-        <div
-          key={`${side}${row}`}
-          className={`diff-line ${side} ${line?.kind ?? "empty"}`}
-          style={{ gridRow: row + 1, gridColumn }}
-          onContextMenu={
-            onLineMenu && line && isChange(line)
-              ? (event) => {
-                  event.preventDefault();
-                  onLineMenu(event, line.index, groupOf.get(line.index) ?? [line.index]);
-                }
-              : undefined
-          }
-        >
-          {side !== "left" && <LineCheck line={line} staging={lineStaging} />}
-          {split ? (
-            <span className="number">{number}</span>
-          ) : (
-            <>
-              <span className="number">{line?.oldNumber}</span>
-              <span className="number">{line?.newNumber}</span>
-            </>
-          )}
-          <span className="code">{line ? lineText(line, !split) : " "}</span>
-          {side === "left" && <LineCheck line={line} staging={lineStaging} />}
-        </div>
-      );
-    };
-
-    const cells = rows.flatMap((row, index) =>
-      split
-        ? [cell(row[0], "left", index, row[0]?.oldNumber), cell(row[1], "right", index, row[1]?.newNumber)]
-        : [cell(row[0], "", index)],
-    );
-    return (
-      <div key={key} className={`hunk-block${gutter ? " with-gutter" : ""}`}>
-        {gutter &&
-          groupChecks &&
-          lineStaging &&
-          groups.map((group) => (
-            <div
-              key={`g${group.start}`}
-              className="hunk-gutter"
-              style={{ gridRow: `${group.start + 1} / span ${group.span}`, gridColumn: split ? 2 : 1 }}
-            >
-              <GroupCheck changes={group.changes} staging={lineStaging} />
-            </div>
-          ))}
-        {cells}
-      </div>
-    );
-  };
-
-  /** Context lines `from`..`to` (new-file numbers) of a gap, as diff lines. */
-  const gapLines = (gap: Gap, from: number, to: number): DiffLine[] => {
-    const out: DiffLine[] = [];
-    for (let number = from; number <= to; number++) {
-      out.push({
-        // Negative so it can't clash with a real diff line's index.
-        index: -number,
-        kind: "context",
-        text: fileLines?.[number - 1] ?? "",
-        oldNumber: number + gap.offset,
-        newNumber: number,
-      });
-    }
-    return out;
-  };
-
-  const renderGap = (gap: Gap, index: number): ReactNode => {
-    if (!loadFile) return null;
-    // Length (and so `hidden`) is unknown for the trailing gap until the file loads.
-    const length = gap.last === undefined ? undefined : Math.max(0, gap.last - gap.first + 1);
-    if (length === 0) return null;
-    const shown = revealed[index] ?? { top: 0, bottom: 0 };
-    const hidden = length === undefined ? undefined : length - shown.top - shown.bottom;
-    // Once the revealed top and bottom meet, show the gap whole with no button.
-    const allShown = hidden !== undefined && hidden <= 0;
-    const last = gap.last ?? gap.first - 1;
-    const top = allShown
-      ? gapLines(gap, gap.first, last)
-      : gapLines(gap, gap.first, gap.first + shown.top - 1);
-    const bottom = allShown ? [] : gapLines(gap, last - shown.bottom + 1, last);
-
-    // One button: up for lines above the first hunk, down for lines below
-    // the last, and out (both directions) between two hunks.
-    let label = "↕ Expand";
-    let title = `Show ${EXPAND_STEP} more lines on each side`;
-    let change = (g: Revealed): Revealed => ({ top: g.top + EXPAND_STEP, bottom: g.bottom + EXPAND_STEP });
-    if (!gap.above) {
-      label = "↑ Expand up";
-      title = `Show ${EXPAND_STEP} more lines above`;
-      change = (g) => ({ ...g, bottom: g.bottom + EXPAND_STEP });
-    } else if (!gap.below) {
-      label = "↓ Expand down";
-      title = `Show ${EXPAND_STEP} more lines below`;
-      change = (g) => ({ ...g, top: g.top + EXPAND_STEP });
-    }
-    return (
-      <div key={`gap${index}`} className="gap">
-        {top.length > 0 && block(`gap${index}-top`, top)}
-        {!allShown && (
-          <div className="diff-line expander">
-            <button className="expand" title={title} onClick={() => void expand(index, change)}>
-              {label}
-            </button>
-            <span className="code">
-              {loadFailed
-                ? "Couldn't load the file"
-                : hidden !== undefined
-                  ? `${hidden} unchanged line${hidden === 1 ? "" : "s"}`
-                  : "Unchanged lines below"}
-            </span>
-          </div>
-        )}
-        {bottom.length > 0 && block(`gap${index}-bottom`, bottom)}
-      </div>
-    );
-  };
+  const gap = (index: number): React.JSX.Element | null =>
+    loadFile ? (
+      <DiffGap
+        key={`gap${index}`}
+        gap={gaps[index]}
+        shown={revealed[index] ?? { top: 0, bottom: 0 }}
+        fileLines={fileLines}
+        loadFailed={loadFailed}
+        split={split}
+        staging={lineStaging}
+        onExpand={(change) => void expand(index, change)}
+      />
+    ) : null;
 
   return (
     <div className={`diff ${split ? "split" : "unified"}`}>
@@ -474,14 +188,14 @@ export default function DiffView({
       ))}
       {hunks.map((hunk, index) => (
         <div key={hunk.header.index}>
-          {renderGap(gaps[index], index)}
+          {gap(index)}
           <div className="diff-line hunk">
             <span className="code">{hunk.header.text}</span>
           </div>
-          {block(`hunk${hunk.header.index}`, hunk.body, true)}
+          <DiffBlock body={hunk.body} split={split} staging={lineStaging} groupChecks onLineMenu={onLineMenu} />
         </div>
       ))}
-      {hunks.length > 0 && renderGap(gaps[hunks.length], hunks.length)}
+      {hunks.length > 0 && gap(hunks.length)}
     </div>
   );
 }

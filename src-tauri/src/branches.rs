@@ -4,6 +4,7 @@
 //! into the current one by merging, rebasing onto it, or squashing it into
 //! a single commit.
 
+use ts_rs::TS;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -95,7 +96,8 @@ fn require_branch<'a>(dir: &Path, name: &'a str) -> Result<&'a str, String> {
 }
 
 /// What happens to uncommitted changes when switching branches.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub enum ChangesOnSwitch {
     /// Stash them on the branch being left (its one stash), to pop later.

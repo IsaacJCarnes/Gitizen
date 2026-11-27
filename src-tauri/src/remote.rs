@@ -7,6 +7,7 @@
 //! prompts in a terminal (see `runner.rs`); credentials come from git's
 //! credential helper, which on Windows is Git Credential Manager's own window.
 
+use ts_rs::TS;
 use std::path::Path;
 
 use serde::Serialize;
@@ -18,7 +19,8 @@ use crate::github::{create_repository, GitHub};
 use crate::util::blocking;
 
 /// A configured remote, e.g. `origin` and its fetch URL.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct Remote {
     pub name: String,
     pub url: String,
@@ -132,14 +134,15 @@ pub async fn pull(repo: Repo<'_>) -> Result<(), String> {
 }
 
 fn pull_in(dir: &Path) -> Result<(), String> {
-    require_current_branch(dir, "pulling")?;
-    if upstream_of(dir).is_none() {
+    let branch = require_current_branch(dir, "pulling")?;
+    let config = SyncConfig::of(dir, &branch);
+    if config.upstream().is_none() {
         return Err("This branch isn't on the remote yet. Push it first.".into());
     }
     let mut args = vec!["pull", "--no-edit"];
     // Recent git refuses to pull diverged branches until told how; merge
     // unless the user already chose.
-    if run_git(dir, ["config", "--get", "pull.rebase"]).is_err() {
+    if !config.pull_rebase_set {
         args.push("--no-rebase");
     }
     unless_conflicted(dir, run_git(dir, args).map(drop))
@@ -159,7 +162,7 @@ pub async fn push(repo: Repo<'_>, force: Option<bool>) -> Result<(), String> {
 fn push_in(dir: &Path, force: bool) -> Result<(), String> {
     let branch = require_current_branch(dir, "pushing")?;
     let local = format!("refs/heads/{branch}");
-    if let Some((remote, merge)) = upstream_of(dir) {
+    if let Some((remote, merge)) = SyncConfig::of(dir, &branch).upstream() {
         // Explicit "<local>:<upstream>" pushes to the tracked branch even
         // when its name differs, whatever `push.default` says.
         let refspec = format!("{local}:{merge}");
@@ -178,19 +181,48 @@ fn push_in(dir: &Path, force: bool) -> Result<(), String> {
     run_git(dir, ["push", "--follow-tags", "-u", remote.as_str(), refspec.as_str()]).map(drop)
 }
 
-/// The current branch's upstream as (remote, "refs/heads/<branch>"), read
-/// from `branch.<name>.remote` and `branch.<name>.merge`.
-fn upstream_of(dir: &Path) -> Option<(String, String)> {
-    let branch = current_branch(dir)?;
-    let config = |key: &str| {
-        run_git(dir, ["config", "--get", &format!("branch.{branch}.{key}")])
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-    };
-    let remote = config("remote")?;
-    // "." means the upstream is a local branch, which isn't a push target.
-    (remote != ".").then_some((remote, config("merge")?))
+/// The settings pull and push need for a branch, read with one `git config`.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct SyncConfig {
+    /// `branch.<name>.remote` and `branch.<name>.merge`.
+    remote: Option<String>,
+    merge: Option<String>,
+    /// Whether `pull.rebase` is set at all.
+    pull_rebase_set: bool,
+}
+
+impl SyncConfig {
+    fn of(dir: &Path, branch: &str) -> Self {
+        // -z: "<key>\n<value>" entries ended by NUL. Exits 1 when nothing matches.
+        let output = run_git(dir, ["config", "-z", "--get-regexp", r"^(branch\..*\.(remote|merge)|pull\.rebase)$"])
+            .unwrap_or_default();
+        Self::parse(&output, branch)
+    }
+
+    fn parse(output: &str, branch: &str) -> Self {
+        let (remote_key, merge_key) = (format!("branch.{branch}.remote"), format!("branch.{branch}.merge"));
+        let mut config = Self::default();
+        for entry in output.split('\0') {
+            let (key, value) = entry.split_once('\n').unwrap_or((entry, ""));
+            let value = Some(value.trim().to_string()).filter(|value| !value.is_empty());
+            // The last value wins, as with `git config --get`.
+            if key == remote_key {
+                config.remote = value;
+            } else if key == merge_key {
+                config.merge = value;
+            } else if key == "pull.rebase" {
+                config.pull_rebase_set = true;
+            }
+        }
+        config
+    }
+
+    /// The branch's upstream as (remote, "refs/heads/<branch>").
+    fn upstream(&self) -> Option<(String, String)> {
+        let remote = self.remote.clone()?;
+        // "." means the upstream is a local branch, which isn't a push target.
+        (remote != ".").then_some((remote, self.merge.clone()?))
+    }
 }
 
 /// `origin` if it exists, else the only remote, else none.
@@ -210,6 +242,19 @@ mod tests {
     use super::*;
     use crate::util::test_support::{commit_file, git, new_repo};
     use crate::util::unique_temp_dir;
+
+    #[test]
+    fn reads_the_branch_settings_from_one_listing() {
+        let output = "branch.main.remote\norigin\0branch.main.merge\nrefs/heads/main\0\
+                      branch.v1.2.remote\nupstream\0branch.local.remote\n.\0pull.rebase\nfalse\0";
+        let main = SyncConfig::parse(output, "main");
+        assert_eq!(main.upstream(), Some(("origin".into(), "refs/heads/main".into())));
+        assert!(main.pull_rebase_set);
+        assert_eq!(SyncConfig::parse(output, "v1.2").remote.as_deref(), Some("upstream"));
+        assert_eq!(SyncConfig::parse(output, "v1.2").upstream(), None);
+        assert_eq!(SyncConfig::parse(output, "local").upstream(), None);
+        assert_eq!(SyncConfig::parse("", "main"), SyncConfig::default());
+    }
 
     #[test]
     fn parses_remote_names_with_dots() {
@@ -245,7 +290,7 @@ mod tests {
 
         // First push publishes main and sets it as the upstream.
         push_in(&alice, false).unwrap();
-        assert_eq!(upstream_of(&alice), Some(("origin".into(), "refs/heads/main".into())));
+        assert_eq!(SyncConfig::of(&alice, "main").upstream(), Some(("origin".into(), "refs/heads/main".into())));
 
         let bob = unique_temp_dir("remote-bob").unwrap();
         git(&bob, &["clone", "-q", &server_url, "."]);

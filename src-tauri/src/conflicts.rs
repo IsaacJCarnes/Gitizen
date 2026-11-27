@@ -4,6 +4,7 @@
 //! one, open an external merge tool, take one side, mark a file resolved,
 //! and continue or abort the operation.
 
+use ts_rs::TS;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -18,7 +19,8 @@ use crate::util::{blocking, unique_temp_dir, write_keeping_line_endings};
 
 /// An operation that is in progress because it stopped part way, usually
 /// on a conflict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub enum Operation {
     Merge,
@@ -49,7 +51,8 @@ impl Operation {
 }
 
 /// A file git couldn't merge by itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct ConflictFile {
     pub path: String,
@@ -63,7 +66,8 @@ pub struct ConflictFile {
 
 /// The repository's conflict state. `operation` is None when nothing is in
 /// progress; `files` lists only files still unresolved.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct ConflictState {
     pub operation: Option<Operation>,
     pub files: Vec<ConflictFile>,
@@ -83,7 +87,8 @@ pub struct ConflictState {
 }
 
 /// How far a rebase has got: it is replaying commit `current` of `total`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct RebaseStep {
     pub current: u32,
     pub total: u32,
@@ -278,6 +283,15 @@ pub(crate) fn operation_in(dir: &Path) -> Option<Operation> {
     }
 }
 
+/// Fails while a merge, rebase, stash operation or the like is stopped,
+/// which `doing` (e.g. "resetting") would get mixed into.
+pub(crate) fn require_no_operation(dir: &Path, doing: &str) -> Result<(), String> {
+    match operation_in(dir) {
+        Some(operation) => Err(format!("Finish or abort the {} in progress before {doing}.", operation.git_name())),
+        None => Ok(()),
+    }
+}
+
 /// For operations that can stop on a conflict (pull, cherry-pick, continue):
 /// stopping with unmerged files isn't a failure, since the conflict editor
 /// takes over from there. Other errors pass through.
@@ -299,7 +313,8 @@ fn require_conflicted(dir: &Path, path: &str) -> Result<PathBuf, String> {
 }
 
 /// What the conflict editor shows for one file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct ConflictVersions {
     /// Both sides merged by git, with each conflict between `<<<<<<< current`,
@@ -383,7 +398,8 @@ fn save_in(dir: &Path, path: &str, text: &str) -> Result<(), String> {
 }
 
 /// How to settle one conflicted file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub enum Resolution {
     /// Keep the version from the branch you were on ("ours").
@@ -542,7 +558,8 @@ fn clean_resolution(output: &str, final_newline: bool) -> Result<String, String>
 }
 
 /// Which external tool `open_in_merge_tool` used.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub enum ExternalTool {
     /// git's configured merge tool (`git mergetool`), which was waited for.

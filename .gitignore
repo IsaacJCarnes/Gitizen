@@ -24,6 +24,6 @@ dist-ssr
 *.sw?
 
 dist
-
+shared/generated
 src-tauri/icons/android
 src-tauri/icons/ios

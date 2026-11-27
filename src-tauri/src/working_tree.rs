@@ -1,82 +1,23 @@
-//! Tauri commands that expose git operations to the UI. Each command maps one
-//! entry of `Command` in `shared/ipc.ts` to a git invocation on the open
-//! repository; the UI calls them through `src/api/gitizen.ts`.
+//! The working tree and the commits the UI shows: diffs (of working-tree
+//! files, commits and selections of commits), the text around them, staging
+//! whole files or single lines, committing, undoing the last commit and
+//! checking out a branch.
 //!
-//! Commands are `async` so Tauri runs them off the main thread and a slow git
-//! call never freezes the window. Errors reach the UI as rejected promises
-//! carrying git's message.
-
-use tauri::AppHandle;
+//! Like every command module, commands are `async` so Tauri runs them off
+//! the main thread and a slow git call never freezes the window. Errors
+//! reach the UI as rejected promises carrying git's message.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
-
+use std::path::Path;
 use crate::git::parsers::{head_is_unborn, parse_name_status};
 use crate::git::patch::{
     changed_line_numbers, index_content, stages_any_addition, staged_line_indices, tidy_change_runs,
     STALE,
 };
-use crate::git::repository::{
-    assert_branch_name, assert_hash, first_parent_of, init_repository as git_init,
-    OpenError, Repo, EMPTY_TREE,
-};
+use crate::git::repository::{assert_branch_name, assert_hash, Repo, EMPTY_TREE};
 use crate::git::runner::{run_git, run_git_bytes, run_git_with_input};
 use crate::git::types::{CommitFile, FileDiff};
-use crate::util::{file_in_repo, pick_folder};
-
-/// Shows a folder picker and opens the chosen repository. Returns its path,
-/// or None if the picker was cancelled. A folder that isn't a repository
-/// fails with `OpenError::NotARepository` so the UI can offer `init_repository`.
-#[tauri::command]
-pub async fn open_repository(app: AppHandle, repo: Repo<'_>) -> Result<Option<String>, OpenError> {
-    let Some(directory) = pick_folder(&app)? else {
-        return Ok(None);
-    };
-    repo.open(directory.clone())?;
-    Ok(Some(directory.to_string_lossy().into_owned()))
-}
-
-/// Opens the repository at `path` without a picker, e.g. one chosen from the
-/// recent repositories list. Returns the path. Fails like `open_repository`
-/// (so a folder that is no longer a repository can be re-initialised), or
-/// with a plain failure if the folder is gone.
-#[tauri::command]
-pub async fn open_repository_at(repo: Repo<'_>, path: String) -> Result<String, OpenError> {
-    let directory = PathBuf::from(&path);
-    if !directory.is_dir() {
-        return Err(format!("{path} no longer exists").into());
-    }
-    repo.open(directory)?;
-    Ok(path)
-}
-
-/// Closes the open repository, going back to the start screen (after it
-/// was removed from the recent list, or its folder was deleted).
-#[tauri::command]
-pub async fn close_repository(
-    repo: Repo<'_>,
-    watcher: tauri::State<'_, crate::watcher::RepositoryWatcher>,
-) -> Result<(), String> {
-    watcher.stop();
-    repo.close()
-}
-
-/// True while `path` is still a folder inside a git work tree.
-#[tauri::command]
-pub async fn repository_exists(path: String) -> bool {
-    let directory = PathBuf::from(path);
-    directory.is_dir() && crate::git::repository::is_work_tree(&directory)
-}
-
-/// Runs `git init` in `path` (a folder the user picked that isn't a
-/// repository yet) and opens it. Returns the path.
-#[tauri::command]
-pub async fn init_repository(repo: Repo<'_>, path: String) -> Result<String, String> {
-    let directory = PathBuf::from(&path);
-    git_init(&directory)?;
-    repo.open(directory)?;
-    Ok(path)
-}
+use crate::util::file_in_repo;
 
 /// `git diff` options shared by every diff the UI shows: plain text, git's
 /// own diff (no external tools) and the usual a/ b/ prefixes, so the output
@@ -236,11 +177,15 @@ fn file_text_in(dir: &Path, path: &str, hash: Option<&str>) -> Result<String, St
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// What a commit's changes are compared to: the first parent of `since` (a
-/// selection's oldest commit, so several commits show as one change), or of
-/// `hash` itself when it is left out.
-fn base_of(dir: &Path, hash: &str, since: Option<&str>) -> Result<String, String> {
-    first_parent_of(dir, assert_hash(since.unwrap_or(hash))?)
+/// Runs `diff` against what a commit's changes are compared to: the first
+/// parent of `since` (a selection's oldest commit, so several commits show as
+/// one change), or of `hash` itself when it is left out. The parent is
+/// named "<commit>^" for git to resolve itself, with no git call of its own
+/// to look it up; a root commit, which has none, is compared to git's empty
+/// tree instead, on a second try.
+fn against_base<T>(hash: &str, since: Option<&str>, diff: impl Fn(&str) -> Result<T, String>) -> Result<T, String> {
+    let oldest = assert_hash(since.unwrap_or(hash))?;
+    diff(&format!("{oldest}^")).or_else(|error| diff(EMPTY_TREE).map_err(|_| error))
 }
 
 /// Files changed by a commit, compared to its first parent; with `since`,
@@ -252,9 +197,8 @@ pub async fn commit_files(repo: Repo<'_>, hash: String, since: Option<String>) -
 
 fn commit_files_in(dir: &Path, hash: &str, since: Option<&str>) -> Result<Vec<CommitFile>, String> {
     let hash = assert_hash(hash)?;
-    let parent = base_of(dir, hash, since)?;
     // -M detects renames, so a moved file is one entry with both paths.
-    let output = run_git(dir, ["diff", "--name-status", "-z", "-M", parent.as_str(), hash])?;
+    let output = against_base(hash, since, |base| run_git(dir, ["diff", "--name-status", "-z", "-M", base, hash]))?;
     Ok(parse_name_status(&output))
 }
 
@@ -272,14 +216,15 @@ pub async fn commit_diff(
 ) -> Result<String, String> {
     let dir = repo.require()?;
     let hash = assert_hash(&hash)?;
-    let parent = base_of(&dir, hash, since.as_deref())?;
-    let mut args = diff_options(ignore_whitespace);
-    args.extend(["-M", parent.as_str(), hash, "--"]);
-    if let Some(old_path) = &old_path {
-        args.push(old_path);
-    }
-    args.push(&path);
-    run_diff(&dir, args)
+    against_base(hash, since.as_deref(), |base| {
+        let mut args = diff_options(ignore_whitespace);
+        args.extend(["-M", base, hash, "--"]);
+        if let Some(old_path) = &old_path {
+            args.push(old_path);
+        }
+        args.push(&path);
+        run_diff(&dir, args)
+    })
 }
 
 #[tauri::command]
@@ -674,7 +619,7 @@ mod tests {
         let repo = temp_repo();
         let app = mock_builder()
             .manage(OpenRepository::default())
-            .invoke_handler(tauri::generate_handler![open_repository_at, crate::state::repository_state])
+            .invoke_handler(tauri::generate_handler![crate::open::open_repository_at, crate::state::repository_state])
             .build(mock_context(noop_assets()))
             .unwrap();
         let window = WebviewWindowBuilder::new(&app, "main", Default::default()).build().unwrap();

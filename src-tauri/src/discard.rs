@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::commands::{combined_diff, head_text, staged_lines_of, write_index_lines};
+use crate::working_tree::{combined_diff, head_text, staged_lines_of, write_index_lines};
 use crate::git::patch::{changed_line_indices, index_content, STALE};
 use crate::git::repository::Repo;
 use crate::git::runner::{run_git, run_git_with_input};
@@ -112,7 +112,7 @@ fn discard_lines_in(dir: &Path, path: &str, diff: &str, lines: &[usize]) -> Resu
 mod tests {
     use super::*;
 
-    use crate::commands::file_diff_in;
+    use crate::working_tree::file_diff_in;
     use crate::util::test_support::{commit_file, git, new_repo};
 
     /// Index of the diff line equal to `line`.

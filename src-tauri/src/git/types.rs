@@ -1,15 +1,19 @@
-//! Data shapes sent to the UI. They mirror `shared/gitTypes.ts` field for
-//! field; serde renames fields so the JSON matches the TypeScript exactly.
+//! Data shapes sent to the UI. Each derives `TS`, so running the Rust tests
+//! writes its TypeScript type to `shared/generated/` (re-exported by
+//! `shared/gitTypes.ts`); serde's renames apply to both.
 
+use ts_rs::TS;
 use serde::Serialize;
 
 /// A file with uncommitted changes in the working tree or index.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct FileChange {
     pub path: String,
     /// Previous path, set for renames ("R") and copies ("C").
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub old_path: Option<String>,
     /// True when the change is in the index (staged), false for the working tree.
     pub staged: bool,
@@ -19,7 +23,8 @@ pub struct FileChange {
 
 /// The combined diff of one working-tree file (HEAD to working tree) and
 /// which of its changed lines are staged.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct FileDiff {
     pub diff: String,
@@ -29,12 +34,14 @@ pub struct FileDiff {
 }
 
 /// Snapshot of `git status` for the open repository.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct GitStatus {
     /// Current branch name, or None (null) when HEAD is detached.
     pub branch: Option<String>,
     /// The branch it tracks, e.g. "origin/main"; omitted when it tracks none.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub upstream: Option<String>,
     pub ahead: u32,
     pub behind: u32,
@@ -42,7 +49,8 @@ pub struct GitStatus {
 }
 
 /// What kind of ref a `GitRef` is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "lowercase")]
 pub enum RefType {
     Branch,
@@ -52,18 +60,21 @@ pub enum RefType {
 }
 
 /// A ref (branch, remote branch, tag or detached HEAD) pointing at a commit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct GitRef {
     pub name: String,
     #[serde(rename = "type")]
     pub ref_type: RefType,
     /// True for the ref HEAD currently points at; omitted otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub current: Option<bool>,
 }
 
 /// One commit from `git log`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct GitCommit {
     pub hash: String,
     /// Parent hashes; the first one is the first parent. Empty for root commits.
@@ -79,7 +90,8 @@ pub struct GitCommit {
 }
 
 /// A local branch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct GitBranch {
     pub name: String,
     pub current: bool,
@@ -90,12 +102,14 @@ pub struct GitBranch {
 }
 
 /// A file changed by a commit, relative to its first parent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitFile {
     pub path: String,
     /// Previous path, set for renames ("R") and copies ("C").
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub old_path: Option<String>,
     /// Single-letter git status code, e.g. "M", "A", "D", "R" or "C".
     pub code: String,

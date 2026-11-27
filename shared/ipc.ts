@@ -21,6 +21,7 @@ import type {
   ImageVersions,
   StashOutcome,
 } from "./gitTypes";
+import type { GeneratedCommitMessage } from "./generated/GeneratedCommitMessage";
 
 export const Command = {
   OpenRepository: "open_repository",
@@ -99,32 +100,18 @@ export const Command = {
  */
 export const REPOSITORY_CHANGED = "repository-changed";
 
-/** What `REPOSITORY_CHANGED` carries. */
-export interface RepositoryChanged {
-  /**
-   * When the last change of the burst was noticed (milliseconds since
-   * 1970), so a refresh that started later already shows it.
-   */
-  changedAt: number;
-}
-
 export type CommandName = (typeof Command)[keyof typeof Command];
 
-/**
+/*
  * Commands reject with git's message as a plain string, except opening a
- * repository (`openRepo`, `openRepoAt`), which rejects with this object (mirrors `OpenError` in
- * src-tauri/src/git/repository.rs) so the UI can offer `initRepo` for a
- * folder that isn't a repository yet.
+ * repository (`openRepo`, `openRepoAt`), which rejects with an
+ * `OpenRepositoryError` (`OpenError` in src-tauri/src/git/repository.rs) so
+ * the UI can offer `initRepo` for a folder that isn't a repository yet.
+ * These three types are generated from Rust like those in gitTypes.ts.
  */
-export type OpenRepositoryError =
-  | { kind: "notARepository"; path: string; message: string }
-  | { kind: "failed"; message: string };
-
-/** A commit message split the way the commit form shows it. */
-export interface GeneratedCommitMessage {
-  summary: string;
-  description: string;
-}
+export type { GeneratedCommitMessage } from "./generated/GeneratedCommitMessage";
+export type { OpenRepositoryError } from "./generated/OpenRepositoryError";
+export type { RepositoryChanged } from "./generated/RepositoryChanged";
 
 export interface GitizenApi {
   /** Shows a folder picker and opens the chosen repository. Resolves to its path, or null if cancelled. */

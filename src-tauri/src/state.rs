@@ -8,22 +8,26 @@
 //! whether it has commits, and the conflicted files), and the independent
 //! git calls run side by side on their own threads.
 
+use ts_rs::TS;
+use std::collections::HashMap;
 use std::path::Path;
+use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
 
 use crate::branches::branches_in;
 use crate::conflicts::{conflict_state, parse_unmerged, ConflictState};
 use crate::git::parsers::{head_is_unborn, parse_log, parse_status, LOG_FORMAT};
-use crate::git::repository::Repo;
+use crate::git::repository::{git_path, Repo};
 use crate::git::runner::run_git;
 use crate::git::types::{GitBranch, GitCommit, GitStatus};
 use crate::history::rewritable_on;
 use crate::remote::{remotes_in, Remote};
 use crate::stash::{stashes_in, BranchStash};
 
-/// What `repository_state` returns (`RepositoryState` in shared/gitTypes.ts).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// Everything the window shows about the open repository, loaded together for each refresh.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export)]
 pub struct RepositoryState {
     pub status: GitStatus,
     pub commits: Vec<GitCommit>,
@@ -33,6 +37,32 @@ pub struct RepositoryState {
     pub stashes: Vec<BranchStash>,
     /// Hashes of the commits that may be rewritten (see `history::rewritable_in`).
     pub rewritable: Vec<String>,
+    /// For each changed file's path, a stamp that changes whenever its
+    /// combined diff might (the file or the index was written), so the UI
+    /// reloads a file's diff only then. Together with HEAD's commit, which
+    /// the history gives.
+    pub stamps: HashMap<String, String>,
+}
+
+/// When `path` was last written and its size ("" if it doesn't exist).
+fn file_stamp(path: &Path) -> String {
+    std::fs::metadata(path).map_or_else(
+        |_| String::new(),
+        |meta| {
+            let written = meta.modified().ok().and_then(|time| time.duration_since(UNIX_EPOCH).ok());
+            format!("{}:{}", written.map_or(0, |time| time.as_nanos()), meta.len())
+        },
+    )
+}
+
+/// `stamps` for the files of `status`: the index's stamp and the file's.
+fn stamps_of(dir: &Path, status: &GitStatus) -> HashMap<String, String> {
+    let index = git_path(dir, "index").map(|index| file_stamp(&index)).unwrap_or_default();
+    status
+        .files
+        .iter()
+        .map(|file| (file.path.clone(), format!("{index}/{}", file_stamp(&dir.join(&file.path)))))
+        .collect()
 }
 
 #[tauri::command]
@@ -54,6 +84,7 @@ pub(crate) fn state_in(dir: &Path) -> Result<RepositoryState, String> {
         let status = parse_status(&output);
         let conflicts = conflict_state(dir, parse_unmerged(&output));
         let rewritable = rewritable_on(dir, status.branch.as_deref(), !head_is_unborn(&output))?;
+        let stamps = stamps_of(dir, &status);
 
         let joined = |name: &str| format!("Loading the {name} failed");
         Ok(RepositoryState {
@@ -64,6 +95,7 @@ pub(crate) fn state_in(dir: &Path) -> Result<RepositoryState, String> {
             status,
             conflicts,
             rewritable,
+            stamps,
         })
     })
 }
@@ -101,6 +133,15 @@ mod tests {
         assert_eq!(state.rewritable, vec![state.commits[0].hash.clone()]);
         assert_eq!(state.conflicts.operation, None);
         assert!(state.remotes.is_empty() && state.stashes.is_empty());
+        // The stamp changes when the file is written, and when it is staged.
+        let stamp = |state: &RepositoryState| state.stamps["b.txt"].clone();
+        let before = stamp(&state);
+        assert_eq!(stamp(&state_in(&dir).unwrap()), before);
+        std::fs::write(dir.join("b.txt"), "changed again\n").unwrap();
+        let written = stamp(&state_in(&dir).unwrap());
+        assert_ne!(written, before);
+        git(&dir, &["add", "b.txt"]);
+        assert_ne!(stamp(&state_in(&dir).unwrap()), written);
         let side = state.branches.iter().find(|branch| branch.name == "side").unwrap();
         assert_eq!((side.current, side.ahead, side.behind), (false, 0, 1));
 

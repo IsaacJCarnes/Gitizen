@@ -7,6 +7,7 @@
 //! last change of the burst happened, so the window can skip a refresh
 //! that one of its own refreshes (after a Gitizen action) already covered.
 
+use ts_rs::TS;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::sync::Mutex;
@@ -30,9 +31,12 @@ const CHECK_LIMIT: usize = 500;
 
 /// The `repository-changed` payload: when the last change of the burst was
 /// noticed, in milliseconds since 1970 (like JavaScript's `Date.now()`).
-#[derive(Clone, Copy, serde::Serialize)]
+#[derive(Clone, Copy, serde::Serialize, TS)]
+#[ts(export, rename = "RepositoryChanged")]
 #[serde(rename_all = "camelCase")]
 struct Changed {
+    // A JavaScript number (as Date.now() gives), not a bigint.
+    #[ts(type = "number")]
     changed_at: u64,
 }
 

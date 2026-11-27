@@ -1,6 +1,7 @@
 //! The repository the window currently has open, plus small helpers for
 //! validating UI input and finding a commit's first parent.
 
+use ts_rs::TS;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -12,10 +13,10 @@ use super::runner::run_git;
 
 /// Why a folder could not be opened. Serialised for the UI as
 /// `{ "kind": "notARepository", "path", "message" }` or
-/// `{ "kind": "failed", "message" }` (see `OpenRepositoryError` in
-/// `shared/ipc.ts`), so the UI can offer to create a repository instead of
+/// `{ "kind": "failed", "message" }` (`OpenRepositoryError` in TypeScript), so the UI can offer to create a repository instead of
 /// only showing the message.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[ts(export, rename = "OpenRepositoryError")]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum OpenError {
     /// The folder exists but is not inside a git work tree.

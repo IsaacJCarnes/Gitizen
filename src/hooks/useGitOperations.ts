@@ -16,10 +16,10 @@ import type {
 } from "../../shared/gitTypes";
 import { gitizen } from "../api/gitizen";
 import { toAppError, type AppError } from "../utils/errors";
-import { loadDraft, saveDraft } from "../utils/commitDrafts";
-import { joinMessage, splitMessage } from "../utils/format";
 import { attempt, loadOrReset } from "../utils/load";
 import { useAutoRefresh } from "./useAutoRefresh";
+import { useBranchSwitch } from "./useBranchSwitch";
+import { useCommitForm } from "./useCommitForm";
 import { useCommitSelection } from "./useCommitSelection";
 import { useDiffSettings } from "./useDiffSettings";
 import { useStashSelection } from "./useStashSelection";
@@ -302,34 +302,16 @@ export function useGitOperations({
   const [branches, setBranches] = useState<GitBranch[]>([]);
   const [remotes, setRemotes] = useState<Remote[]>([]);
   const [rewritable, setRewritable] = useState<string[]>([]);
+  const [stamps, setStamps] = useState<Record<string, string>>({});
   const [conflicts, setConflicts] = useState<ConflictState>(NO_CONFLICTS);
   const [stashes, setStashes] = useState<BranchStash[]>([]);
   const [stashConflict, setStashConflict] = useState<StashConflictKind | null>(null);
-  const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
-  // Settles the `checkoutBranch` call waiting on `pendingSwitch`.
-  const settleSwitch = useRef<((switched: boolean) => void) | null>(null);
   const [selectedConflict, setSelectedConflict] = useState<string | null>(null);
   // The operation seen by the last refresh, to notice one starting.
   const lastOperation = useRef<ConflictState["operation"]>(null);
   const [selectedFile, setSelectedFile] = useState<FileChange | null>(null);
   const [{ diff, stagedLines }, setFileDiff] = useState(NO_DIFF);
-  const [commitSummary, setCommitSummary] = useState("");
-  // The summary as typed, readable from `refresh` without re-creating it on
-  // every keystroke.
-  const summaryRef = useRef(commitSummary);
-  summaryRef.current = commitSummary;
-  const [commitDescription, setCommitDescription] = useState("");
-  /** Fills both commit form fields at once; no arguments clears them. */
-  const setMessage = useCallback((summary = "", description = ""): void => {
-    setCommitSummary(summary);
-    setCommitDescription(description);
-  }, []);
   const [error, setError] = useState<AppError | null>(null);
-  const [generatingMessage, setGeneratingMessage] = useState(false);
-  const [amending, setAmending] = useState(false);
-  // Set when amending a pushed commit; only takes effect once the amend is
-  // actually committed (cancelling it leaves the branch as it was).
-  const pendingForcePush = useRef(false);
   const {
     settings: { hideWhitespace },
   } = useDiffSettings();
@@ -357,6 +339,9 @@ export function useGitOperations({
   // When the last refresh started (milliseconds since 1970): it shows every
   // change made before then, so the file watcher's report of one is skipped.
   const refreshStarted = useRef(0);
+  // Fills the commit form with git's prepared message; set once the commit
+  // form exists below, since `refresh` (defined first) needs it.
+  const prepareMessageRef = useRef<((message: string) => void) | null>(null);
 
   /** Reloads everything shown about the repository, in one backend call. */
   const refresh = useCallback(async (): Promise<void> => {
@@ -370,8 +355,10 @@ export function useGitOperations({
         conflicts: nextConflicts,
         stashes: nextStash,
         rewritable: nextRewritable,
+        stamps: nextStamps,
       } = await gitizen.repositoryState();
       setRewritable(nextRewritable);
+      setStamps(nextStamps);
       // The current branch's stash first, so it sits next to the commits.
       setStashes(
         [...nextStash].sort(
@@ -395,9 +382,7 @@ export function useGitOperations({
           // ("Merge branch 'x'"), unless the user is already writing one.
           // A rebase keeps each commit's own message, so it needs none.
           const prepared = nextConflicts.operation === "rebase" ? null : nextConflicts.message;
-          if (prepared && !summaryRef.current.trim()) {
-            setMessage(...splitMessage(prepared));
-          }
+          if (prepared) prepareMessageRef.current?.(prepared);
         }
         lastOperation.current = nextConflicts.operation;
       }
@@ -411,7 +396,7 @@ export function useGitOperations({
       }
       reportError(refreshError);
     }
-  }, [reportError, selectCommit, setMessage]);
+  }, [reportError, selectCommit]);
 
   useAutoRefresh(repo, refresh, refreshStarted);
 
@@ -435,6 +420,18 @@ export function useGitOperations({
     refresh,
   });
 
+  const { resetForm, fillPreparedMessage, ...commitForm } = useCommitForm({
+    repo,
+    operation: conflicts.operation,
+    runOperation,
+    selectCommit,
+    reportError,
+    setNeedsForcePush,
+    statusRef,
+    onWorkingTreeClean,
+  });
+  prepareMessageRef.current = fillPreparedMessage;
+
   /**
    * Shows `directory` (already opened by the backend), clears the previous
    * repository's selections and reports it as opened. The index is left as
@@ -442,15 +439,11 @@ export function useGitOperations({
    */
   const showRepository = useCallback(
     async (directory: string): Promise<void> => {
-      // Each repository keeps its own unfinished commit message.
-      const draft = loadDraft(directory);
-      setMessage(draft?.summary, draft?.description);
+      resetForm(directory);
       setRepo(directory);
       lastOperation.current = null;
       resetSync();
       setStashConflict(null);
-      setAmending(false);
-      pendingForcePush.current = false;
       setSelectedFile(null);
       setFileDiff(NO_DIFF);
       selectCommit(null);
@@ -459,7 +452,7 @@ export function useGitOperations({
       gitizen.watchRepository().catch(console.error);
       await refresh();
     },
-    [refresh, selectCommit, setMessage, onRepositoryOpened, resetSync],
+    [refresh, selectCommit, resetForm, onRepositoryOpened, resetSync],
   );
 
   const closeRepository = useCallback(
@@ -470,29 +463,23 @@ export function useGitOperations({
       setCommits([]);
       setBranches([]);
       setRemotes([]);
+      setStamps({});
       setStashes([]);
       setConflicts(NO_CONFLICTS);
       lastOperation.current = null;
       resetSync();
       setStashConflict(null);
-      setAmending(false);
       setSelectedFile(null);
       setFileDiff(NO_DIFF);
       setSelectedConflict(null);
       selectCommit(null);
-      setMessage();
+      resetForm(null);
       await gitizen.closeRepo().catch(() => undefined);
       if (reason) setError({ kind: "failed", message: reason });
     },
-    [selectCommit, setMessage, resetSync],
+    [selectCommit, resetForm, resetSync],
   );
   closeRef.current = (reason) => void closeRepository(reason);
-
-  // Keep the open repository's draft saved as it is typed (not while
-  // amending, whose message is the old commit's, not a draft).
-  useEffect(() => {
-    if (repo && !amending) saveDraft(repo, commitSummary, commitDescription);
-  }, [repo, amending, commitSummary, commitDescription]);
 
   /**
    * Waits for the backend to open a repository (null: the picker was
@@ -537,90 +524,6 @@ export function useGitOperations({
     [runOperation],
   );
 
-  const commitChanges = useCallback(async (): Promise<boolean> => {
-    // A rebase step is committed by git itself with the commit's own
-    // message (or dropped, if the resolution left nothing to commit), so it
-    // needs no summary and never runs `git commit` here.
-    if (conflicts.operation === "rebase") {
-      return runOperation(async () => {
-        await gitizen.continueOperation();
-        setMessage();
-      });
-    }
-    if (!commitSummary.trim()) return false;
-    const message = joinMessage(commitSummary, commitDescription);
-
-    const committed = await runOperation(async () => {
-      // Committing finishes a merge, cherry-pick or revert by itself.
-      await gitizen.commit(message, amending);
-      if (amending && pendingForcePush.current) setNeedsForcePush(true);
-      pendingForcePush.current = false;
-      setMessage();
-      setAmending(false);
-    });
-    // Nothing left to commit: there is no diff to look at any more.
-    if (committed && statusRef.current?.files.length === 0) onWorkingTreeClean?.();
-    return committed;
-  }, [
-    commitSummary,
-    commitDescription,
-    amending,
-    conflicts.operation,
-    runOperation,
-    setMessage,
-    setNeedsForcePush,
-    onWorkingTreeClean,
-  ]);
-
-  const startAmend = useCallback(
-    async (commit: GitCommit, branch?: string): Promise<void> => {
-      // Another branch's tip: switch to that branch first. If switching
-      // fails (the error is shown), stay out of amend mode.
-      if (branch && !(await runOperation(() => gitizen.checkout(branch)))) return;
-      setMessage(commit.message, commit.body);
-      setAmending(true);
-      // Amending happens in the working tree's commit form.
-      selectCommit(null);
-    },
-    [runOperation, selectCommit, setMessage],
-  );
-
-  const markPushedCommitRewritten = useCallback((): void => {
-    pendingForcePush.current = true;
-  }, []);
-
-  const cancelAmend = useCallback((): void => {
-    pendingForcePush.current = false;
-    setAmending(false);
-    setMessage();
-  }, [setMessage]);
-
-  const undoLastCommit = useCallback(async (commit: GitCommit, branch?: string): Promise<void> => {
-    await runOperation(async () => {
-      // Another branch's tip: switch to that branch so it is the last commit.
-      if (branch) await gitizen.checkout(branch);
-      await gitizen.undoLastCommit();
-      if (pendingForcePush.current) setNeedsForcePush(true);
-      pendingForcePush.current = false;
-      setAmending(false);
-      // Don't overwrite a message the user is already writing.
-      if (!commitSummary.trim()) setMessage(commit.message, commit.body);
-      selectCommit(null);
-    });
-  }, [commitSummary, runOperation, selectCommit, setMessage, setNeedsForcePush]);
-
-  const generateCommitMessage = useCallback(async (): Promise<void> => {
-    setGeneratingMessage(true);
-    try {
-      const { summary, description } = await gitizen.generateCommitMessage();
-      setMessage(summary, description);
-    } catch (generateError) {
-      reportError(generateError);
-    } finally {
-      setGeneratingMessage(false);
-    }
-  }, [reportError, setMessage]);
-
   /**
    * Runs a stash call. Stopping on conflicts counts as not done, and
    * records `kind` so the UI can warn about them.
@@ -645,35 +548,8 @@ export function useGitOperations({
 
   const dismissStashConflict = useCallback((): void => setStashConflict(null), []);
 
-  const checkoutBranch = useCallback(
-    (branch: string): Promise<boolean> => {
-      if (!status?.files.length) return runOperation(() => gitizen.checkout(branch));
-      // Ask first; a switch still waiting on an answer is dropped.
-      settleSwitch.current?.(false);
-      setPendingSwitch(branch);
-      return new Promise((resolve) => {
-        settleSwitch.current = resolve;
-      });
-    },
-    [status, runOperation],
-  );
-
-  const answerSwitch = useCallback(
-    async (changes: ChangesOnSwitch | null): Promise<void> => {
-      const settle = settleSwitch.current;
-      settleSwitch.current = null;
-      setPendingSwitch(null);
-      if (!pendingSwitch || !changes) {
-        settle?.(false);
-        return;
-      }
-      // Leaving them may stop on conflicts with the branch's stash, which
-      // the stash conflict warning then explains.
-      const kind = changes === "leave" ? "stash" : "bring";
-      settle?.(await runStash(kind, () => gitizen.switchBranch(pendingSwitch, changes)));
-    },
-    [pendingSwitch, runStash],
-  );
+  const branchSwitch = useBranchSwitch({ status, runOperation, runStash });
+  const { checkoutBranch } = branchSwitch;
 
   // Actions that are a single backend call (taking the same arguments)
   // followed by a refresh.
@@ -753,16 +629,20 @@ export function useGitOperations({
 
   // Diff of the selected working-tree file against HEAD, staged and unstaged
   // changes together, so staging doesn't change it (only which lines are
-  // ticked). Reloaded after every refresh because editing the file does.
+  // ticked). Reloaded only when a refresh finds the file, the index or HEAD
+  // changed, which is all the diff depends on.
+  const selectedPath = selectedFile?.path ?? null;
+  const headHash = commits.find((commit) => commit.refs.some((ref) => ref.current))?.hash;
+  const diffStamp = selectedPath === null ? "" : `${headHash}|${stamps[selectedPath]}`;
   useEffect(
     () =>
       loadOrReset(
-        selectedFile && gitizen.fileDiff(selectedFile.path, hideWhitespace),
+        selectedPath === null ? null : gitizen.fileDiff(selectedPath, hideWhitespace),
         setFileDiff,
         NO_DIFF,
         reportError,
       ),
-    [selectedFile, status, hideWhitespace, reportError],
+    [selectedPath, diffStamp, hideWhitespace, reportError],
   );
 
   // Staging or unstaging moves a file between lists; keep it selected
@@ -817,9 +697,8 @@ export function useGitOperations({
     ...sync,
     ...commitSelection,
     ...stashSelection,
-    checkoutBranch,
-    pendingSwitch,
-    answerSwitch,
+    ...commitForm,
+    ...branchSwitch,
     repo,
     status,
     commits,
@@ -829,26 +708,16 @@ export function useGitOperations({
     selectedFile,
     diff,
     stagedLines,
-    commitSummary,
-    commitDescription,
     error,
     reportError,
     dismissError,
     setSelectedFile,
-    setCommitSummary,
-    setCommitDescription,
     openRepository,
     openRepositoryAt,
     initRepository,
     cloneRepository,
     refresh,
     setFilesStaged,
-    commitChanges,
-    amending,
-    startAmend,
-    cancelAmend,
-    markPushedCommitRewritten,
-    undoLastCommit,
     stashChanges,
     stashes,
     branchStash,
@@ -861,8 +730,6 @@ export function useGitOperations({
     conflicts,
     selectedConflict,
     setSelectedConflict,
-    generatingMessage,
-    generateCommitMessage,
     stageLines,
     discardLines,
     saveWorkingFile,
